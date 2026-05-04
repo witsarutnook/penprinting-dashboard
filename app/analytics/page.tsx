@@ -1,0 +1,140 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { loadAll, AppsScriptError } from '@/lib/api';
+import { computeAnalytics } from '@/lib/analytics';
+
+export const metadata: Metadata = {
+  title: 'Analytics',
+};
+
+// Server Component — fetches Apps Script + computes KPIs server-side
+// next.revalidate = 60 (set in lib/api.ts) — cache 1 minute to spare quota
+export default async function AnalyticsPage() {
+  let result;
+  let errorMessage: string | null = null;
+
+  try {
+    const data = await loadAll();
+    result = computeAnalytics(data, 12);
+  } catch (err) {
+    errorMessage = err instanceof AppsScriptError
+      ? err.message
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  }
+
+  return (
+    <main className="min-h-screen bg-stone-50">
+      <header className="border-b border-stone-200 bg-white">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/" className="text-stone-500 hover:text-stone-700 text-sm">
+              ←
+            </Link>
+            <h1 className="text-xl font-bold text-stone-900">Analytics</h1>
+            <span className="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent">
+              ย้อนหลัง 12 เดือน
+            </span>
+          </div>
+          <div className="text-xs text-stone-400">
+            cache 60s · server-rendered
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        {errorMessage ? (
+          <ErrorPanel message={errorMessage} />
+        ) : result ? (
+          <KPIGrid kpis={result.kpis} />
+        ) : null}
+
+        {result && (
+          <section className="mt-10">
+            <h2 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-4">
+              Trend รายเดือน
+            </h2>
+            <TrendTable trend={result.trend} />
+            <p className="text-xs text-stone-400 mt-3">
+              ⚠️ Iteration 1 — เห็นเป็น table ก่อน. Iteration 2 จะเพิ่มกราฟ (recharts) แทน
+            </p>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
+
+// ─── Components ───────────────────────────────────────────────
+
+function KPIGrid({ kpis }: { kpis: ReturnType<typeof computeAnalytics>['kpis'] }) {
+  const cards = [
+    { label: 'ใบสั่งใหม่รวม', value: kpis.totalNew, unit: 'ใบ', sub: `${kpis.rangeMonths} เดือน` },
+    { label: 'จัดส่งสำเร็จ', value: kpis.totalShipped, unit: 'งาน', sub: `${kpis.rangeMonths} เดือน` },
+    { label: 'เฉลี่ย/เดือน', value: kpis.monthlyAvg, unit: 'ใบ', sub: 'ใบสั่งใหม่' },
+    { label: 'เฉลี่ยรับ→ส่ง', value: kpis.avgTurnaround, unit: 'วัน', sub: 'ตลอดช่วง' },
+    { label: 'งานในระบบ', value: kpis.activeNow, unit: 'งาน', sub: 'ตอนนี้' },
+  ];
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      {cards.map((c) => (
+        <div
+          key={c.label}
+          className="bg-white rounded-xl border border-stone-200 p-5 hover:border-stone-300 transition-colors"
+        >
+          <div className="text-xs font-medium text-stone-500 uppercase tracking-wide">
+            {c.label}
+          </div>
+          <div className="mt-2 flex items-baseline gap-1">
+            <span className="text-3xl font-bold text-stone-900 tabular-nums">{c.value}</span>
+            <span className="text-sm text-stone-500">{c.unit}</span>
+          </div>
+          <div className="text-xs text-stone-400 mt-1">{c.sub}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrendTable({ trend }: { trend: ReturnType<typeof computeAnalytics>['trend'] }) {
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide">
+          <tr>
+            <th className="text-left px-4 py-3 font-medium">เดือน</th>
+            <th className="text-right px-4 py-3 font-medium">ใบสั่งใหม่</th>
+            <th className="text-right px-4 py-3 font-medium">จัดส่ง</th>
+            <th className="text-right px-4 py-3 font-medium">เฉลี่ยรับ→ส่ง</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trend.map((row) => (
+            <tr key={row.label} className="border-t border-stone-100">
+              <td className="px-4 py-2.5 text-stone-700">{row.label}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-stone-900">{row.newOrders}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-stone-900">{row.shipped}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-stone-500">
+                {row.turnaround !== null ? `${row.turnaround} วัน` : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ErrorPanel({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-6">
+      <h2 className="text-amber-900 font-semibold">โหลด Analytics ไม่สำเร็จ</h2>
+      <p className="text-sm text-amber-800 mt-2 font-mono">{message}</p>
+      <p className="text-xs text-amber-700 mt-4">
+        ตรวจ env vars <code className="bg-amber-100 px-1">APPS_SCRIPT_URL</code> +{' '}
+        <code className="bg-amber-100 px-1">APPS_SCRIPT_TOKEN</code> ใน Vercel — ครบ 3 environments หรือยัง?
+      </p>
+    </div>
+  );
+}

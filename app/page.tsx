@@ -19,10 +19,10 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
           <Link
-            href="/login"
+            href="/analytics"
             className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-dark transition-colors"
           >
-            เข้าสู่ระบบ
+            ดู Analytics →
           </Link>
           <a
             href="https://app.penprinting.co/production-monitoring/"
@@ -31,6 +31,12 @@ export default function Home() {
             ใช้ระบบเดิม (WordPress)
           </a>
         </div>
+
+        <p className="text-xs text-stone-500 pt-2">
+          <Link href="/login" className="hover:text-stone-700 underline">
+            login (placeholder)
+          </Link>
+        </p>
 
         <p className="text-xs text-stone-400 pt-8">
           Stack: Next.js 14 · TypeScript · Tailwind · Vercel
