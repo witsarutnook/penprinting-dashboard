@@ -54,6 +54,21 @@ export const STAFF: Record<Dept, StaffDef[]> = {
   ],
 };
 
+/** Compact summary of the parent order — denormalized into BoardJob so the
+ *  detail modal has everything it needs without an extra fetch. */
+export interface OrderSummary {
+  id: number;
+  name: string;
+  customer: string;
+  dateIn: string;
+  dateDue: string;
+  price: string | number;
+  orderer: string;
+  status: string;
+  /** Parsed details JSON (form fields) — passed through as-is */
+  details: Record<string, unknown> | null;
+}
+
 export interface BoardJob {
   id: number;
   name: string;
@@ -63,13 +78,21 @@ export interface BoardJob {
   dept: Dept | string;
   /** Due date string DD/MM/YYYY */
   dateRaw: string;
-  /** Parsed due date (server side) */
-  dueDate: Date | null;
+  /** Parsed due date (server side, ISO string for client-safe transport) */
+  dueIso: string | null;
   urgency: Urgency;
   /** Days until due (negative = overdue, 0 = D-day) — only valid if dueDate present */
   daysUntilDue: number | null;
   orderId: number | null;
   hasCowork: boolean;
+  /** Co-work assignments (array of { dept, staff } objects) — null if no cowork */
+  cowork: unknown;
+  /** Full order summary for detail modal — null if job has no orderId */
+  order: OrderSummary | null;
+  /** Where in workflow: dept-level status (e.g., 'in_progress', 'done') */
+  status: string;
+  /** Date job was started (DD/MM/YYYY) */
+  dateInRaw: string;
 }
 
 export interface BoardColumn {
@@ -110,6 +133,21 @@ export function computeBoard(data: LoadAllResponse): BoardSnapshot {
     const daysUntilDue = due
       ? Math.floor((due.getTime() - today.getTime()) / 86400000)
       : null;
+    const orderSummary: OrderSummary | null = order
+      ? {
+          id: Number(order.id),
+          name: String(order.name || ''),
+          customer: String(order.customer || ''),
+          dateIn: String(order.dateIn || ''),
+          dateDue: String(order.dateDue || ''),
+          price: order.price,
+          orderer: String(order.orderer || ''),
+          status: String(order.status || ''),
+          details: (order.details && typeof order.details === 'object')
+            ? (order.details as Record<string, unknown>)
+            : null,
+        }
+      : null;
     const job: BoardJob = {
       id: Number(j.id),
       name: String(j.name || ''),
@@ -117,11 +155,15 @@ export function computeBoard(data: LoadAllResponse): BoardSnapshot {
       staff: String(j.staff || ''),
       dept: j.dept,
       dateRaw: String(j.date || ''),
-      dueDate: due,
+      dueIso: due ? due.toISOString() : null,
       urgency,
       daysUntilDue,
       orderId: j.orderId ? Number(j.orderId) : null,
       hasCowork: Array.isArray(j.cowork) && j.cowork.length > 0,
+      cowork: j.cowork ?? null,
+      order: orderSummary,
+      status: String(j.status || ''),
+      dateInRaw: String(j.dateIn || ''),
     };
     const key = `${j.dept}:${j.staff}`;
     if (!byKey.has(key)) byKey.set(key, []);
@@ -134,8 +176,8 @@ export function computeBoard(data: LoadAllResponse): BoardSnapshot {
     jobs.sort((a, b) => {
       const r = URGENCY_RANK[a.urgency] - URGENCY_RANK[b.urgency];
       if (r !== 0) return r;
-      const aDue = a.dueDate?.getTime() ?? Infinity;
-      const bDue = b.dueDate?.getTime() ?? Infinity;
+      const aDue = a.dueIso ? new Date(a.dueIso).getTime() : Infinity;
+      const bDue = b.dueIso ? new Date(b.dueIso).getTime() : Infinity;
       if (aDue !== bDue) return aDue - bDue;
       return a.name.localeCompare(b.name, 'th');
     });
