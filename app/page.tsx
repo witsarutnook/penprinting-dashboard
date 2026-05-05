@@ -19,8 +19,14 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
           <Link
-            href="/analytics"
+            href="/board"
             className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-dark transition-colors"
+          >
+            Kanban Board →
+          </Link>
+          <Link
+            href="/analytics"
+            className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
           >
             Analytics →
           </Link>
@@ -34,7 +40,7 @@ export default function Home() {
             href="/archive"
             className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
           >
-            Search Archive →
+            Archive →
           </Link>
           <a
             href="https://app.penprinting.co/production-monitoring/"

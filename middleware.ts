@@ -21,5 +21,5 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // Protect analytics + calendar + archive + future internal routes. Public: '/', '/login', '/api/auth/*'
-  matcher: ['/analytics/:path*', '/calendar/:path*', '/archive/:path*'],
+  matcher: ['/analytics/:path*', '/calendar/:path*', '/archive/:path*', '/board/:path*'],
 };
