@@ -7,7 +7,15 @@ import { Card } from './card';
 const VENDOR_PURPLE = '#7c3aed';
 
 /** Column for one staff/machine. ~280px wide on desktop, swipe-scroll on mobile. */
-export function Column({ dept, column }: { dept: Dept; column: BoardColumn }) {
+export function Column({
+  dept,
+  column,
+  sessionRole,
+}: {
+  dept: Dept;
+  column: BoardColumn;
+  sessionRole: string | null;
+}) {
   const isVendor = !!column.staff.isVendor;
   const headerBg = isVendor ? `${VENDOR_PURPLE}10` : '#ffffff';
   const borderColor = isVendor ? `${VENDOR_PURPLE}40` : '#e7e5e4';
@@ -47,7 +55,13 @@ export function Column({ dept, column }: { dept: Dept; column: BoardColumn }) {
           <div className="text-center text-stone-300 text-xs py-4">—</div>
         ) : (
           column.jobs.map((job) => (
-            <Card key={job.id} job={job} dept={dept} isVendorCol={isVendor} />
+            <Card
+              key={job.id}
+              job={job}
+              dept={dept}
+              isVendorCol={isVendor}
+              sessionRole={sessionRole}
+            />
           ))
         )}
       </div>

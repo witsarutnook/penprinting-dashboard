@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   type BoardJob,
   type Dept,
@@ -13,7 +14,16 @@ import {
 const VENDOR_PURPLE = '#7c3aed';
 
 /** Card with built-in detail modal (native <dialog>). */
-export function Card({ job, isVendorCol }: { job: BoardJob; dept: Dept; isVendorCol: boolean }) {
+export function Card({
+  job,
+  isVendorCol,
+  sessionRole,
+}: {
+  job: BoardJob;
+  dept: Dept;
+  isVendorCol: boolean;
+  sessionRole: string | null;
+}) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const urgencyColor = URGENCY_COLORS[job.urgency];
 
@@ -91,7 +101,7 @@ export function Card({ job, isVendorCol }: { job: BoardJob; dept: Dept; isVendor
         ref={dialogRef}
         className="rounded-2xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-2xl w-[92vw]"
       >
-        <DetailContent job={job} onClose={close} />
+        <DetailContent job={job} onClose={close} sessionRole={sessionRole} />
       </dialog>
     </>
   );
@@ -99,7 +109,15 @@ export function Card({ job, isVendorCol }: { job: BoardJob; dept: Dept; isVendor
 
 // ─── Modal content ────────────────────────────────────────
 
-function DetailContent({ job, onClose }: { job: BoardJob; onClose: () => void }) {
+function DetailContent({
+  job,
+  onClose,
+  sessionRole,
+}: {
+  job: BoardJob;
+  onClose: () => void;
+  sessionRole: string | null;
+}) {
   const urgencyColor = URGENCY_COLORS[job.urgency];
   const dept = job.dept as Dept;
   const deptLabel = DEPT_LABELS[dept] || job.dept;
@@ -196,17 +214,142 @@ function DetailContent({ job, onClose }: { job: BoardJob; onClose: () => void })
           </Section>
         )}
 
-        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-          🔒 view-only — แก้ไขได้ใน{' '}
+        <ActionButtons job={job} sessionRole={sessionRole} onSuccess={onClose} />
+
+        <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600">
+          ℹ️ ฟีเจอร์ที่ยังไม่มี (แก้ชื่อ/วันที่ • ส่งต่อ • co-work) ใช้ใน{' '}
           <a
             href="https://app.penprinting.co/production-monitoring/"
-            className="underline hover:text-amber-900"
+            className="underline hover:text-stone-800"
           >
             ระบบเดิม (WP)
           </a>
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Action buttons ───────────────────────────────────────
+
+function ActionButtons({
+  job,
+  sessionRole,
+  onSuccess,
+}: {
+  job: BoardJob;
+  sessionRole: string | null;
+  onSuccess: () => void;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel'>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isAdmin = sessionRole === 'admin';
+
+  async function callApi(path: string, body: Record<string, unknown>): Promise<boolean> {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data?.error || `HTTP ${res.status}`);
+      return false;
+    }
+    return true;
+  }
+
+  async function moveToShipped() {
+    setError(null);
+    setBusy('ship');
+    const ok = await callApi('/api/jobs/move-to-shipped', {
+      id: job.id,
+      name: job.name,
+      orderId: job.orderId,
+    });
+    setBusy(null);
+    if (ok) {
+      router.refresh();
+      onSuccess();
+    }
+  }
+
+  async function deleteJob() {
+    if (!confirm(`ยืนยันการลบงาน "${job.name}" ?\n\nงานจะหายจาก Kanban — ไม่มีปุ่มกู้คืน (ใช้ Cancel ถ้าต้องการเก็บประวัติ)`))
+      return;
+    setError(null);
+    setBusy('delete');
+    const ok = await callApi('/api/jobs/delete', { id: job.id });
+    setBusy(null);
+    if (ok) {
+      router.refresh();
+      onSuccess();
+    }
+  }
+
+  async function cancelJob() {
+    const reason = prompt(`ยกเลิกงาน "${job.name}" — ใส่เหตุผล:`);
+    if (!reason || reason.trim() === '') return;
+    setError(null);
+    setBusy('cancel');
+    const ok = await callApi('/api/jobs/cancel', {
+      id: job.id,
+      name: job.name,
+      dept: job.dept,
+      staff: job.staff,
+      orderId: job.orderId,
+      reason: reason.trim(),
+    });
+    setBusy(null);
+    if (ok) {
+      router.refresh();
+      onSuccess();
+    }
+  }
+
+  return (
+    <section>
+      <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
+        การดำเนินการ
+      </h3>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={moveToShipped}
+          disabled={busy !== null}
+          className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy === 'ship' ? 'กำลังส่ง...' : '✅ จัดส่งเสร็จ'}
+        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={cancelJob}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+          >
+            {busy === 'cancel' ? 'กำลังยกเลิก...' : '⚠️ ยกเลิก (admin)'}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={deleteJob}
+          disabled={busy !== null}
+          className="px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
+        >
+          {busy === 'delete' ? 'กำลังลบ...' : '🗑 ลบงาน'}
+        </button>
+      </div>
+      {error && (
+        <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          ❌ {error}
+        </div>
+      )}
+      <p className="text-[11px] text-stone-400 mt-2">
+        การกระทำส่งไปยังระบบหลัก (Apps Script) — มี audit log บันทึกอัตโนมัติ
+      </p>
+    </section>
   );
 }
 

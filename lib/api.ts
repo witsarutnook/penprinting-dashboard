@@ -55,8 +55,11 @@ export async function loadAll(): Promise<LoadAllResponse> {
 }
 
 /** POST {action, token, ...body} — mirrors WP `apiPost`. Used for actions that
- *  take complex bodies (searchArchive, bulkForward, etc.) — token goes in body. */
-async function post<T>(action: string, body: Record<string, unknown> = {}, opts: { revalidate?: number } = {}): Promise<T> {
+ *  take complex bodies (searchArchive, bulkForward, mutations) — token goes in body.
+ *
+ *  ⚠️ For mutations: always pass `revalidate: 0` (default) to bypass fetch cache —
+ *  we never want to cache write operations. */
+export async function post<T>(action: string, body: Record<string, unknown> = {}, opts: { revalidate?: number } = {}): Promise<T> {
   const { url, token } = getApiBase();
   const payload = JSON.stringify({ action, token, ...body });
   const res = await fetch(url, {

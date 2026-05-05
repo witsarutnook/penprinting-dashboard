@@ -100,7 +100,12 @@ export default async function BoardPage() {
                 <div className="overflow-x-auto -mx-3 px-3 pb-2 sm:mx-0 sm:px-0">
                   <div className="flex gap-3" style={{ minWidth: 'min-content' }}>
                     {dept.columns.map((col) => (
-                      <Column key={col.staff.id} dept={dept.dept} column={col} />
+                      <Column
+                        key={col.staff.id}
+                        dept={dept.dept}
+                        column={col}
+                        sessionRole={session?.role || null}
+                      />
                     ))}
                   </div>
                 </div>
