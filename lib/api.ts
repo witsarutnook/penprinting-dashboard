@@ -54,4 +54,36 @@ export async function loadAll(): Promise<LoadAllResponse> {
   return get<LoadAllResponse>('loadAll');
 }
 
+/** POST {action, token, ...body} — mirrors WP `apiPost`. Used for actions that
+ *  take complex bodies (searchArchive, bulkForward, etc.) — token goes in body. */
+async function post<T>(action: string, body: Record<string, unknown> = {}, opts: { revalidate?: number } = {}): Promise<T> {
+  const { url, token } = getApiBase();
+  const payload = JSON.stringify({ action, token, ...body });
+  const res = await fetch(url, {
+    method: 'POST',
+    body: payload,
+    headers: { 'Content-Type': 'text/plain' },  // Apps Script reads e.postData.contents — content-type doesn't matter
+    redirect: 'follow',
+    next: opts.revalidate ? { revalidate: opts.revalidate } : { revalidate: 0 },
+  });
+  if (!res.ok) throw new AppsScriptError(action, `HTTP ${res.status}`, res.status);
+  const data = (await res.json()) as T | { error: string };
+  if (data && typeof data === 'object' && 'error' in data) {
+    throw new AppsScriptError(action, (data as { error: string }).error);
+  }
+  return data as T;
+}
+
+/** Search across all archive sheets. Apps Script returns up to 100 results.
+ *  Cache 30s — archives don't change often. */
+export interface ArchiveSearchResult {
+  results: Array<Record<string, unknown> & { _sheet: string }>;
+  total?: number;
+  message?: string;
+}
+
+export async function searchArchive(query: string): Promise<ArchiveSearchResult> {
+  return post<ArchiveSearchResult>('searchArchive', { query }, { revalidate: 30 });
+}
+
 export { AppsScriptError };

@@ -30,6 +30,12 @@ export default function Home() {
           >
             Calendar →
           </Link>
+          <Link
+            href="/archive"
+            className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
+          >
+            Search Archive →
+          </Link>
           <a
             href="https://app.penprinting.co/production-monitoring/"
             className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
