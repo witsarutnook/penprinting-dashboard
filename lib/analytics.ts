@@ -74,9 +74,22 @@ export interface AnalyticsTrendPoint {
   turnaround: number | null;
 }
 
+export interface TopCustomer {
+  name: string;
+  count: number;
+}
+
+export interface DeptWorkload {
+  graphic: number;
+  print: number;
+  post: number;
+}
+
 export interface AnalyticsResult {
   kpis: AnalyticsKPIs;
   trend: AnalyticsTrendPoint[];
+  topCustomers: TopCustomer[];
+  deptWorkload: DeptWorkload;
 }
 
 export function computeAnalytics(data: LoadAllResponse, nMonths: number = 12): AnalyticsResult {
@@ -127,6 +140,28 @@ export function computeAnalytics(data: LoadAllResponse, nMonths: number = 12): A
   // Active jobs = current jobs sheet length (not bucket-dependent)
   const activeNow = (data.jobs as Job[]).length;
 
+  // Top 10 customers (by # of orders in range)
+  const custCounts: Record<string, number> = {};
+  data.orders.forEach((o: Order) => {
+    const i = bucketIndexFor(parseDateDMY(o.dateIn), buckets);
+    if (i < 0) return;
+    const c = (o.customer || '-').trim() || '-';
+    if (c === '-') return;
+    custCounts[c] = (custCounts[c] || 0) + 1;
+  });
+  const topCustomers: TopCustomer[] = Object.entries(custCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([name, count]) => ({ name, count }));
+
+  // Dept workload — current active jobs by dept (not bucket-dependent)
+  const deptWorkload: DeptWorkload = { graphic: 0, print: 0, post: 0 };
+  (data.jobs as Job[]).forEach(j => {
+    if (j.dept === 'graphic' || j.dept === 'print' || j.dept === 'post') {
+      deptWorkload[j.dept]++;
+    }
+  });
+
   return {
     kpis: {
       totalNew,
@@ -142,5 +177,7 @@ export function computeAnalytics(data: LoadAllResponse, nMonths: number = 12): A
       shipped: shippedPerMonth[i],
       turnaround: turnPerMonth[i],
     })),
+    topCustomers,
+    deptWorkload,
   };
 }

@@ -2,20 +2,42 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { loadAll, AppsScriptError } from '@/lib/api';
 import { computeAnalytics } from '@/lib/analytics';
+import {
+  OrdersTrendChart,
+  TurnaroundChart,
+  TopCustomersChart,
+  DeptWorkloadChart,
+} from './charts';
 
 export const metadata: Metadata = {
   title: 'Analytics',
 };
 
-// Server Component — fetches Apps Script + computes KPIs server-side
-// next.revalidate = 60 (set in lib/api.ts) — cache 1 minute to spare quota
-export default async function AnalyticsPage() {
+const VALID_RANGES = [3, 6, 12] as const;
+type Range = (typeof VALID_RANGES)[number];
+
+interface SearchParams {
+  months?: string;
+}
+
+function parseRange(input: string | undefined): Range {
+  const n = parseInt(input || '12', 10);
+  return (VALID_RANGES as readonly number[]).includes(n) ? (n as Range) : 12;
+}
+
+// Server Component — fetches Apps Script + computes everything server-side
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const months = parseRange(searchParams.months);
   let result;
   let errorMessage: string | null = null;
 
   try {
     const data = await loadAll();
-    result = computeAnalytics(data, 12);
+    result = computeAnalytics(data, months);
   } catch (err) {
     errorMessage = err instanceof AppsScriptError
       ? err.message
@@ -27,19 +49,14 @@ export default async function AnalyticsPage() {
   return (
     <main className="min-h-screen bg-stone-50">
       <header className="border-b border-stone-200 bg-white">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <Link href="/" className="text-stone-500 hover:text-stone-700 text-sm">
               ←
             </Link>
             <h1 className="text-xl font-bold text-stone-900">Analytics</h1>
-            <span className="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent">
-              ย้อนหลัง 12 เดือน
-            </span>
           </div>
-          <div className="text-xs text-stone-400">
-            cache 60s · server-rendered
-          </div>
+          <RangeSelector current={months} />
         </div>
       </header>
 
@@ -47,26 +64,57 @@ export default async function AnalyticsPage() {
         {errorMessage ? (
           <ErrorPanel message={errorMessage} />
         ) : result ? (
-          <KPIGrid kpis={result.kpis} />
-        ) : null}
+          <>
+            <KPIGrid kpis={result.kpis} />
 
-        {result && (
-          <section className="mt-10">
-            <h2 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-4">
-              Trend รายเดือน
-            </h2>
-            <TrendTable trend={result.trend} />
-            <p className="text-xs text-stone-400 mt-3">
-              ⚠️ Iteration 1 — เห็นเป็น table ก่อน. Iteration 2 จะเพิ่มกราฟ (recharts) แทน
+            <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <OrdersTrendChart trend={result.trend} />
+              <TurnaroundChart trend={result.trend} />
+              <TopCustomersChart data={result.topCustomers} />
+              <DeptWorkloadChart data={result.deptWorkload} />
+            </section>
+
+            <section className="mt-8">
+              <h2 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-3">
+                Trend รายเดือน — ตัวเลขละเอียด
+              </h2>
+              <TrendTable trend={result.trend} />
+            </section>
+
+            <p className="text-xs text-stone-400 mt-6 text-right">
+              cache 60s · server-rendered · {months} เดือนล่าสุด
             </p>
-          </section>
-        )}
+          </>
+        ) : null}
       </div>
     </main>
   );
 }
 
 // ─── Components ───────────────────────────────────────────────
+
+function RangeSelector({ current }: { current: Range }) {
+  return (
+    <div className="inline-flex rounded-lg bg-stone-100 p-1 text-sm">
+      {VALID_RANGES.map((n) => {
+        const active = n === current;
+        return (
+          <Link
+            key={n}
+            href={n === 12 ? '/analytics' : `/analytics?months=${n}`}
+            className={`px-4 py-1.5 rounded-md transition-colors ${
+              active
+                ? 'bg-white text-stone-900 shadow-sm font-medium'
+                : 'text-stone-500 hover:text-stone-700'
+            }`}
+          >
+            {n} เดือน
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
 
 function KPIGrid({ kpis }: { kpis: ReturnType<typeof computeAnalytics>['kpis'] }) {
   const cards = [
