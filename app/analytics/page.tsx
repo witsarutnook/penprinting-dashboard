@@ -1,13 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
 import { computeAnalytics } from '@/lib/analytics';
+import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import {
   OrdersTrendChart,
   TurnaroundChart,
   TopCustomersChart,
   DeptWorkloadChart,
 } from './charts';
+import { LogoutButton } from './logout-button';
 
 export const metadata: Metadata = {
   title: 'Analytics',
@@ -32,6 +35,10 @@ export default async function AnalyticsPage({
   searchParams: SearchParams;
 }) {
   const months = parseRange(searchParams.months);
+  // Middleware guarantees a valid session here, but read it for the header UI
+  const cookieStore = cookies();
+  const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
+
   let result;
   let errorMessage: string | null = null;
 
@@ -56,7 +63,17 @@ export default async function AnalyticsPage({
             </Link>
             <h1 className="text-xl font-bold text-stone-900">Analytics</h1>
           </div>
-          <RangeSelector current={months} />
+          <div className="flex items-center gap-3 flex-wrap">
+            <RangeSelector current={months} />
+            {session && (
+              <div className="flex items-center gap-2 text-xs text-stone-500 border-l border-stone-200 pl-3">
+                <span>
+                  {session.user} <span className="text-stone-400">({session.role})</span>
+                </span>
+                <LogoutButton />
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
