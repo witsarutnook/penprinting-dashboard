@@ -22,19 +22,25 @@ export default function Home() {
             href="/analytics"
             className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-dark transition-colors"
           >
-            ดู Analytics →
+            Analytics →
+          </Link>
+          <Link
+            href="/calendar"
+            className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
+          >
+            Calendar →
           </Link>
           <a
             href="https://app.penprinting.co/production-monitoring/"
             className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
           >
-            ใช้ระบบเดิม (WordPress)
+            ระบบเดิม (WP)
           </a>
         </div>
 
         <p className="text-xs text-stone-500 pt-2">
           <Link href="/login" className="hover:text-stone-700 underline">
-            login (placeholder)
+            เข้าสู่ระบบ →
           </Link>
         </p>
 
