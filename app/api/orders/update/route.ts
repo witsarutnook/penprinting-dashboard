@@ -6,11 +6,13 @@ import { toISODate } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 import type { Job } from '@/lib/types';
 
-/** Update an existing order — admin + sales. Mirrors the add route's full
- *  WP-shape OrderFormData input. Preserves PIN, cascades name/dateDue
- *  changes to matching jobs. */
+/** Update an existing order — admin only. Sales can create new orders
+ *  + promote drafts, but mutating an order's spec/dates/cascade is
+ *  reserved for admin (matches user's permission requirement, 2026-05-06).
+ *  Mirrors the add route's full WP-shape OrderFormData input. Preserves
+ *  PIN, cascades name/dateDue changes to matching jobs. */
 export async function POST(req: Request) {
-  const session = await requireSession(['admin', 'sales']);
+  const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
 
   let body: Partial<OrderFormData> & { id?: number | string; price?: string | number };

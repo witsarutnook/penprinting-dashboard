@@ -51,6 +51,11 @@ export default async function OrdersListPage({
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/orders');
+  // /orders list is admin + sales only — staff don't manage orders, they
+  // only work jobs on the Kanban.
+  if (session.role !== 'admin' && session.role !== 'sales') {
+    redirect('/board?dept=post');
+  }
 
   const filters: ResolvedFilters = {
     query: (searchParams.q || '').trim().toLowerCase(),

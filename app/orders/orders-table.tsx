@@ -286,7 +286,9 @@ function OrderDetailModal({
   }
 
   if (!order) return null;
-  const canEdit = (role === 'admin' || role === 'sales')
+  // Edit + delete = admin only. Sales can still ดู the order, สั่งซ้ำ,
+  // and print/tracking — they just can't mutate existing rows.
+  const canEdit = role === 'admin'
     && order.orderStatus !== 'shipped' && order.orderStatus !== 'cancelled';
   const canDelete = role === 'admin';
   const canDuplicate = role === 'admin' || role === 'sales';

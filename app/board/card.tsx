@@ -1283,8 +1283,9 @@ function ActionButtons({
               ย้าย
             </button>
           )}
-          {/* แก้ไข: รวมแก้ใบสั่งงาน + แก้ Job เป็นปุ่มเดียว — admin/sales ทั้งคู่ */}
-          {(isAdmin || sessionRole === 'sales') && (
+          {/* แก้ไข: admin only — both job spec edit + order spec edit
+           *  reach admin-gated APIs (/api/jobs/update, /api/orders/update). */}
+          {isAdmin && (
             <button
               type="button"
               onClick={job.orderId ? onEditOrder : onEdit}

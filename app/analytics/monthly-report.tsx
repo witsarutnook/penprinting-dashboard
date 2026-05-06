@@ -2,33 +2,51 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useTransition } from 'react';
-import type { MonthlyReport } from '@/lib/analytics';
+import { useEffect, useRef, useState, useTransition } from 'react';
+import type { MonthlyReport, MonthlyReportRow } from '@/lib/analytics';
 import {
   IconFilePlus, IconCheck, IconXCircle, IconClock, IconTarget, IconZap,
   IconCalendar, IconUsers, IconUserPlus, IconRefreshCw, IconTrophy,
-  IconClipboard, IconTruck,
+  IconClipboard, IconTruck, IconX,
 } from '@/lib/icons';
+
+interface EnrichedStaffGroup {
+  staffId: string;
+  staffName: string;
+  count: number;
+  rows: MonthlyReportRow[];
+}
 
 interface EnrichedDept {
   count: number;
   staff: Array<{ id: string; name: string; count: number }>;
+  rows: MonthlyReportRow[];
+  groups: EnrichedStaffGroup[];
 }
 
 export interface EnrichedMonthlyReport extends Omit<MonthlyReport, 'perDept'> {
   perDept: { graphic: EnrichedDept; print: EnrichedDept; post: EnrichedDept };
 }
 
+type DeptKey = 'graphic' | 'print' | 'post';
+const DEPT_LABEL: Record<DeptKey, string> = {
+  graphic: 'กราฟฟิก',
+  print: 'พิมพ์',
+  post: 'หลังพิมพ์',
+};
+
 /** Renders the WP-style รายงานประจำเดือน — three sections: Executive
  *  Summary, Customer Insights, Per-Dept Performance. Mirrors the WP
  *  renderReport() output (production-monitoring.js ~line 4584).
  *
- *  Month picker uses next/navigation router.replace inside startTransition
- *  so the page revalidates without a full document reload.
+ *  Clicking a dept's count opens a detail modal with two views:
+ *  รวม (flat list) and แยกตามช่าง (grouped by staff). Mirrors the WP
+ *  reportDetailModal in the same file ~line 4920.
  */
 export function MonthlyReportView({ report }: { report: EnrichedMonthlyReport }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [activeDept, setActiveDept] = useState<DeptKey | null>(null);
 
   const onMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value; // YYYY-MM
@@ -183,10 +201,11 @@ export function MonthlyReportView({ report }: { report: EnrichedMonthlyReport })
           <IconTruck size={18} />
           Performance — งานที่ผ่านแต่ละแผนก
         </h2>
+        <p className="text-xs text-stone-500">คลิกที่จำนวนงานเพื่อดูรายการทั้งหมด</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <DeptBlock label="กราฟฟิก" data={report.perDept.graphic} />
-          <DeptBlock label="พิมพ์" data={report.perDept.print} />
-          <DeptBlock label="หลังพิมพ์" data={report.perDept.post} />
+          <DeptBlock label={DEPT_LABEL.graphic} data={report.perDept.graphic} onOpenDetail={() => setActiveDept('graphic')} />
+          <DeptBlock label={DEPT_LABEL.print} data={report.perDept.print} onOpenDetail={() => setActiveDept('print')} />
+          <DeptBlock label={DEPT_LABEL.post} data={report.perDept.post} onOpenDetail={() => setActiveDept('post')} />
         </div>
       </section>
 
@@ -197,6 +216,13 @@ export function MonthlyReportView({ report }: { report: EnrichedMonthlyReport })
           ดูภาพรวม 12 เดือน →
         </Link>
       </p>
+
+      {/* Dept detail modal */}
+      <DeptDetailModal
+        dept={activeDept}
+        report={report}
+        onClose={() => setActiveDept(null)}
+      />
     </div>
   );
 }
@@ -255,9 +281,11 @@ function StatCard({
 function DeptBlock({
   label,
   data,
+  onOpenDetail,
 }: {
   label: string;
   data: EnrichedDept;
+  onOpenDetail: () => void;
 }) {
   return (
     <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
@@ -266,10 +294,16 @@ function DeptBlock({
           <IconClipboard size={14} />
           {label}
         </span>
-        <div className="text-right">
+        <button
+          type="button"
+          onClick={onOpenDetail}
+          disabled={data.count === 0}
+          className="text-right rounded-lg px-2 py-1 hover:bg-sky-50 transition-colors disabled:cursor-default disabled:hover:bg-transparent disabled:opacity-60"
+          title={data.count > 0 ? 'คลิกเพื่อดูรายการงาน' : 'ไม่มีงานในเดือนนี้'}
+        >
           <span className="text-2xl font-bold text-sky-700 tabular-nums">{data.count}</span>
           <span className="text-xs text-stone-500 ml-1">งาน</span>
-        </div>
+        </button>
       </div>
       {data.staff.length > 0 ? (
         <table className="w-full text-sm">
@@ -295,6 +329,172 @@ function DeptBlock({
           ไม่มีงานในเดือนนี้
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Dept detail modal ─────────────────────────────────────
+
+type ViewMode = 'flat' | 'grouped';
+
+function DeptDetailModal({
+  dept,
+  report,
+  onClose,
+}: {
+  dept: DeptKey | null;
+  report: EnrichedMonthlyReport;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const [mode, setMode] = useState<ViewMode>('flat');
+
+  // Reset to flat each time a new dept opens (matches WP behaviour).
+  useEffect(() => {
+    if (dept) setMode('flat');
+  }, [dept]);
+
+  // showModal / close imperatively so backdrop + ESC behave natively.
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (dept && !dlg.open) dlg.showModal();
+    else if (!dept && dlg.open) dlg.close();
+  }, [dept]);
+
+  // Backdrop click + ESC → close
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    function onClick(e: MouseEvent) {
+      if ((e.target as HTMLElement)?.tagName === 'DIALOG') onClose();
+    }
+    function onCancel(e: Event) { e.preventDefault(); onClose(); }
+    dlg.addEventListener('click', onClick);
+    dlg.addEventListener('cancel', onCancel);
+    return () => {
+      dlg.removeEventListener('click', onClick);
+      dlg.removeEventListener('cancel', onCancel);
+    };
+  }, [onClose]);
+
+  const data = dept ? report.perDept[dept] : null;
+  const label = dept ? DEPT_LABEL[dept] : '';
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="rounded-2xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-5xl w-[95vw]"
+    >
+      {dept && data && (
+        <div className="flex flex-col max-h-[90vh]">
+          {/* Header */}
+          <div className="px-5 py-3 border-b border-stone-100 flex items-center gap-3 flex-wrap">
+            <h2 className="text-base font-bold text-stone-900 flex-grow min-w-0">
+              รายการงาน &quot;{label}&quot; — {report.monthLabel}{' '}
+              <span className="text-stone-500 font-normal">({data.count} งาน)</span>
+            </h2>
+            <div className="inline-flex rounded-lg bg-stone-100 p-0.5 text-xs">
+              <ModeBtn active={mode === 'flat'} onClick={() => setMode('flat')} label="รวม" />
+              <ModeBtn active={mode === 'grouped'} onClick={() => setMode('grouped')} label="แยกตามช่าง" />
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+              aria-label="ปิด"
+            >
+              <IconX size={18} />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="flex-grow overflow-y-auto p-5 space-y-4">
+            {mode === 'flat' ? (
+              data.rows.length > 0 ? (
+                <RowTable rows={data.rows} />
+              ) : (
+                <p className="text-center text-sm text-stone-400 py-6">ไม่มีข้อมูล</p>
+              )
+            ) : data.groups.length > 0 ? (
+              data.groups.map((g) => (
+                <section key={g.staffId} className="space-y-2">
+                  <div className="flex items-center justify-between text-sm font-semibold text-stone-700">
+                    <span>{g.staffName}</span>
+                    <span className="text-xs text-stone-500 tabular-nums">{g.count} งาน</span>
+                  </div>
+                  <RowTable rows={g.rows} />
+                </section>
+              ))
+            ) : (
+              <p className="text-center text-sm text-stone-400 py-6">ไม่มีข้อมูล</p>
+            )}
+          </div>
+        </div>
+      )}
+    </dialog>
+  );
+}
+
+function ModeBtn({
+  active, onClick, label,
+}: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1 rounded-md font-medium transition-colors ${
+        active ? 'bg-white text-sky-700 shadow-sm' : 'text-stone-500 hover:text-stone-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+const STATUS_STYLE: Record<MonthlyReportRow['status'], { label: string; cls: string }> = {
+  in_system:  { label: 'อยู่ในระบบ',  cls: 'bg-sky-50 text-sky-700' },
+  shipped:    { label: 'จัดส่งแล้ว',  cls: 'bg-emerald-50 text-emerald-700' },
+  cancelled:  { label: 'ยกเลิก',      cls: 'bg-red-50 text-red-700' },
+  not_found:  { label: 'ไม่พบในระบบ', cls: 'bg-stone-100 text-stone-600' },
+};
+
+function RowTable({ rows }: { rows: MonthlyReportRow[] }) {
+  return (
+    <div className="bg-white rounded-lg border border-stone-200 overflow-x-auto">
+      <table className="w-full text-sm min-w-[760px]">
+        <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
+          <tr>
+            <th className="w-12 text-center px-3 py-2 font-medium">#</th>
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">เลขที่</th>
+            <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
+            <th className="text-left px-3 py-2 font-medium">ลูกค้า</th>
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">ขนาด</th>
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">จำนวน</th>
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">สถานะ</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-stone-100">
+          {rows.map((r, i) => {
+            const s = STATUS_STYLE[r.status];
+            return (
+              <tr key={`${r.orderId}-${i}`} className="hover:bg-sky-50/30">
+                <td className="text-center px-3 py-1.5 tabular-nums text-stone-500">{i + 1}</td>
+                <td className="px-3 py-1.5 tabular-nums font-mono text-sky-700">#{r.orderId}</td>
+                <td className="px-3 py-1.5 text-stone-900 font-medium">{r.name}</td>
+                <td className="px-3 py-1.5 text-stone-600">{r.customer}</td>
+                <td className="px-3 py-1.5 text-stone-700 whitespace-nowrap">{r.size}</td>
+                <td className="px-3 py-1.5 text-stone-700 whitespace-nowrap">{r.qty}</td>
+                <td className="px-3 py-1.5 whitespace-nowrap">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.cls}`}>
+                    {s.label}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

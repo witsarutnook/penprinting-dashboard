@@ -17,7 +17,9 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect(`/login?next=/orders/${params.id}/edit`);
-  if (session.role !== 'admin' && session.role !== 'sales') {
+  // Edit = admin only. Sales can create new orders + promote drafts but
+  // cannot mutate existing orders' fields (staff can't either).
+  if (session.role !== 'admin') {
     redirect('/orders');
   }
 

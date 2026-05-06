@@ -212,9 +212,23 @@ export interface MonthlyReportCustomers {
   top10: Array<{ name: string; count: number }>;
 }
 
+/** One row in the dept detail modal — ported from WP _buildReportRow. */
+export interface MonthlyReportRow {
+  orderId: number;
+  name: string;
+  customer: string;
+  size: string;
+  qty: string;
+  status: 'in_system' | 'shipped' | 'cancelled' | 'not_found';
+}
+
 export interface MonthlyReportDept {
   count: number;
   staff: Array<{ id: string; count: number }>;
+  /** Flat row list — for "รวม" tab in dept detail modal */
+  rows: MonthlyReportRow[];
+  /** staffId → row[] — for "แยกตามช่าง" tab */
+  rowsByStaff: Record<string, MonthlyReportRow[]>;
 }
 
 export interface MonthlyReport {
@@ -418,11 +432,67 @@ export function computeMonthlyReport(
     deptStaffOrderIds[dept].get(staffId)!.add(oid);
   });
 
+  // Build a row for one orderId — pulls name/customer/size/qty from orders[]
+  // + computes status from where the order's job currently sits (jobs[] /
+  // shipped[] / cancelled[]). Mirrors WP _buildReportRow.
+  const shippedOrderIds = new Set(data.shipped.map((s) => Number(s.orderId)).filter(Boolean));
+  const cancelledOrderIds = new Set(data.cancelled.map((c) => Number(c.orderId)).filter(Boolean));
+  const activeOrderIds = new Set(data.jobs.map((j) => Number(j.orderId)).filter(Boolean));
+
+  const buildRow = (orderIdStr: string): MonthlyReportRow | null => {
+    const orderId = Number(orderIdStr);
+    const ord = orderById.get(orderId);
+    if (!ord) return null;
+    let status: MonthlyReportRow['status'];
+    if (shippedOrderIds.has(orderId)) status = 'shipped';
+    else if (cancelledOrderIds.has(orderId)) status = 'cancelled';
+    else if (activeOrderIds.has(orderId)) status = 'in_system';
+    else status = 'not_found';
+
+    const raw = (ord.rawData && typeof ord.rawData === 'object'
+      ? ord.rawData as Record<string, unknown>
+      : {});
+    const sizeStr = String(raw.size || '').trim();
+    const sizeUnit = String(raw.sizeUnit || '').trim();
+    const qtyStr = String(raw.qty || '').trim();
+    const qtyUnit = String(raw.qtyUnit || '').trim();
+
+    return {
+      orderId,
+      name: ord.name || '-',
+      customer: ord.customer || '-',
+      size: sizeStr ? (sizeUnit ? `${sizeStr} ${sizeUnit}` : sizeStr) : '-',
+      qty: qtyStr ? (qtyUnit ? `${qtyStr} ${qtyUnit}` : qtyStr) : '-',
+      status,
+    };
+  };
+
   const buildDept = (dk: 'graphic' | 'print' | 'post'): MonthlyReportDept => {
     const staffArr = Array.from(deptStaffOrderIds[dk].entries())
       .map(([id, ids]) => ({ id, count: ids.size }))
       .sort((a, b) => b.count - a.count);
-    return { count: deptOrderIds[dk].size, staff: staffArr };
+
+    // Flat row list — sorted by orderId desc (newest first)
+    const rows: MonthlyReportRow[] = [];
+    deptOrderIds[dk].forEach((oid) => {
+      const r = buildRow(oid);
+      if (r) rows.push(r);
+    });
+    rows.sort((a, b) => b.orderId - a.orderId);
+
+    // Grouped by staff
+    const rowsByStaff: Record<string, MonthlyReportRow[]> = {};
+    deptStaffOrderIds[dk].forEach((ids, staffId) => {
+      const staffRows: MonthlyReportRow[] = [];
+      ids.forEach((oid) => {
+        const r = buildRow(oid);
+        if (r) staffRows.push(r);
+      });
+      staffRows.sort((a, b) => b.orderId - a.orderId);
+      rowsByStaff[staffId] = staffRows;
+    });
+
+    return { count: deptOrderIds[dk].size, staff: staffArr, rows, rowsByStaff };
   };
 
   const perDept = {

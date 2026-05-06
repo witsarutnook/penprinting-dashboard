@@ -64,6 +64,9 @@ export default async function AnalyticsPage({
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/analytics');
+  // Admin only — sales + staff get bounced to the Kanban (matches WP
+  // ROLE_REQUIREMENTS where Analytics dashboard is admin-only).
+  if (session.role !== 'admin') redirect('/board?dept=post');
 
   const view = parseView(searchParams.view);
   const months = parseRange(searchParams.months);
@@ -151,21 +154,32 @@ async function MonthlyData({ year, month }: { year: number; month: number }) {
     if (id === '-' || !id) return '— ไม่ระบุ';
     return STAFF[dept]?.find((s) => s.id === id)?.name || id;
   };
+
+  const enrichDept = (dept: 'graphic' | 'print' | 'post') => {
+    const d = report.perDept[dept];
+    const groups = d.staff.map((s: { id: string; count: number }) => ({
+      staffId: s.id,
+      staffName: resolveName(dept, s.id),
+      count: s.count,
+      rows: d.rowsByStaff[s.id] || [],
+    }));
+    return {
+      count: d.count,
+      staff: d.staff.map((s: { id: string; count: number }) => ({
+        ...s,
+        name: resolveName(dept, s.id),
+      })),
+      rows: d.rows,
+      groups,
+    };
+  };
+
   const enriched = {
     ...report,
     perDept: {
-      graphic: {
-        ...report.perDept.graphic,
-        staff: report.perDept.graphic.staff.map((s) => ({ ...s, name: resolveName('graphic', s.id) })),
-      },
-      print: {
-        ...report.perDept.print,
-        staff: report.perDept.print.staff.map((s) => ({ ...s, name: resolveName('print', s.id) })),
-      },
-      post: {
-        ...report.perDept.post,
-        staff: report.perDept.post.staff.map((s) => ({ ...s, name: resolveName('post', s.id) })),
-      },
+      graphic: enrichDept('graphic'),
+      print: enrichDept('print'),
+      post: enrichDept('post'),
     },
   };
 
