@@ -3,12 +3,14 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
 /**
- * Delete a job — all roles (matches WP — deleteJob NOT in ROLE_REQUIREMENTS).
+ * Delete a job — admin only on dashboard v2 (per user preference 2026-05-06).
+ * Apps Script `deleteJob` is open to all roles (WP relies on it for drag-drop
+ * forward = deleteJob+addJob), but the v2 modal button is locked to admin.
  *
  * Request body: { id }
  */
 export async function POST(req: Request) {
-  const session = await requireSession();
+  const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
 
   let body: { id?: number };

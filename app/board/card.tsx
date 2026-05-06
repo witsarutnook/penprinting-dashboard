@@ -358,14 +358,16 @@ function ActionButtons({
             {busy === 'cancel' ? 'กำลังยกเลิก...' : '⚠️ ยกเลิก (admin)'}
           </button>
         )}
-        <button
-          type="button"
-          onClick={deleteJob}
-          disabled={busy !== null}
-          className="px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
-        >
-          {busy === 'delete' ? 'กำลังลบ...' : '🗑 ลบงาน'}
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={deleteJob}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
+          >
+            {busy === 'delete' ? 'กำลังลบ...' : '🗑 ลบงาน'}
+          </button>
+        )}
       </div>
       {error && (
         <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
