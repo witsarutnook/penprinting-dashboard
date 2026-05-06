@@ -167,9 +167,28 @@ export function Card({
     return () => dlg.removeEventListener('click', onClick);
   }, []);
 
+  // Drag state — visually fade the card while it's being dragged elsewhere
+  const [isDragging, setIsDragging] = useState(false);
+  const draggable = !bulkMode && !isGuest;
+
+  function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
+    if (!draggable) return;
+    // Encode dept in MIME type so columns can validate same-dept during dragover
+    e.dataTransfer.setData(`application/x-job-${dept}`, String(job.id));
+    e.dataTransfer.setData('text/plain', String(job.id));
+    e.dataTransfer.effectAllowed = 'move';
+    setIsDragging(true);
+  }
+  function handleDragEnd() {
+    setIsDragging(false);
+  }
+
   return (
     <>
       <div
+        draggable={draggable}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
         className={`w-full text-left rounded-lg border px-2.5 py-1.5 transition-all relative ${
           bulkMode && isSelected
             ? 'ring-2 ring-sky-400 border-sky-300 bg-white'
@@ -178,7 +197,9 @@ export function Card({
               : job.hasCowork
                 ? 'bg-violet-50/30 border-dashed bg-white'
                 : 'bg-white'
-        } ${bulkMode && !isSelected ? 'hover:bg-sky-50/30 cursor-pointer' : ''}`}
+        } ${bulkMode && !isSelected ? 'hover:bg-sky-50/30 cursor-pointer' : ''} ${
+          draggable ? 'cursor-grab active:cursor-grabbing' : ''
+        } ${isDragging ? 'opacity-40' : ''}`}
         onClick={bulkMode ? open : undefined}
         style={{
           borderColor: bulkMode && isSelected
