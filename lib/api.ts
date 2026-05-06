@@ -129,6 +129,24 @@ const PATHS_BY_ACTION: Record<string, readonly string[]> = {
   // explicitly NOT in this map so they don't bust anything.
 };
 
+/** Resolve the operator identity for audit logging. Reads the dashboard
+ *  session cookie and returns "<role>:<user>" if logged in, undefined
+ *  otherwise. The Apps Script side (v5.10.1+) honours `body._actor` and
+ *  records the user portion in audit_log instead of the generic
+ *  "admin:dashboard" service identity. Wrapping in try/catch so calls
+ *  outside a request context (boot-time, scripts) silently skip. */
+async function currentActor(): Promise<string | undefined> {
+  try {
+    const { cookies } = await import('next/headers');
+    const { COOKIE_NAME, verifySession } = await import('@/lib/auth');
+    const session = await verifySession(cookies().get(COOKIE_NAME)?.value);
+    if (session) return `${session.role}:${session.user}`;
+  } catch {
+    // No request context (e.g. building, unit test) — fall back to dashboard service identity.
+  }
+  return undefined;
+}
+
 /** POST {action, token, ...body} — mirrors WP `apiPost`. Used for actions that
  *  take complex bodies (searchArchive, bulkForward, mutations) — token goes in body.
  *
@@ -138,7 +156,13 @@ const PATHS_BY_ACTION: Record<string, readonly string[]> = {
  *  instead of the (up to 60s) ISR cache. */
 export async function post<T>(action: string, body: Record<string, unknown> = {}, opts: { revalidate?: number } = {}): Promise<T> {
   const { url, token } = getApiBase();
-  const payload = JSON.stringify({ action, token, ...body });
+  const actor = await currentActor();
+  const payload = JSON.stringify({
+    action,
+    token,
+    ...(actor ? { _actor: actor } : {}),
+    ...body,
+  });
   const res = await fetch(url, {
     method: 'POST',
     body: payload,
