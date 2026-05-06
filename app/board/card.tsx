@@ -21,7 +21,6 @@ import {
   IconCheck,
   IconX,
   IconPencil,
-  IconTrash,
   IconAlertTriangle,
   IconAlertCircle,
   IconInfo,
@@ -172,13 +171,20 @@ export function Card({
   const draggable = !bulkMode && !isGuest;
 
   function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
-    if (!draggable) return;
-    // Encode dept in MIME type so columns can validate same-dept during dragover.
-    // Also set a generic any-job marker so cross-dept drops can light up
-    // (only valid forward targets allow drop). Source dept stored as a plain
-    // string the drop handler can read on drop (browsers DO expose values
-    // for non-protected types like 'text/plain' / our custom dept-source one
-    // during drop; only during dragover are values hidden).
+    if (!draggable) {
+      e.preventDefault();
+      return;
+    }
+    // If the user grabbed an interactive child (button / link / form input),
+    // cancel the drag so the click can fire instead. Without this, even a
+    // tiny mouse move while pressing a button kicks off a drag and the
+    // onClick is silently swallowed — the bug user sees as "Quick-win
+    // buttons หายหมด".
+    const target = e.target as HTMLElement;
+    if (target.closest('button, a, input, select, textarea, label')) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.setData(`application/x-job-${dept}`, String(job.id));
     e.dataTransfer.setData('application/x-job-any', String(job.id));
     e.dataTransfer.setData('application/x-job-source-dept', dept);
@@ -981,7 +987,7 @@ function ActionButtons({
 }) {
   const router = useRouter();
   const { recordForward } = useUndo();
-  const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel' | 'forward' | 'reassign' | 'cowork'>(null);
+  const [busy, setBusy] = useState<null | 'ship' | 'cancel' | 'forward' | 'reassign' | 'cowork'>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign' | 'cowork'>(null);
   const [actionTarget, setActionTarget] = useState('');
@@ -1023,19 +1029,6 @@ function ActionButtons({
       name: job.name,
       orderId: job.orderId,
     });
-    setBusy(null);
-    if (ok) {
-      router.refresh();
-      onSuccess();
-    }
-  }
-
-  async function deleteJob() {
-    if (!confirm(`ยืนยันการลบงาน "${job.name}" ?\n\nงานจะหายจาก Kanban — ไม่มีปุ่มกู้คืน (ใช้ Cancel ถ้าต้องการเก็บประวัติ)`))
-      return;
-    setError(null);
-    setBusy('delete');
-    const ok = await callApi('/api/jobs/delete', { id: job.id });
     setBusy(null);
     if (ok) {
       router.refresh();
@@ -1401,30 +1394,18 @@ function ActionButtons({
               {job.orderId ? `แก้ใบสั่ง #${job.orderId}` : 'แก้ไข Job'}
             </button>
           )}
-          {/* ยกเลิก: เก็บใน /cancelled — กู้คืนได้ (default ที่ปลอดภัย) */}
+          {/* ยกเลิก: เก็บใน /cancelled — กู้คืนได้. (ลบถาวรเอาออกตามคำขอ —
+           *  cancel ถือเป็น default ปลอดภัยพอ ไม่ต้องมีตัวเลือกลบจริง) */}
           {isAdmin && (
             <button
               type="button"
               onClick={cancelJob}
               disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
-              title="ย้ายไปรายการยกเลิก — กู้คืนได้ภายหลัง"
+              title="ย้ายไปรายการยกเลิก — กู้คืนได้ภายหลังจาก /cancelled"
             >
               <IconAlertTriangle size={16} />
               {busy === 'cancel' ? 'กำลังยกเลิก...' : 'ยกเลิกงาน'}
-            </button>
-          )}
-          {/* ลบถาวร: กู้คืนไม่ได้ — แยก visual ชัดเจน (red-600 + IconTrash) */}
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={deleteJob}
-              disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
-              title="ลบถาวรจาก Sheet — กู้คืนไม่ได้! ใช้ ยกเลิกงาน แทนถ้าต้องการกู้คืนทีหลัง"
-            >
-              <IconTrash size={16} />
-              {busy === 'delete' ? 'กำลังลบ...' : 'ลบถาวร'}
             </button>
           )}
         </div>
