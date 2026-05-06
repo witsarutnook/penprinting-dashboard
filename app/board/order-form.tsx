@@ -11,8 +11,10 @@ import {
 } from '@/lib/photobook';
 import {
   IconX, IconCheck, IconAlertTriangle, IconAlertCircle, IconFileText, IconPlus, IconPrinter,
+  IconTrash, IconDownload,
 } from '@/lib/icons';
 import type { OrderSummary } from '@/lib/board';
+import type { Template } from '@/lib/types';
 
 interface OrderFormProps {
   open: boolean;
@@ -22,6 +24,11 @@ interface OrderFormProps {
   /** When true, render the form as an inline page section instead of a modal dialog.
    *  Used by /orders/new (dedicated page) — no <dialog>, no overlay, scrolls with the page. */
   inline?: boolean;
+  /** Available templates (presets) to quick-fill the form. Only shown on
+   *  new-order entry (not when editing). */
+  templates?: Template[];
+  /** Whether the user can manage (save/delete) templates — admin + sales. */
+  canManageTemplates?: boolean;
 }
 
 interface SuccessInfo {
@@ -45,10 +52,17 @@ const QTY_UNITS = ['แผ่น', 'ชุด', 'เล่ม'];
 const PLATE_SIZES = ['ตัด 5', 'ตัด 4', 'ตัด 3'];
 const COVER_COLORS = ['1สี', '2สี', '3สี', '4สี'];
 
-export function OrderForm({ open, onClose, defaultOrderer, initial, inline = false }: OrderFormProps) {
+export function OrderForm({
+  open, onClose, defaultOrderer, initial, inline = false,
+  templates = [], canManageTemplates = false,
+}: OrderFormProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const router = useRouter();
   const isEdit = !!initial;
+  const [templateList, setTemplateList] = useState<Template[]>(templates);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [manageTemplatesOpen, setManageTemplatesOpen] = useState(false);
 
   const [tab, setTab] = useState<TabKey>('main');
   const [data, setData] = useState<OrderFormData>(() => emptyOrderForm(defaultOrderer));
@@ -199,10 +213,9 @@ export function OrderForm({ open, onClose, defaultOrderer, initial, inline = fal
         cascaded: respJson.cascaded,
       };
       setSuccess(successInfo);
-      if (mode === 'print') {
-        // Trigger native print of the success summary after the view renders.
-        // For full WP-style invoice template, see Phase 3.5.10 backlog.
-        setTimeout(() => window.print(), 200);
+      if (mode === 'print' && successInfo.orderId) {
+        // Open the dedicated print page in a new tab — auto-prints on load.
+        window.open(`/orders/${successInfo.orderId}/print`, '_blank');
       }
     } catch (err) {
       setBusy(false);
@@ -213,6 +226,87 @@ export function OrderForm({ open, onClose, defaultOrderer, initial, inline = fal
   function reset() {
     if (!confirm('ล้างข้อมูลทั้งหมดในฟอร์ม?')) return;
     setData(emptyOrderForm(defaultOrderer));
+  }
+
+  function applyTemplate(templateId: string) {
+    if (!templateId) return;
+    const tpl = templateList.find((t) => String(t.id) === templateId);
+    if (!tpl) return;
+    const raw = (tpl.rawData && typeof tpl.rawData === 'object')
+      ? tpl.rawData as Record<string, unknown>
+      : {};
+    // Build the form from template's snapshot — preserve the current orderer
+    // (templates aren't tied to a specific user) and reset dates so user
+    // sets fresh ones for this order.
+    const next = orderFormFromRaw(raw, data.orderer || defaultOrderer);
+    next.dateIn = bangkokTodayISO();
+    next.dateDue = '';
+    // Don't carry the customer name from template either — usually it was the
+    // sample customer. User should pick fresh.
+    next.customer = '';
+    next.name = '';
+    setData(next);
+    setTab('main');
+    setTemplateError(null);
+  }
+
+  async function saveAsTemplate() {
+    const name = prompt('ตั้งชื่อ template:');
+    if (!name || !name.trim()) return;
+    setTemplateError(null);
+    setTemplateBusy(true);
+    try {
+      const res = await fetch('/api/orders/templates/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), rawData: data }),
+      });
+      const respJson = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTemplateError(respJson?.error || `HTTP ${res.status}`);
+        return;
+      }
+      // Optimistic add — real list refreshes on next page load
+      const tplId = Number(respJson.id);
+      setTemplateList((list) => [
+        ...list,
+        {
+          id: tplId, name: name.trim(),
+          rawData: data as unknown as Record<string, unknown>,
+          createdBy: defaultOrderer,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      router.refresh();
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
+  async function deleteTemplate(id: number) {
+    if (!confirm('ลบ template นี้? ไม่สามารถย้อนกลับได้')) return;
+    setTemplateError(null);
+    setTemplateBusy(true);
+    try {
+      const res = await fetch('/api/orders/templates/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const respJson = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTemplateError(respJson?.error || `HTTP ${res.status}`);
+        return;
+      }
+      setTemplateList((list) => list.filter((t) => Number(t.id) !== Number(id)));
+      router.refresh();
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    } finally {
+      setTemplateBusy(false);
+    }
   }
 
   const body = (
@@ -237,8 +331,8 @@ export function OrderForm({ open, onClose, defaultOrderer, initial, inline = fal
             )}
           </header>
 
-          {/* Order type segment */}
-          <div className="px-5 pt-4 flex-shrink-0">
+          {/* Order type segment + templates row */}
+          <div className="px-5 pt-4 flex-shrink-0 flex items-center justify-between gap-3 flex-wrap">
             <div className="inline-flex rounded-lg bg-stone-100 p-1 text-sm">
               <button type="button" onClick={() => patch({ orderType: 'normal' })}
                 className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md transition-colors ${
@@ -257,7 +351,90 @@ export function OrderForm({ open, onClose, defaultOrderer, initial, inline = fal
                 Photobook
               </button>
             </div>
+
+            {/* Templates row — only on new entries (not when editing) */}
+            {!isEdit && (
+              <div className="flex items-center gap-2 flex-wrap">
+                {templateList.length > 0 && (
+                  <select
+                    onChange={(e) => { applyTemplate(e.target.value); e.currentTarget.value = ''; }}
+                    disabled={busy || templateBusy}
+                    className="px-2 py-1 border border-stone-200 rounded-lg text-xs bg-white focus:outline-none focus:border-accent disabled:opacity-50"
+                  >
+                    <option value="">— ใช้ template —</option>
+                    {templateList.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                )}
+                {canManageTemplates && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={saveAsTemplate}
+                      disabled={busy || templateBusy || !data.name.trim()}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200 disabled:opacity-50"
+                      title="บันทึกข้อมูลปัจจุบันเป็น template"
+                    >
+                      <IconDownload size={12} />
+                      บันทึก template
+                    </button>
+                    {templateList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setManageTemplatesOpen((v) => !v)}
+                        disabled={busy || templateBusy}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200 disabled:opacity-50"
+                      >
+                        จัดการ ({templateList.length})
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
+
+          {manageTemplatesOpen && !isEdit && canManageTemplates && (
+            <div className="mx-5 mt-3 rounded-lg border border-stone-200 bg-stone-50/60 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-stone-700">Templates</h3>
+                <button
+                  type="button"
+                  onClick={() => setManageTemplatesOpen(false)}
+                  className="text-stone-400 hover:text-stone-700 w-6 h-6 flex items-center justify-center rounded hover:bg-stone-100"
+                >
+                  <IconX size={14} />
+                </button>
+              </div>
+              {templateList.length === 0 ? (
+                <p className="text-xs text-stone-500 py-2">ยังไม่มี template — กด &quot;บันทึก template&quot; เพื่อเก็บฟอร์มปัจจุบัน</p>
+              ) : (
+                <ul className="space-y-1">
+                  {templateList.map((t) => (
+                    <li key={t.id} className="flex items-center justify-between gap-2 text-sm bg-white rounded px-2 py-1 border border-stone-100">
+                      <span className="font-medium text-stone-800 truncate">{t.name}</span>
+                      <span className="text-[11px] text-stone-400 truncate hidden sm:block">{t.createdBy}</span>
+                      <button
+                        type="button"
+                        onClick={() => deleteTemplate(Number(t.id))}
+                        disabled={templateBusy}
+                        className="inline-flex items-center gap-0.5 text-[11px] text-red-600 hover:text-red-800 hover:bg-red-50 px-2 py-0.5 rounded disabled:opacity-50"
+                      >
+                        <IconTrash size={11} />
+                        ลบ
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {templateError && (
+                <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                  {templateError}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Progress bar */}
           <div className="px-5 pt-3 flex-shrink-0">

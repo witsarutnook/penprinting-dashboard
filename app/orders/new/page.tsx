@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
+import { loadAll } from '@/lib/api';
+import type { Template } from '@/lib/types';
 import { OrderEntryClient } from './client';
 
 export const metadata: Metadata = {
@@ -20,6 +22,15 @@ export default async function NewOrderPage() {
     redirect('/board?dept=post');
   }
 
+  // Fetch templates (best effort — fail open if Apps Script is slow)
+  let templates: Template[] = [];
+  try {
+    const data = await loadAll();
+    templates = data.templates || [];
+  } catch {
+    // ignore — show form without templates
+  }
+
   return (
     <DashboardShell user={session.user} role={session.role}>
       <header className="border-b border-stone-100 bg-white">
@@ -31,7 +42,7 @@ export default async function NewOrderPage() {
         </div>
       </header>
       <div className="px-4 sm:px-6 py-6 max-w-4xl mx-auto">
-        <OrderEntryClient defaultOrderer={session.user} />
+        <OrderEntryClient defaultOrderer={session.user} templates={templates} />
       </div>
     </DashboardShell>
   );

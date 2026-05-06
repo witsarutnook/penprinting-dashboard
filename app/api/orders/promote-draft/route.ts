@@ -1,0 +1,144 @@
+import { NextResponse } from 'next/server';
+import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { requireSession } from '@/lib/route-helpers';
+import { STAFF, type Dept } from '@/lib/board';
+import { toISODate } from '@/lib/jobs';
+
+/**
+ * Promote a draft order into the active queue — admin + sales.
+ *
+ * A draft is an order with `status: 'draft'` and no Job row yet
+ * (saveDraft skipped addJob). Promote validates the order has the full set
+ * of required fields, allocates a Job id, calls Apps Script `addJob`, then
+ * `updateOrder` to flip status: 'draft' → 'sent'.
+ *
+ * Request body: { id }
+ */
+export async function POST(req: Request) {
+  const session = await requireSession(['admin', 'sales']);
+  if (session instanceof NextResponse) return session;
+
+  let body: { id?: number | string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  const id = Number(body.id);
+  if (!id || !Number.isFinite(id)) {
+    return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
+  }
+
+  let snap;
+  try {
+    snap = await loadAllFresh();
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
+  }
+
+  const order = snap.orders.find((o) => Number(o.id) === id);
+  if (!order) {
+    return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
+  }
+  const status = String(order.status || '').toLowerCase();
+  if (status !== 'draft') {
+    return NextResponse.json({ error: `ใบสั่ง #${id} ไม่ใช่แบบร่าง (status=${status})` }, { status: 400 });
+  }
+
+  // Validate full required set — same gate as POST /api/orders/add (non-draft path)
+  const missing: string[] = [];
+  const customer = String(order.customer || '').trim();
+  const dateDue = toISODate(order.dateDue);
+  const dateIn = toISODate(order.dateIn);
+  const orderer = String(order.orderer || '').trim();
+  const assignDept = String(order.assignDept || '').trim() as Dept | '';
+  const assignStaff = String(order.assignStaff || '').trim();
+  if (!customer || customer === '-') missing.push('ชื่อลูกค้า');
+  if (!dateDue) missing.push('กำหนดส่ง');
+  if (!orderer) missing.push('ผู้สั่งงาน');
+  if (!assignDept || !assignStaff) {
+    missing.push('ผู้รับงาน (กราฟิก/พิมพ์)');
+  } else {
+    const valid = STAFF[assignDept as Dept]?.some((s) => s.id === assignStaff);
+    if (!valid) missing.push('ผู้รับงาน (ค่าไม่ถูกต้อง)');
+  }
+  if (missing.length > 0) {
+    return NextResponse.json(
+      { error: `แบบร่างยังไม่ครบ — ขาด: ${missing.join(', ')}. โปรดแก้ไขใบสั่งก่อน` },
+      { status: 400 },
+    );
+  }
+
+  // Allocate job id
+  let jobId: number;
+  try {
+    const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
+    if (r.error || !r.nextId) {
+      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+    }
+    jobId = Number(r.nextId);
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 502 });
+  }
+
+  // Create the job
+  const jobPayload = {
+    id: jobId,
+    name: order.name,
+    date: dateDue,
+    dateIn: dateIn || dateDue,
+    staff: assignStaff,
+    dept: assignDept,
+    status: 'pending',
+    orderId: id,
+  };
+  try {
+    const r = await post<{ ok?: boolean; error?: string }>('addJob', { data: jobPayload });
+    if (r.error) return NextResponse.json({ error: `addJob failed — ${r.error}` }, { status: 502 });
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `addJob failed — ${msg}` }, { status: 502 });
+  }
+
+  // Flip order status: draft → sent. Preserve the existing details/rawData snapshot.
+  const orderPayload = {
+    id,
+    name: order.name,
+    customer,
+    dateIn,
+    dateDue,
+    price: order.price ?? '',
+    assignDept,
+    assignStaff,
+    orderer,
+    status: 'sent',
+    details: order.details || {},
+    rawData: order.rawData || {},
+  };
+  try {
+    const r = await post<{ ok?: boolean; error?: string }>('updateOrder', { data: orderPayload });
+    if (r.error) {
+      return NextResponse.json(
+        {
+          ok: true, jobId, orderId: id, partial: true,
+          warning: `Job #${jobId} สร้างแล้วแต่ปรับสถานะใบสั่งไม่สำเร็จ — ${r.error}`,
+        },
+        { status: 200 },
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      {
+        ok: true, jobId, orderId: id, partial: true,
+        warning: `Job #${jobId} สร้างแล้วแต่ปรับสถานะใบสั่งไม่สำเร็จ — ${msg}`,
+      },
+      { status: 200 },
+    );
+  }
+
+  return NextResponse.json({ ok: true, jobId, orderId: id });
+}

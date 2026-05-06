@@ -6,7 +6,7 @@ import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { displayDate } from '@/lib/jobs';
 import { AutoSync } from '@/lib/auto-sync';
-import { IconSearch, IconFileText, IconPlus, IconAlertCircle } from '@/lib/icons';
+import { IconSearch, IconFileText, IconPlus, IconAlertCircle, IconPrinter } from '@/lib/icons';
 import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
 import { computeUrgency, getBangkokToday, URGENCY_COLORS, URGENCY_LABELS } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
@@ -314,10 +314,29 @@ export default async function OrdersListPage({
                 {filtered.slice(0, 500).map((o, idx) => {
                   const urgencyColor = o.jobUrgency in URGENCY_COLORS ? URGENCY_COLORS[o.jobUrgency as 'normal'] : '#9ca3af';
                   const showUrgencyBadge = o.step !== 'จัดส่งแล้ว' && o.step !== 'ยกเลิก' && o.step !== 'ร่าง' && o.step !== 'ไม่พบงาน';
+                  const canEdit = (session.role === 'admin' || session.role === 'sales')
+                    && o.orderStatus !== 'shipped' && o.orderStatus !== 'cancelled';
                   return (
                     <tr key={o.id} className={`hover:bg-stone-50 ${o.isOrphan ? 'bg-red-50/30' : ''}`}>
                       <td className="px-3 py-2 tabular-nums text-stone-400">{idx + 1}</td>
-                      <td className="px-3 py-2 tabular-nums text-stone-700 font-medium">#{o.id}</td>
+                      <td className="px-3 py-2 tabular-nums text-stone-700 font-medium whitespace-nowrap">
+                        {canEdit ? (
+                          <Link href={`/orders/${o.id}/edit`} className="text-sky-700 hover:underline">
+                            #{o.id}
+                          </Link>
+                        ) : (
+                          <>#{o.id}</>
+                        )}
+                        <Link
+                          href={`/orders/${o.id}/print`}
+                          target="_blank"
+                          className="ml-1.5 text-stone-400 hover:text-sky-700"
+                          title="พิมพ์ใบสั่งงาน"
+                          aria-label="พิมพ์"
+                        >
+                          <IconPrinter size={12} className="inline-block" />
+                        </Link>
+                      </td>
                       <td className="px-3 py-2 font-medium text-stone-900 max-w-[14rem] truncate" title={o.name}>{o.name}</td>
                       <td className="px-3 py-2 text-stone-600 max-w-[12rem] truncate" title={o.customer}>{o.customer || '—'}</td>
                       <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">{displayDate(o.dateIn)}</td>
