@@ -843,16 +843,6 @@ function DetailContent({
                 </ul>
               </div>
             )}
-            {job.order && canEditOrder && (
-              <button
-                type="button"
-                onClick={onEditOrder}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-accent hover:bg-accent/10"
-              >
-                <IconPencil size={12} />
-                แก้ใบสั่งงาน #{job.order.id}
-              </button>
-            )}
           </>
         )}
 
@@ -907,7 +897,13 @@ function DetailContent({
 
       {/* Action footer */}
       <div className="border-t border-stone-100 bg-stone-50/60 px-5 py-3 flex-shrink-0">
-        <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
+        <ActionButtons
+          job={job}
+          sessionRole={sessionRole}
+          onEdit={onEdit}
+          onEditOrder={onEditOrder}
+          onSuccess={onClose}
+        />
       </div>
     </div>
   );
@@ -968,11 +964,13 @@ function ActionButtons({
   job,
   sessionRole,
   onEdit,
+  onEditOrder,
   onSuccess,
 }: {
   job: BoardJob;
   sessionRole: string | null;
   onEdit: () => void;
+  onEditOrder: () => void;
   onSuccess: () => void;
 }) {
   const router = useRouter();
@@ -986,6 +984,8 @@ function ActionButtons({
   const fromType = computeFromType(String(job.dept), String(job.staff));
   const forwardTargets = fromType ? getVisibleTargets(fromType, isAdmin) : [];
   const canForward = forwardTargets.length > 0;
+  // จัดส่งเสร็จ — only on the post:ship column (matches Card-level rule)
+  const canShip = String(job.dept) === 'post' && job.staff === 'ship';
 
   // Same-dept reassign targets — exclude current staff and outsource/diecut_out for non-admin.
   const dept = job.dept as Dept;
@@ -1347,15 +1347,17 @@ function ActionButtons({
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={moveToShipped}
-            disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <IconCheck size={16} />
-            {busy === 'ship' ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
-          </button>
+          {canShip && (
+            <button
+              type="button"
+              onClick={moveToShipped}
+              disabled={busy !== null}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <IconCheck size={16} />
+              {busy === 'ship' ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
+            </button>
+          )}
           {canForward && (
             <button
               type="button"
@@ -1378,37 +1380,45 @@ function ActionButtons({
               ย้าย
             </button>
           )}
-          {isAdmin && (
+          {/* แก้ไข: รวมแก้ใบสั่งงาน + แก้ Job เป็นปุ่มเดียว — admin/sales ทั้งคู่ */}
+          {(isAdmin || sessionRole === 'sales') && (
             <button
               type="button"
-              onClick={onEdit}
+              onClick={job.orderId ? onEditOrder : onEdit}
               disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent/10 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50"
+              title={job.orderId
+                ? `แก้ใบสั่งงาน #${job.orderId} (cascade ไป Job ที่เชื่อมอยู่)`
+                : 'แก้ Job (งานไม่มีใบสั่งแม่)'}
             >
               <IconPencil size={16} />
-              แก้ไข
+              {job.orderId ? `แก้ใบสั่ง #${job.orderId}` : 'แก้ไข Job'}
             </button>
           )}
+          {/* ยกเลิก: เก็บใน /cancelled — กู้คืนได้ (default ที่ปลอดภัย) */}
           {isAdmin && (
             <button
               type="button"
               onClick={cancelJob}
               disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+              title="ย้ายไปรายการยกเลิก — กู้คืนได้ภายหลัง"
             >
               <IconAlertTriangle size={16} />
-              {busy === 'cancel' ? 'กำลังยกเลิก...' : 'ยกเลิก (admin)'}
+              {busy === 'cancel' ? 'กำลังยกเลิก...' : 'ยกเลิกงาน'}
             </button>
           )}
+          {/* ลบถาวร: กู้คืนไม่ได้ — แยก visual ชัดเจน (red-600 + IconTrash) */}
           {isAdmin && (
             <button
               type="button"
               onClick={deleteJob}
               disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
+              title="ลบถาวรจาก Sheet — กู้คืนไม่ได้! ใช้ ยกเลิกงาน แทนถ้าต้องการกู้คืนทีหลัง"
             >
               <IconTrash size={16} />
-              {busy === 'delete' ? 'กำลังลบ...' : 'ลบงาน'}
+              {busy === 'delete' ? 'กำลังลบ...' : 'ลบถาวร'}
             </button>
           )}
         </div>

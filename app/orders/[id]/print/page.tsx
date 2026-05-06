@@ -6,7 +6,7 @@ import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { displayDate } from '@/lib/jobs';
 import { STAFF } from '@/lib/board';
 import { type PhotobookItem } from '@/lib/photobook';
-import { AutoPrint } from './auto-print';
+import { AutoPrint, PrintButton } from './auto-print';
 
 export const metadata: Metadata = {
   title: 'พิมพ์ใบสั่งงาน',
@@ -108,16 +108,7 @@ export default async function OrderPrintPage({ params }: { params: { id: string 
             {pin && <> · PIN <b style={{ letterSpacing: '2px', color: '#111' }}>{pin}</b></>}
           </span>
           <span>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              style={{
-                padding: '4px 12px', borderRadius: 4, border: '1px solid #1e3a8a',
-                background: '#1e3a8a', color: '#fff', fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              พิมพ์
-            </button>
+            <PrintButton />
             <a
               href="/orders"
               style={{

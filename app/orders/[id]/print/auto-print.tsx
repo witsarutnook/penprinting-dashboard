@@ -14,3 +14,19 @@ export function AutoPrint() {
   }, []);
   return null;
 }
+
+/** Manual print button (server components can't have onClick handlers). */
+export function PrintButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => window.print()}
+      style={{
+        padding: '4px 12px', borderRadius: 4, border: '1px solid #1e3a8a',
+        background: '#1e3a8a', color: '#fff', fontWeight: 600, cursor: 'pointer',
+      }}
+    >
+      พิมพ์
+    </button>
+  );
+}
