@@ -12,6 +12,7 @@ import {
 } from '@/lib/calendar';
 import { CalendarGrid } from './grid';
 import { LogoutButton } from '../analytics/logout-button';
+import { AutoSync } from '@/lib/auto-sync';
 
 export const metadata: Metadata = {
   title: 'Calendar',
@@ -83,6 +84,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
 
   return (
     <main className="min-h-screen bg-stone-50">
+      <AutoSync />
       <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">

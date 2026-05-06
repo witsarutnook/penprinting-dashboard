@@ -7,6 +7,7 @@ import { computeBoard, URGENCY_COLORS, URGENCY_LABELS, type Urgency } from '@/li
 import { LogoutButton } from '../analytics/logout-button';
 import { Column } from './column';
 import { BoardToolbar } from './toolbar';
+import { AutoSync } from '@/lib/auto-sync';
 
 export const metadata: Metadata = {
   title: 'Kanban Board',
@@ -33,6 +34,7 @@ export default async function BoardPage() {
 
   return (
     <main className="min-h-screen bg-stone-50">
+      <AutoSync />
       <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
         <div className="max-w-full mx-auto px-3 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">

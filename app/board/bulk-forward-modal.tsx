@@ -15,6 +15,7 @@ import {
   getVisibleTargets,
   type ForwardTarget,
 } from '@/lib/forward';
+import { broadcastWrite } from '@/lib/auto-sync';
 
 const MAX_BATCH = 25;
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
@@ -185,6 +186,7 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
         setError(data?.error || `HTTP ${res.status}`);
         return;
       }
+      broadcastWrite('/api/jobs/bulk-forward');
       const failed = data.failed || [];
       if (failed.length > 0) {
         setError(

@@ -11,6 +11,7 @@ import {
   STAFF,
 } from '@/lib/board';
 import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
+import { broadcastWrite } from '@/lib/auto-sync';
 import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -286,6 +287,7 @@ function ActionButtons({
       setError(data?.error || `HTTP ${res.status}`);
       return false;
     }
+    broadcastWrite(path);
     return true;
   }
 

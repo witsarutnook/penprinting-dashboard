@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { STAFF, DEPT_LABELS, type Dept, type BoardJob } from '@/lib/board';
 import { dmyToISOInput, bangkokTodayISO } from '@/lib/jobs';
+import { broadcastWrite } from '@/lib/auto-sync';
 
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
 
@@ -129,6 +130,7 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
         setBusy(false);
         return;
       }
+      broadcastWrite(path);
       router.refresh();
       onClose();
     } catch (err) {

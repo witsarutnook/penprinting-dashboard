@@ -11,6 +11,7 @@ import {
   DeptWorkloadChart,
 } from './charts';
 import { LogoutButton } from './logout-button';
+import { AutoSync } from '@/lib/auto-sync';
 
 export const metadata: Metadata = {
   title: 'Analytics',
@@ -55,6 +56,7 @@ export default async function AnalyticsPage({
 
   return (
     <main className="min-h-screen bg-stone-50">
+      <AutoSync />
       <header className="border-b border-stone-200 bg-white">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
