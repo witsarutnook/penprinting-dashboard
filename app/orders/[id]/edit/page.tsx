@@ -25,6 +25,10 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   if (!id || !Number.isFinite(id)) notFound();
 
   let initial: OrderSummary | null = null;
+  let recentOrders: Array<{
+    id: number; name: string; customer: string;
+    rawData: Record<string, unknown> | null;
+  }> = [];
   let errorMessage: string | null = null;
   try {
     const data = await loadAll();
@@ -44,6 +48,18 @@ export default async function EditOrderPage({ params }: { params: { id: string }
       details: (o.details && typeof o.details === 'object') ? (o.details as Record<string, unknown>) : null,
       rawData: (o.rawData && typeof o.rawData === 'object') ? (o.rawData as Record<string, unknown>) : null,
     };
+    // Pass recent orders for autocomplete + ดึงล่าสุด button
+    recentOrders = [...data.orders]
+      .sort((a, b) => Number(b.id) - Number(a.id))
+      .slice(0, 1000)
+      .map((x) => ({
+        id: Number(x.id),
+        name: String(x.name || ''),
+        customer: String(x.customer || ''),
+        rawData: (x.rawData && typeof x.rawData === 'object')
+          ? (x.rawData as Record<string, unknown>)
+          : null,
+      }));
   } catch (err) {
     errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
   }
@@ -51,7 +67,7 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   if (errorMessage) {
     return (
       <DashboardShell user={session.user} role={session.role}>
-        <div className="px-4 sm:px-6 py-4 max-w-4xl mx-auto">
+        <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto">
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
             <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
             <p className="text-sm text-amber-800 mt-2 font-mono">{errorMessage}</p>
@@ -66,7 +82,7 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   return (
     <DashboardShell user={session.user} role={session.role}>
       <header className="border-b border-stone-100 bg-white">
-        <div className="px-4 sm:px-6 py-4 max-w-4xl mx-auto flex items-center gap-3">
+        <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto flex items-center gap-3">
           <Link
             href="/orders"
             className="text-stone-500 hover:text-stone-900 inline-flex items-center gap-1 text-sm"
@@ -84,12 +100,13 @@ export default async function EditOrderPage({ params }: { params: { id: string }
           )}
         </div>
       </header>
-      <div className="px-4 sm:px-6 py-6 max-w-4xl mx-auto">
+      <div className="px-4 sm:px-6 py-6 max-w-7xl mx-auto">
         {initial && (
           <OrderEditClient
             initial={initial}
             defaultOrderer={session.user}
             isDraft={isDraft}
+            recentOrders={recentOrders}
           />
         )}
       </div>

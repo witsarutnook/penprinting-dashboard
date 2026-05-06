@@ -33,6 +33,50 @@ interface OrderFormProps {
    *  populated but dates / customer / name are cleared so the user fills
    *  fresh values for the new order. Mirrors WP duplicateOrder(). */
   initialPrefill?: Record<string, unknown> | null;
+  /** Recent orders for the "ดึงงานล่าสุดของลูกค้านี้" button + customer
+   *  autocomplete history. Pass a lite shape (no need for spec) — only id,
+   *  name, customer, and rawData (for the duplicate fill). */
+  recentOrders?: Array<{
+    id: number;
+    name: string;
+    customer: string;
+    rawData: Record<string, unknown> | null;
+  }>;
+}
+
+/** Customer master list — fetched once from /customers.json (1.6k rows,
+ *  ~140KB) and cached in module scope so subsequent OrderForm mounts reuse
+ *  it without refetching. */
+interface CustomerEntry { name: string; tel?: string }
+let customersCache: CustomerEntry[] | null = null;
+let customersFetchPromise: Promise<CustomerEntry[]> | null = null;
+
+function fetchCustomers(): Promise<CustomerEntry[]> {
+  if (customersCache) return Promise.resolve(customersCache);
+  if (customersFetchPromise) return customersFetchPromise;
+  customersFetchPromise = fetch('/customers.json', { cache: 'force-cache' })
+    .then((r) => r.ok ? r.json() : [])
+    .then((data: unknown) => {
+      const list = Array.isArray(data) ? data : [];
+      customersCache = list
+        .map((c: unknown) => {
+          if (typeof c === 'string') return { name: c.trim() } as CustomerEntry;
+          if (c && typeof c === 'object') {
+            const obj = c as Record<string, unknown>;
+            const name = String(obj.name || '').trim();
+            if (!name) return null;
+            return { name, tel: String(obj.tel || obj.phone || '') };
+          }
+          return null;
+        })
+        .filter((c): c is CustomerEntry => !!c);
+      return customersCache;
+    })
+    .catch(() => {
+      customersCache = [];
+      return [];
+    });
+  return customersFetchPromise;
 }
 
 interface SuccessInfo {
@@ -60,10 +104,18 @@ export function OrderForm({
   open, onClose, defaultOrderer, initial, inline = false,
   templates = [], canManageTemplates = false,
   initialPrefill = null,
+  recentOrders = [],
 }: OrderFormProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const router = useRouter();
   const isEdit = !!initial;
+  const [customers, setCustomers] = useState<CustomerEntry[]>(customersCache || []);
+  useEffect(() => {
+    if (customersCache) return;
+    let cancelled = false;
+    fetchCustomers().then((list) => { if (!cancelled) setCustomers(list); });
+    return () => { cancelled = true; };
+  }, []);
   const [templateList, setTemplateList] = useState<Template[]>(templates);
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
@@ -249,6 +301,57 @@ export function OrderForm({
     if (!confirm('ล้างข้อมูลทั้งหมดในฟอร์ม?')) return;
     setData(emptyOrderForm(defaultOrderer));
   }
+
+  /** Combined customer suggestions — recent orders (most-recent first) +
+   *  customers.json (alphabetical). Dedupe by lowercase name. */
+  const customerSuggestions = useMemo<CustomerEntry[]>(() => {
+    const seen = new Map<string, CustomerEntry>();
+    for (const o of recentOrders) {
+      const name = (o.customer || '').trim();
+      if (!name || name === '-') continue;
+      const key = name.toLowerCase();
+      if (!seen.has(key)) seen.set(key, { name });
+    }
+    for (const c of customers) {
+      const key = c.name.trim().toLowerCase();
+      if (!seen.has(key)) seen.set(key, c);
+    }
+    return Array.from(seen.values());
+  }, [recentOrders, customers]);
+
+  /** Find the most-recent order with rawData for a customer (case-insensitive). */
+  const lastOrderForCustomer = useMemo(() => {
+    const map = new Map<string, OrderFormProps['recentOrders'] extends infer T
+      ? T extends Array<infer U> ? U : never : never>();
+    for (const o of recentOrders) {
+      const name = (o.customer || '').trim().toLowerCase();
+      if (!name || name === '-' || !o.rawData) continue;
+      if (!map.has(name)) map.set(name, o); // recentOrders is sorted desc by id, first wins
+    }
+    return map;
+  }, [recentOrders]);
+
+  function loadFromLastOrder() {
+    const customerName = data.customer.trim();
+    if (!customerName) return;
+    const last = lastOrderForCustomer.get(customerName.toLowerCase());
+    if (!last || !last.rawData) {
+      alert('ไม่พบงานเก่าของลูกค้านี้');
+      return;
+    }
+    const next = orderFormFromRaw(last.rawData, data.orderer || defaultOrderer);
+    // Preserve the customer name the user typed; reset dates so they pick fresh
+    next.customer = customerName;
+    next.dateIn = bangkokTodayISO();
+    next.dateDue = '';
+    setData(next);
+    setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
+    setTab('main');
+  }
+
+  const hasLastOrderForCustomer =
+    !!data.customer.trim() &&
+    lastOrderForCustomer.has(data.customer.trim().toLowerCase());
 
   function applyTemplate(templateId: string) {
     if (!templateId) return;
@@ -491,6 +594,9 @@ export function OrderForm({
                 onAddPbItem={addPbItem}
                 onUpdatePbItem={setPbItem}
                 onRemovePbItem={removePbItem}
+                customerSuggestions={customerSuggestions}
+                hasLastOrderForCustomer={hasLastOrderForCustomer}
+                onLoadFromLastOrder={loadFromLastOrder}
               />
             )}
             {tab === 'post' && data.orderType === 'normal' && (
@@ -569,6 +675,7 @@ export function OrderForm({
 
 function MainTab({
   data, patch, togglePlateSize, onAddPbItem, onUpdatePbItem, onRemovePbItem,
+  customerSuggestions, hasLastOrderForCustomer, onLoadFromLastOrder,
 }: {
   data: OrderFormData;
   patch: (p: Partial<OrderFormData>) => void;
@@ -576,6 +683,9 @@ function MainTab({
   onAddPbItem: () => void;
   onUpdatePbItem: (i: number, p: Partial<PhotobookItem>) => void;
   onRemovePbItem: (i: number) => void;
+  customerSuggestions: CustomerEntry[];
+  hasLastOrderForCustomer: boolean;
+  onLoadFromLastOrder: () => void;
 }) {
   const isPB = data.orderType === 'photobook';
   return (
@@ -587,8 +697,21 @@ function MainTab({
               className={inputCls} maxLength={200} />
           </Field>
           <Field label="ชื่อลูกค้า *">
-            <input type="text" required value={data.customer} onChange={(e) => patch({ customer: e.target.value })}
-              className={inputCls} maxLength={200} />
+            <CustomerAutocomplete
+              value={data.customer}
+              onChange={(v) => patch({ customer: v })}
+              suggestions={customerSuggestions}
+            />
+            {hasLastOrderForCustomer && (
+              <button
+                type="button"
+                onClick={onLoadFromLastOrder}
+                className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium"
+                title="ใส่ค่าจาก spec ของงานเก่าลูกค้านี้ — ระบบจะเซ็ตวันที่รับเป็นวันนี้และเคลียร์กำหนดส่ง"
+              >
+                ↩ ดึงรายละเอียดจากงานล่าสุดของลูกค้านี้
+              </button>
+            )}
           </Field>
           <Field label="วันที่รับสั่งงาน">
             <input type="date" value={data.dateIn} onChange={(e) => patch({ dateIn: e.target.value })}
@@ -938,6 +1061,107 @@ function CB({ checked, onChange, label }: { checked: boolean; onChange: (c: bool
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-accent" />
       <span>{label}</span>
     </label>
+  );
+}
+
+/** Customer name input with autocomplete dropdown — port of WP
+ *  initAutocomplete (production-monitoring.js:5220). Filters
+ *  `suggestions` by substring match (case-insensitive), shows up to 12
+ *  results, supports keyboard nav (Arrow up/down, Enter, Escape). */
+function CustomerAutocomplete({
+  value, onChange, suggestions,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  suggestions: CustomerEntry[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return [];
+    return suggestions
+      .filter((c) => c.name.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [value, suggestions]);
+
+  // Close on outside click
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  function pick(c: CustomerEntry) {
+    onChange(c.name);
+    setOpen(false);
+    setActiveIdx(-1);
+    inputRef.current?.blur();
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || matches.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(i + 1, matches.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter' && activeIdx >= 0) {
+      e.preventDefault();
+      pick(matches[activeIdx]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <input
+        ref={inputRef}
+        type="text"
+        required
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+          setActiveIdx(-1);
+        }}
+        onFocus={() => { if (value.trim()) setOpen(true); }}
+        onKeyDown={onKeyDown}
+        className={inputCls}
+        maxLength={200}
+        autoComplete="off"
+      />
+      {open && matches.length > 0 && (
+        <div
+          className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-stone-200 bg-white shadow-lg max-h-64 overflow-y-auto"
+        >
+          {matches.map((c, i) => (
+            <button
+              key={`${c.name}-${i}`}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); pick(c); }}
+              onMouseEnter={() => setActiveIdx(i)}
+              className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 ${
+                i === activeIdx ? 'bg-sky-50 text-sky-900' : 'hover:bg-stone-50'
+              }`}
+            >
+              <span className="truncate">
+                <span className="font-medium text-stone-900">{c.name}</span>
+                {c.tel && <span className="ml-2 text-[11px] text-stone-500">{c.tel}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

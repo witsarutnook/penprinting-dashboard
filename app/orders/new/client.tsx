@@ -4,6 +4,13 @@ import { useRouter } from 'next/navigation';
 import { OrderForm } from '@/app/board/order-form';
 import type { Template } from '@/lib/types';
 
+interface RecentOrder {
+  id: number;
+  name: string;
+  customer: string;
+  rawData: Record<string, unknown> | null;
+}
+
 /** Inline order-entry on /orders/new — no modal, scrolls with the page.
  *  After save the user is redirected to the Kanban.
  *
@@ -11,11 +18,12 @@ import type { Template } from '@/lib/types';
  *  OrderForm is rendered with `initialPrefill`, which fills spec fields
  *  but resets dates / id / customer / name. */
 export function OrderEntryClient({
-  defaultOrderer, templates = [], prefill = null,
+  defaultOrderer, templates = [], prefill = null, recentOrders = [],
 }: {
   defaultOrderer: string;
   templates?: Template[];
   prefill?: Record<string, unknown> | null;
+  recentOrders?: RecentOrder[];
 }) {
   const router = useRouter();
   return (
@@ -27,6 +35,7 @@ export function OrderEntryClient({
       templates={templates}
       canManageTemplates
       initialPrefill={prefill}
+      recentOrders={recentOrders}
     />
   );
 }

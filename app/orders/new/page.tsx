@@ -27,13 +27,32 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Sea
     redirect('/board?dept=post');
   }
 
-  // Fetch templates + (optionally) the source order for the duplicate flow.
+  // Fetch templates + recentOrders (for autocomplete + ดึงงานล่าสุด button)
+  // + (optionally) the source order for the duplicate flow.
   let templates: Template[] = [];
+  let recentOrders: Array<{
+    id: number; name: string; customer: string;
+    rawData: Record<string, unknown> | null;
+  }> = [];
   let prefillFromOrder: Record<string, unknown> | null = null;
   let prefillSourceName: string | null = null;
   try {
     const data = await loadAll();
     templates = data.templates || [];
+
+    // newest-first; only orders with rawData are useful for the
+    // "ดึงงานล่าสุด" button. Cap at 1000 to keep payload sane.
+    recentOrders = [...data.orders]
+      .sort((a, b) => Number(b.id) - Number(a.id))
+      .slice(0, 1000)
+      .map((o) => ({
+        id: Number(o.id),
+        name: String(o.name || ''),
+        customer: String(o.customer || ''),
+        rawData: (o.rawData && typeof o.rawData === 'object')
+          ? (o.rawData as Record<string, unknown>)
+          : null,
+      }));
 
     if (searchParams.from) {
       const fromId = Number(searchParams.from);
@@ -55,7 +74,7 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Sea
   return (
     <DashboardShell user={session.user} role={session.role}>
       <header className="border-b border-stone-100 bg-white">
-        <div className="px-4 sm:px-6 py-4 max-w-4xl mx-auto">
+        <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto">
           <h1 className="text-xl font-bold text-stone-900">
             {prefillFromOrder
               ? `สั่งซ้ำจาก #${searchParams.from} ${prefillSourceName ? `— ${prefillSourceName}` : ''}`
@@ -68,11 +87,12 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Sea
           </p>
         </div>
       </header>
-      <div className="px-4 sm:px-6 py-6 max-w-4xl mx-auto">
+      <div className="px-4 sm:px-6 py-6 max-w-7xl mx-auto">
         <OrderEntryClient
           defaultOrderer={session.user}
           templates={templates}
           prefill={prefillFromOrder}
+          recentOrders={recentOrders}
         />
       </div>
     </DashboardShell>

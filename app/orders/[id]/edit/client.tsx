@@ -7,14 +7,22 @@ import { broadcastWrite } from '@/lib/auto-sync';
 import { IconCheck, IconAlertCircle } from '@/lib/icons';
 import type { OrderSummary } from '@/lib/board';
 
+interface RecentOrder {
+  id: number;
+  name: string;
+  customer: string;
+  rawData: Record<string, unknown> | null;
+}
+
 /** Inline edit page wrapper. For draft orders, renders an extra
  *  "ส่งเข้าระบบ (สร้างงานในสาย)" call-to-action above the form. */
 export function OrderEditClient({
-  initial, defaultOrderer, isDraft,
+  initial, defaultOrderer, isDraft, recentOrders = [],
 }: {
   initial: OrderSummary;
   defaultOrderer: string;
   isDraft: boolean;
+  recentOrders?: RecentOrder[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -81,6 +89,7 @@ export function OrderEditClient({
         initial={initial}
         onClose={() => router.push('/orders')}
         defaultOrderer={defaultOrderer}
+        recentOrders={recentOrders}
       />
     </div>
   );
