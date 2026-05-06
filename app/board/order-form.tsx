@@ -506,6 +506,11 @@ export function OrderForm({
               <button type="button" onClick={() => {
                   patch({ orderType: 'photobook' });
                   if (data.photobookItems.length === 0) addPbItem();
+                  // The "งานหลังพิมพ์" tab is hidden in photobook mode (the
+                  // photobook segment lives on the main tab). Without this
+                  // reset, switching while the post tab is active leaves the
+                  // body blank — neither tab condition matches.
+                  setTab('main');
                 }}
                 className={`px-4 py-1.5 rounded-md transition-colors ${
                   data.orderType === 'photobook' ? 'bg-white text-stone-900 shadow-sm font-medium' : 'text-stone-500 hover:text-stone-700'

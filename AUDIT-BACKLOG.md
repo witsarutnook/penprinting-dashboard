@@ -25,21 +25,6 @@ _(ปิดครบ — ดู Closed section)_
 
 ## 🟡 Medium
 
-- [ ] **M-photobook-tab** — Photobook segment กลายเป็น body ว่างเมื่ออยู่ tab `post`
-  - File: [app/board/order-form.tsx:485-488](app/board/order-form.tsx:485)
-  - Tab `post` ถูก hide เมื่อ photobook (line 596) แต่ `tab` state ไม่ reset → body แสดงไม่ได้
-  - Fix: ใน photobook click handler เพิ่ม `setTab('main')`
-
-- [ ] **M-middleware-matcher** — middleware ไม่คุ้ม `/orders/* /shipped /cancelled`
-  - File: [middleware.ts:24](middleware.ts:24)
-  - ปัจจุบัน rely บน per-page `verifySession()` → defence-in-depth พังถ้ามี page ใหม่ลืม block
-  - Fix: เพิ่ม `'/orders/:path*'`, `'/shipped/:path*'`, `'/cancelled/:path*'` ใน matcher (เก็บ `/track` excluded)
-
-- [ ] **M-cross-dept-gate** — cross-dept forward client gate ใช้ staff ว่าง → false-negative
-  - File: [app/board/column.tsx:125](app/board/column.tsx:125)
-  - `computeFromType(sourceDept, '')` คืน `'any'` (รับแค่ ship) → drop print:cut → post:bind ขึ้น "ไม่สามารถส่งต่อ" ทั้งที่ server รับ
-  - Fix: lookup src.staff ก่อนคำนวณ fromType — หรือ skip client-side gate, รอ server toast
-
 - [ ] **M-bulk-forward-N-roundtrips** — getNextId × N sequential อาจ timeout
   - File: [app/api/jobs/bulk-forward/route.ts:88-94](app/api/jobs/bulk-forward/route.ts:88)
   - 25 items × 200-500ms = ~12s แค่ id allocation + 1 round สำหรับ bulkForward → เกิน Vercel 10s บาง cold start
@@ -111,6 +96,13 @@ _(ปิดครบ — ดู Closed section)_
 
 ## ✅ Closed
 
+### Batch 2 — UX / middleware (3 Medium)
+2026-05-06 PM (1 commit — see git for hash)
+
+- [x] **M-photobook-tab** — `app/board/order-form.tsx` Photobook segment click now also `setTab('main')`. Switching from "งานหลังพิมพ์" to Photobook no longer leaves the body blank.
+- [x] **M-middleware-matcher** — `middleware.ts` matcher now covers `/orders/* /shipped/* /cancelled/*` in addition to the original four. Defence-in-depth — page-level `verifySession()` is preserved.
+- [x] **M-cross-dept-gate** — `app/board/card.tsx` drag payload now carries `application/x-job-source-staff`; `app/board/column.tsx` reads it and passes to `computeFromType(sourceDept, sourceStaff)`. False-negative reject (e.g. dragging print:cut → post:bind) is gone — fromType resolves to the correct FW_TARGETS bucket instead of falling through to `any`.
+
 ### Batch 1 — regression cleanup (Critical + 5 High)
 2026-05-06 PM (1 commit — see git for hash)
 
@@ -125,9 +117,8 @@ _(ปิดครบ — ดู Closed section)_
 
 ## 🎯 Recommended close order (remaining)
 
-1. **Batch 2 (UX/middleware):** M-photobook-tab → M-middleware-matcher → M-cross-dept-gate
-2. **Batch 3 (perf/security):** M-bulk-forward-N-roundtrips (Apps Script change!) → M-login-ratelimit-map → M-orders-date-range-tz
-3. **Batch 4 (cosmetic):** Lows ทั้งหมด — 1 commit
+1. **Batch 3 (perf/security):** M-bulk-forward-N-roundtrips (Apps Script change!) → M-login-ratelimit-map → M-orders-date-range-tz → M-jobByOrderId-last-write-wins
+2. **Batch 4 (cosmetic):** Lows ทั้งหมด — 1 commit
 
 ## 📝 Update protocol
 

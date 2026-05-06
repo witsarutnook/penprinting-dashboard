@@ -20,6 +20,18 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Protect analytics + calendar + archive + future internal routes. Public: '/', '/login', '/api/auth/*'
-  matcher: ['/analytics/:path*', '/calendar/:path*', '/archive/:path*', '/board/:path*'],
+  // Protect every authenticated route. Each page also calls verifySession()
+  // for defence-in-depth, but the matcher is the first line — without it,
+  // a future page that forgets the per-page check leaks silently. Public:
+  // '/', '/login', '/track', '/api/auth/*' (middleware skips routes not in
+  // the matcher).
+  matcher: [
+    '/analytics/:path*',
+    '/calendar/:path*',
+    '/archive/:path*',
+    '/board/:path*',
+    '/orders/:path*',
+    '/shipped/:path*',
+    '/cancelled/:path*',
+  ],
 };

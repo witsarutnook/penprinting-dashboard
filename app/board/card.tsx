@@ -206,6 +206,11 @@ export function Card({
     e.dataTransfer.setData(`application/x-job-${dept}`, String(job.id));
     e.dataTransfer.setData('application/x-job-any', String(job.id));
     e.dataTransfer.setData('application/x-job-source-dept', dept);
+    // Carry source staff so the drop handler can derive fromType correctly.
+    // Without this, computeFromType(sourceDept, '') returns 'any' (only ship
+    // is a valid target) and the client-side gate falsely rejects valid
+    // cross-dept forwards (e.g. print:cut → post:bind).
+    e.dataTransfer.setData('application/x-job-source-staff', String(job.staff || ''));
     e.dataTransfer.setData('text/plain', String(job.id));
     e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true);

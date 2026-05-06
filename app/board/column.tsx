@@ -77,6 +77,7 @@ export function Column({
     setDragOver(null);
     const idStr = e.dataTransfer.getData('text/plain');
     const sourceDept = e.dataTransfer.getData('application/x-job-source-dept') || '';
+    const sourceStaff = e.dataTransfer.getData('application/x-job-source-staff') || '';
     const id = Number(idStr);
     if (!id || !Number.isFinite(id)) return;
     const targetStaff = column.staff.id;
@@ -122,7 +123,10 @@ export function Column({
 
       // Cross-dept → forward. Validate target is reachable from source dept.
       if (dropType === 'forward') {
-        const fromType = computeFromType(sourceDept, '');
+        // Pass actual source staff so post:cut → post:bind, print:outsource →
+        // post:cut, etc. resolve to the right FW_TARGETS bucket. Empty staff
+        // would force fromType='any' and reject everything but ship.
+        const fromType = computeFromType(sourceDept, sourceStaff);
         if (!fromType) {
           const msg = `ส่งต่อจาก ${sourceDept} ไม่ได้`;
           setError(msg);
