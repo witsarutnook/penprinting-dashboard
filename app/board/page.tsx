@@ -76,14 +76,8 @@ export default async function BoardPage() {
                 </span>
               ) : null,
             )}
-            <span className="ml-auto text-stone-400 hidden sm:inline">
-              co-work ใช้ใน{' '}
-              <a
-                href="https://app.penprinting.co/production-monitoring/"
-                className="underline hover:text-stone-600"
-              >
-                ระบบเดิม
-              </a>
+            <span className="ml-auto text-stone-400 hidden sm:inline tabular-nums">
+              auto-sync 15s
             </span>
           </div>
         )}
