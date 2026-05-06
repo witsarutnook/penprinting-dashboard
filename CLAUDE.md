@@ -2,10 +2,11 @@
 
 `dashboard.penprinting.co` — Next.js 14 App Router dashboard ที่ค่อยๆ ย้าย feature มาจาก WordPress dashboard เดิม (`app.penprinting.co/production-monitoring`) แบบ **strangler pattern**
 
-## ★ ก่อนแก้อะไร — อ่านสองไฟล์นี้ก่อน
+## ★ ก่อนแก้อะไร — อ่านไฟล์นี้ก่อน
 
-1. **[PATTERNS.md](PATTERNS.md)** — Reusable patterns ที่ค้นพบใน v2 (Apps Script, permissions, URL state, icons, forms, auto-sync, things-not-to-do)
-2. **[Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md)** ใน workspace root — สถานะ Phase 3.5 iterations + Phase 2.3 stages
+1. **[NEXT-SESSION.md](NEXT-SESSION.md)** ⭐ — pick-up-here doc สำหรับ session ใหม่ (เสร็จแล้วอะไร/เหลืออะไร/decisions ที่ผ่านมา)
+2. **[PATTERNS.md](PATTERNS.md)** — Reusable patterns ที่ค้นพบใน v2 (Apps Script, permissions, URL state, icons, forms, auto-sync, things-not-to-do)
+3. **[Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md)** ใน workspace root — สถานะ Phase 3.5 iterations + Phase 2.3 stages
 
 ## Stack
 - **Next.js 14** (App Router) + TypeScript + Tailwind 3
