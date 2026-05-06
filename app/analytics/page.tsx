@@ -3,7 +3,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
-import { computeAnalytics } from '@/lib/analytics';
+import { computeAnalytics, computeMonthlyReport } from '@/lib/analytics';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import {
   OrdersTrendChart,
@@ -11,9 +11,12 @@ import {
   TopCustomersChart,
   DeptWorkloadChart,
 } from './charts';
+import { MonthlyReportView } from './monthly-report';
 import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { redirect } from 'next/navigation';
+import { getBangkokToday } from '@/lib/calendar';
+import { STAFF, type Dept } from '@/lib/board';
 
 export const metadata: Metadata = {
   title: 'Analytics',
@@ -22,8 +25,12 @@ export const metadata: Metadata = {
 const VALID_RANGES = [3, 6, 12] as const;
 type Range = (typeof VALID_RANGES)[number];
 
+type View = 'monthly' | 'range';
+
 interface SearchParams {
+  view?: string;
   months?: string;
+  m?: string; // YYYY-MM
 }
 
 function parseRange(input: string | undefined): Range {
@@ -31,15 +38,36 @@ function parseRange(input: string | undefined): Range {
   return (VALID_RANGES as readonly number[]).includes(n) ? (n as Range) : 12;
 }
 
+function parseView(input: string | undefined): View {
+  return input === 'range' ? 'range' : 'monthly';
+}
+
+function parseMonth(input: string | undefined): { year: number; month: number } {
+  const fallback = (() => {
+    const t = getBangkokToday();
+    return { year: t.getFullYear(), month: t.getMonth() + 1 };
+  })();
+  if (!input) return fallback;
+  const m = input.match(/^(\d{4})-(\d{1,2})$/);
+  if (!m) return fallback;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  if (isNaN(y) || isNaN(mo) || mo < 1 || mo > 12) return fallback;
+  return { year: y, month: mo };
+}
+
 export default async function AnalyticsPage({
   searchParams,
 }: {
   searchParams: SearchParams;
 }) {
-  const months = parseRange(searchParams.months);
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/analytics');
+
+  const view = parseView(searchParams.view);
+  const months = parseRange(searchParams.months);
+  const { year, month } = parseMonth(searchParams.m);
 
   return (
     <DashboardShell user={session.user} role={session.role}>
@@ -47,18 +75,143 @@ export default async function AnalyticsPage({
       <header className="border-b border-stone-100 bg-white">
         <div className="px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-xl font-bold text-stone-900">รายงาน</h1>
-          <RangeSelector current={months} />
+          {view === 'range' && <RangeSelector current={months} />}
         </div>
       </header>
 
-      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
-        <Suspense key={String(months)} fallback={<AnalyticsSkeleton />}>
-          <AnalyticsData months={months} />
-        </Suspense>
+      <SubTabBar view={view} />
+
+      <div className="px-4 sm:px-6 py-6 max-w-6xl mx-auto">
+        {view === 'monthly' ? (
+          <Suspense key={`monthly-${year}-${month}`} fallback={<MonthlySkeleton />}>
+            <MonthlyData year={year} month={month} />
+          </Suspense>
+        ) : (
+          <Suspense key={`range-${months}`} fallback={<AnalyticsSkeleton />}>
+            <AnalyticsData months={months} />
+          </Suspense>
+        )}
       </div>
     </DashboardShell>
   );
 }
+
+// ─── Sub-tab bar (matches WP report-subtabs row) ───
+
+function SubTabBar({ view }: { view: View }) {
+  return (
+    <div className="border-b border-stone-100 bg-white">
+      <div className="px-4 sm:px-6 flex items-center gap-2">
+        <SubTab href="/analytics" label="รายงานประจำเดือน" active={view === 'monthly'} />
+        <SubTab href="/analytics?view=range" label="Analytics 12 เดือน" active={view === 'range'} />
+      </div>
+    </div>
+  );
+}
+
+function SubTab({ href, label, active }: { href: string; label: string; active: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`py-3 px-1 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+        active
+          ? 'text-sky-700 border-sky-500'
+          : 'text-stone-500 border-transparent hover:text-stone-700 hover:border-stone-200'
+      }`}
+    >
+      {label}
+    </Link>
+  );
+}
+
+// ─── Monthly report data + skeleton ───
+
+async function MonthlyData({ year, month }: { year: number; month: number }) {
+  let report;
+  let errorMessage: string | null = null;
+
+  try {
+    const data = await loadAll();
+    report = computeMonthlyReport(data, year, month);
+  } catch (err) {
+    errorMessage = err instanceof AppsScriptError
+      ? err.message
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  }
+
+  if (errorMessage) return <ErrorPanel message={errorMessage} />;
+  if (!report) return null;
+
+  // Resolve staff display names from STAFF map (lib/board) so the report
+  // shows "เจ้" instead of "joy" etc. Done server-side so the client
+  // doesn't ship the STAFF map for this page.
+  const resolveName = (dept: Dept, id: string): string => {
+    if (id === '-' || !id) return '— ไม่ระบุ';
+    return STAFF[dept]?.find((s) => s.id === id)?.name || id;
+  };
+  const enriched = {
+    ...report,
+    perDept: {
+      graphic: {
+        ...report.perDept.graphic,
+        staff: report.perDept.graphic.staff.map((s) => ({ ...s, name: resolveName('graphic', s.id) })),
+      },
+      print: {
+        ...report.perDept.print,
+        staff: report.perDept.print.staff.map((s) => ({ ...s, name: resolveName('print', s.id) })),
+      },
+      post: {
+        ...report.perDept.post,
+        staff: report.perDept.post.staff.map((s) => ({ ...s, name: resolveName('post', s.id) })),
+      },
+    },
+  };
+
+  return <MonthlyReportView report={enriched} />;
+}
+
+function MonthlySkeleton() {
+  return (
+    <div aria-hidden="true" className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-48 bg-stone-100 rounded-lg animate-pulse" />
+      </div>
+      {/* Summary stat row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+          <div
+            key={i}
+            className="bg-white rounded-xl border border-stone-200 p-4 space-y-2"
+            style={{ animationDelay: `${i * 60}ms` }}
+          >
+            <div className="h-3 w-20 bg-stone-100 rounded animate-pulse" />
+            <div className="h-7 w-14 bg-stone-200 rounded animate-pulse" />
+            <div className="h-2 w-12 bg-stone-100 rounded animate-pulse" />
+          </div>
+        ))}
+      </div>
+      {/* Customers section */}
+      <div className="bg-white rounded-xl border border-stone-200 p-5 space-y-3">
+        <div className="h-4 w-40 bg-stone-100 rounded animate-pulse" />
+        <div className="grid grid-cols-3 gap-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-20 bg-stone-50 rounded animate-pulse" />
+          ))}
+        </div>
+      </div>
+      {/* Per-dept */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-64 bg-white rounded-xl border border-stone-200 animate-pulse" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Analytics 12-month range (existing) ───
 
 async function AnalyticsData({ months }: { months: Range }) {
   let result;
@@ -153,7 +306,7 @@ function AnalyticsSkeleton() {
   );
 }
 
-// ─── Components ───────────────────────────────────────────────
+// ─── Range view components (unchanged) ───
 
 function RangeSelector({ current }: { current: Range }) {
   return (
@@ -163,7 +316,7 @@ function RangeSelector({ current }: { current: Range }) {
         return (
           <Link
             key={n}
-            href={n === 12 ? '/analytics' : `/analytics?months=${n}`}
+            href={n === 12 ? '/analytics?view=range' : `/analytics?view=range&months=${n}`}
             className={`px-4 py-1.5 rounded-md transition-colors ${
               active
                 ? 'bg-white text-stone-900 shadow-sm font-medium'

@@ -98,7 +98,7 @@
 | `/orders/[id]/edit` | admin + sales | Order edit + draft promote |
 | `/shipped` | any role | Shipped list (year/month filter + CSV export) |
 | `/cancelled` | admin only | Cancelled list + restore button |
-| `/analytics` | any role | KPIs + 4 charts |
+| `/analytics` | any role | Sub-tabs: "รายงานประจำเดือน" (default, single-month deep dive) + "Analytics 12 เดือน" (KPIs + 4 charts). Month picker on monthly view; range selector on 12-month view |
 | `/calendar` | admin only | Month grid + Bangkok TZ |
 | `/archive` | admin only | Search archived sheets |
 
