@@ -20,7 +20,7 @@ export function Column({
   const theme = getStaffTheme(dept, column.staff.id);
   return (
     <div
-      className="flex-shrink-0 w-[280px] sm:w-[300px] flex flex-col rounded-2xl border bg-white"
+      className="flex flex-col rounded-2xl border bg-white"
       style={{
         borderColor: isVendor ? `${VENDOR_PURPLE}30` : '#e7e5e4',
         borderBottomColor: isVendor ? VENDOR_PURPLE : undefined,
@@ -61,9 +61,9 @@ export function Column({
       </div>
 
       {/* Job list */}
-      <div className="flex-grow p-2.5 space-y-2 min-h-[80px] max-h-[600px] overflow-y-auto">
+      <div className="flex-grow p-2.5 space-y-2 min-h-[80px] overflow-y-auto">
         {column.jobs.length === 0 ? (
-          <div className="text-center text-stone-300 text-xs py-6">ไม่มีงานค้าง</div>
+          <div className="text-center text-stone-300 text-xs py-8">ไม่มีงานค้าง</div>
         ) : (
           column.jobs.map((job) => (
             <Card

@@ -16,6 +16,7 @@ import {
   type ForwardTarget,
 } from '@/lib/forward';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { displayDate } from '@/lib/jobs';
 import { IconX, IconCornerUpRight, IconAlertCircle } from '@/lib/icons';
 
 const MAX_BATCH = 25;
@@ -312,7 +313,7 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
                             <div className="text-[11px] text-stone-500 mt-0.5 flex flex-wrap items-center gap-2">
                               <span>{getStaffLabel(j.dept as Dept, j.staff)}</span>
                               {j.customer && <span>· {j.customer}</span>}
-                              <span className="text-stone-400 tabular-nums">{j.dateRaw}</span>
+                              <span className="text-stone-400 tabular-nums">{displayDate(j.dateRaw)}</span>
                               <span
                                 className="px-1.5 py-0.5 rounded font-medium tabular-nums text-[10px]"
                                 style={{

@@ -130,17 +130,15 @@ export default async function BoardPage({
                   />
                   {/* Filter chips below first dept heading only */}
                   {dept.dept === board.depts[0].dept && <FilterChips />}
-                  <div className="overflow-x-auto -mx-4 px-4 pb-2 sm:mx-0 sm:px-0">
-                    <div className="flex gap-3" style={{ minWidth: 'min-content' }}>
-                      {dept.columns.map((col) => (
-                        <Column
-                          key={col.staff.id}
-                          dept={dept.dept}
-                          column={col}
-                          sessionRole={session.role}
-                        />
-                      ))}
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {dept.columns.map((col) => (
+                      <Column
+                        key={col.staff.id}
+                        dept={dept.dept}
+                        column={col}
+                        sessionRole={session.role}
+                      />
+                    ))}
                   </div>
                 </section>
               ))}

@@ -11,11 +11,14 @@ import {
   IconPencil,
   IconTrendingUp,
   IconFolderOpen,
-  IconArrowRight,
-  IconRefreshCw,
+  IconCalendar,
   IconCheck,
   IconX,
-  IconUsers,
+  IconPrinter,
+  IconScissors,
+  IconClock,
+  IconTruck,
+  IconAlertCircle,
 } from '@/lib/icons';
 
 type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
@@ -39,19 +42,21 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'การผลิต',
     items: [
-      { href: '/board', label: 'สั่งงาน', icon: IconFileText, mobile: true },
+      { href: '/orders/new', label: 'สั่งงาน', icon: IconFileText, mobile: true },
       { href: '/board?dept=graphic', label: 'กราฟฟิก', icon: IconPencil },
-      { href: '/board?dept=print', label: 'พิมพ์', icon: IconArrowRight },
-      { href: '/board?dept=post', label: 'หลังพิมพ์ / จัดส่ง', icon: IconUsers },
-      { href: '/calendar', label: 'ปฏิทิน', icon: IconRefreshCw, adminOnly: true, mobile: true },
+      { href: '/board?dept=print', label: 'พิมพ์', icon: IconPrinter },
+      { href: '/board?dept=post', label: 'หลังพิมพ์ / จัดส่ง', icon: IconScissors, mobile: true },
+      { href: '/calendar', label: 'ปฏิทิน', icon: IconCalendar, adminOnly: true },
     ],
   },
   {
     label: 'รายการ',
     items: [
       { href: '/analytics', label: 'รายงาน', icon: IconTrendingUp, mobile: true },
-      { href: '/archive', label: 'ค้นข้อมูลเก่า', icon: IconFolderOpen, adminOnly: true, mobile: true },
-      // Future: { href: '/orders', ... }, { href: '/shipped', ... }, { href: '/cancelled', ... }
+      { href: '/orders', label: 'รายการใบสั่งงาน', icon: IconClock },
+      { href: '/shipped', label: 'จัดส่งแล้ว', icon: IconTruck },
+      { href: '/cancelled', label: 'รายการยกเลิก', icon: IconAlertCircle, adminOnly: true },
+      { href: '/archive', label: 'ค้นข้อมูลเก่า', icon: IconFolderOpen, adminOnly: true },
     ],
   },
 ];

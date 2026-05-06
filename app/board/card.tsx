@@ -36,6 +36,13 @@ import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
 
+/** Map (urgency, daysUntilDue) → "รับ Xว" / "วันนี้" / "เกิน Xว" — matches WP card format. */
+function urgencyDaysLabel(urgency: string, days: number): string {
+  if (urgency === 'overdue') return `เกิน ${Math.abs(days)}ว`;
+  if (urgency === 'dday' || days === 0) return 'วันนี้!';
+  return `รับ ${days}ว`;
+}
+
 /** Card with built-in detail modal (native <dialog>). */
 export function Card({
   job,
@@ -87,23 +94,34 @@ export function Card({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={open}
+      <div
         className={`w-full text-left rounded-xl border bg-white p-2.5 transition-all relative ${
           bulkMode && isSelected
             ? 'ring-2 ring-sky-400 border-sky-300'
             : bulkMode
               ? 'hover:bg-sky-50/30'
               : 'hover:shadow-sm'
-        }`}
+        } ${job.hasCowork ? 'border-dashed bg-violet-50/30' : ''}`}
+        onClick={open}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            open();
+          }
+        }}
         style={{
           borderColor: bulkMode && isSelected
             ? undefined
-            : isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
+            : job.hasCowork
+              ? `${VENDOR_PURPLE}50`
+              : isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
           borderLeft: `3px solid ${urgencyColor}`,
+          cursor: 'pointer',
         }}
       >
+        {/* Top row: name + รายละเอียด link + close hint */}
         <div className="flex items-start justify-between gap-2">
           {bulkMode && (
             <span
@@ -116,38 +134,31 @@ export function Card({
           <div className="text-[13px] font-medium text-stone-900 leading-snug flex-grow break-words">
             {job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}
           </div>
+          <span className="text-[10px] text-stone-400 hover:text-stone-700 whitespace-nowrap mt-0.5 flex-shrink-0">
+            รายละเอียด
+          </span>
           {job.hasCowork && (
             <span
-              className="text-[10px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 whitespace-nowrap"
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium"
               title="มี co-work"
             >
-              +CW
+              <IconUsers size={10} />
+              ร่วมพิมพ์
             </span>
           )}
         </div>
-        {job.customer && (
-          <div
-            className="text-[11px] text-stone-500 mt-1 truncate flex items-center gap-1"
-            title={job.customer}
-          >
-            <IconUser size={11} className="flex-shrink-0" />
-            <span className="truncate">{job.customer}</span>
-          </div>
-        )}
-        <div className="flex items-center justify-between gap-2 mt-1.5 text-[11px]">
-          <span
-            className="px-1.5 py-0.5 rounded font-medium tabular-nums"
-            style={{ background: urgencyColor + '20', color: urgencyColor }}
-          >
-            {URGENCY_LABELS[job.urgency]}
-            {job.daysUntilDue !== null && job.urgency === 'overdue' && (
-              <span className="ml-1">({job.daysUntilDue}d)</span>
-            )}
-            {job.daysUntilDue !== null && job.urgency === 'urgent' && (
-              <span className="ml-1">(D-{job.daysUntilDue})</span>
-            )}
-          </span>
-          <span className="text-stone-400 tabular-nums">
+
+        {/* Middle row: customer + date range */}
+        <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-stone-500">
+          {job.customer ? (
+            <span className="inline-flex items-center gap-1 min-w-0">
+              <IconUser size={11} className="flex-shrink-0" />
+              <span className="truncate">{job.customer}</span>
+            </span>
+          ) : (
+            <span className="text-stone-300">—</span>
+          )}
+          <span className="text-stone-400 tabular-nums whitespace-nowrap flex-shrink-0">
             {job.dateInRaw && (
               <>
                 {displayDate(job.dateInRaw)}
@@ -157,12 +168,43 @@ export function Card({
             {displayDate(job.dateRaw)}
           </span>
         </div>
+
+        {/* Inline action row — co-work shortcut + status badge */}
+        <div className="flex items-center justify-between gap-2 mt-2 text-[11px]">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+            disabled={bulkMode}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+              job.hasCowork
+                ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+            } disabled:opacity-50`}
+          >
+            <IconUsers size={11} />
+            {job.hasCowork ? 'แก้ไข Co-work' : 'Co-work'}
+          </button>
+          <span
+            className="px-2 py-0.5 rounded-md font-medium tabular-nums"
+            style={{ background: urgencyColor + '20', color: urgencyColor }}
+          >
+            {URGENCY_LABELS[job.urgency]}
+            {job.daysUntilDue !== null && (
+              <span className="ml-1.5 text-stone-500">
+                · {urgencyDaysLabel(job.urgency, job.daysUntilDue)}
+              </span>
+            )}
+          </span>
+        </div>
         {job.orderId && (
-          <div className="text-[10px] text-stone-400 mt-1 tabular-nums">
+          <div className="text-[10px] text-stone-400 tabular-nums mt-1.5">
             #{job.id} · order {job.orderId}
           </div>
         )}
-      </button>
+      </div>
 
       <dialog
         ref={dialogRef}
@@ -191,6 +233,8 @@ export function Card({
 
 // ─── Modal content ────────────────────────────────────────
 
+type DetailTab = 'info' | 'spec' | 'history';
+
 function DetailContent({
   job,
   onClose,
@@ -205,18 +249,23 @@ function DetailContent({
   sessionRole: string | null;
 }) {
   const canEditOrder = sessionRole === 'admin' || sessionRole === 'sales';
-  const urgencyColor = URGENCY_COLORS[job.urgency];
+  const [tab, setTab] = useState<DetailTab>('info');
   const dept = job.dept as Dept;
-  const deptLabel = DEPT_LABELS[dept] || job.dept;
+  const deptLabelLong = DEPT_LABELS[dept] || job.dept;
   const staffDef = STAFF[dept]?.find((s) => s.id === job.staff);
   const staffName = staffDef?.name || job.staff;
   const cowork = parseCoworkArray(job.cowork);
+  const hasSpec = !!(
+    (job.order?.details && Object.keys(job.order.details).length > 0) ||
+    cowork.length > 0
+  );
+  const urgencyColor = URGENCY_COLORS[job.urgency];
 
   return (
-    <div className="max-h-[90vh] overflow-y-auto">
+    <div className="flex flex-col max-h-[90vh]">
       {/* Sticky header */}
       <div
-        className="sticky top-0 z-10 px-5 py-3 border-b border-stone-200 bg-white flex items-start justify-between gap-3"
+        className="px-5 py-3 border-b border-stone-100 bg-white flex items-start justify-between gap-3 flex-shrink-0"
         style={{ borderTop: `4px solid ${urgencyColor}` }}
       >
         <div className="min-w-0 flex-grow">
@@ -228,7 +277,7 @@ function DetailContent({
               {URGENCY_LABELS[job.urgency]}
             </span>
             <span className="text-stone-500">
-              {deptLabel} · <span className="font-medium">{staffName}</span>
+              {deptLabelLong} · <span className="font-medium">{staffName}</span>
             </span>
             <span className="text-stone-400 tabular-nums">#{job.id}</span>
             {job.orderId && (
@@ -249,88 +298,149 @@ function DetailContent({
         </button>
       </div>
 
-      {/* Body */}
-      <div className="p-5 space-y-5">
-        <Section title="ข้อมูลงาน">
-          <KV label="วันรับงาน" value={job.dateInRaw} />
-          <KV label="กำหนดเสร็จ" value={job.dateRaw} />
-          <KV
-            label="วันคงเหลือ"
-            value={
-              job.daysUntilDue === null
-                ? '—'
-                : job.daysUntilDue === 0
-                  ? 'วันนี้'
-                  : job.daysUntilDue < 0
-                    ? `เกิน ${Math.abs(job.daysUntilDue)} วัน`
-                    : `${job.daysUntilDue} วัน`
-            }
-          />
-          {job.status && <KV label="สถานะ" value={job.status} />}
-        </Section>
-
-        {job.order && (
-          <section>
-            <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center justify-between">
-              <span>ข้อมูลใบสั่งงาน #{job.order.id}</span>
-              {canEditOrder && (
-                <button
-                  type="button"
-                  onClick={onEditOrder}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-accent hover:bg-accent/10 normal-case tracking-normal"
-                >
-                  <IconPencil size={11} />
-                  แก้ใบสั่งงาน
-                </button>
-              )}
-            </h3>
-            <div className="rounded-lg border border-stone-200 divide-y divide-stone-100 bg-stone-50/40">
-              <KV label="ลูกค้า" value={job.order.customer} />
-              <KV label="วันรับ" value={job.order.dateIn} />
-              <KV label="กำหนดส่ง" value={job.order.dateDue} />
-              {job.order.price !== '' && job.order.price != null && (
-                <KV label="ราคา" value={String(job.order.price)} />
-              )}
-              {job.order.orderer && <KV label="ผู้สั่งงาน" value={job.order.orderer} />}
-              {job.order.status && <KV label="สถานะใบสั่ง" value={job.order.status} />}
-            </div>
-          </section>
-        )}
-
-        {job.order?.details && Object.keys(job.order.details).length > 0 && (
-          <Section title="รายละเอียดงาน">
-            <DetailsTable details={job.order.details} />
-          </Section>
-        )}
-
-        {cowork.length > 0 && (
-          <Section title="Co-work">
-            <ul className="text-sm text-stone-700 space-y-1">
-              {cowork.map((cw, i) => (
-                <li key={i}>
-                  • <span className="text-stone-500">{cw.dept}</span> /{' '}
-                  <span className="font-medium">{cw.staff}</span>
-                </li>
-              ))}
-            </ul>
-          </Section>
-        )}
-
-        <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
-
-        <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600 flex items-start gap-2">
-          <IconInfo size={14} className="flex-shrink-0 mt-0.5 text-stone-500" />
-          <span>
-            feature parity เกือบครบ — undo forward 10s ใช้ใน{' '}
-            <a
-              href="https://app.penprinting.co/production-monitoring/"
-              className="underline hover:text-stone-800"
-            >
-              ระบบเดิม (WP)
-            </a>
-          </span>
+      {/* Tabs */}
+      <div className="border-b border-stone-100 bg-white flex-shrink-0">
+        <div className="flex px-5 gap-4 overflow-x-auto">
+          <TabBtn active={tab === 'info'} onClick={() => setTab('info')} label="ข้อมูลหลัก" />
+          {hasSpec && (
+            <TabBtn active={tab === 'spec'} onClick={() => setTab('spec')} label="สเปคงาน" />
+          )}
+          <TabBtn active={tab === 'history'} onClick={() => setTab('history')} label="ประวัติ" />
         </div>
       </div>
+
+      {/* Body */}
+      <div className="flex-grow overflow-y-auto p-5 space-y-4">
+        {tab === 'info' && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <KVTile label="ชื่องาน" value={job.name} align="left" />
+              <KVTile
+                label="สถานะ"
+                value={URGENCY_LABELS[job.urgency]}
+                valueClass="font-medium"
+                valueStyle={{ color: urgencyColor }}
+              />
+              <KVTile label="กำหนดส่ง" value={displayDate(job.dateRaw)} />
+              <KVTile label="แผนก" value={deptLabelLong} />
+              <KVTile label="ผู้รับผิดชอบ" value={staffName} />
+              <KVTile label="วันที่รับงาน" value={displayDate(job.dateInRaw)} />
+              {job.orderId && (
+                <>
+                  <KVTile label="ใบสั่งงาน" value={`#${job.orderId}`} />
+                  {job.order?.customer && <KVTile label="ลูกค้า" value={job.order.customer} />}
+                </>
+              )}
+              {job.order?.orderer && <KVTile label="ผู้สั่งงาน" value={job.order.orderer} />}
+            </div>
+            {job.order && canEditOrder && (
+              <button
+                type="button"
+                onClick={onEditOrder}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-accent hover:bg-accent/10"
+              >
+                <IconPencil size={12} />
+                แก้ใบสั่งงาน #{job.order.id}
+              </button>
+            )}
+          </>
+        )}
+
+        {tab === 'spec' && (
+          <>
+            {job.order?.details && Object.keys(job.order.details).length > 0 ? (
+              <Section title="รายละเอียดงาน">
+                <DetailsTable details={job.order.details} />
+              </Section>
+            ) : (
+              <p className="text-sm text-stone-400 text-center py-4">ไม่มีสเปคงาน</p>
+            )}
+
+            {cowork.length > 0 && (
+              <Section title="Co-work">
+                <ul className="text-sm text-stone-700 space-y-1 px-3 py-2">
+                  {cowork.map((cw, i) => (
+                    <li key={i}>
+                      • <span className="text-stone-500">{cw.dept}</span> /{' '}
+                      <span className="font-medium">{cw.staff}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+          </>
+        )}
+
+        {tab === 'history' && (
+          <div className="text-center py-8 space-y-3">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-stone-100 text-stone-400 mx-auto">
+              <IconInfo size={20} />
+            </div>
+            <p className="text-sm text-stone-500">ประวัติงาน (audit log) ดูได้ใน{' '}
+              <a
+                href="https://app.penprinting.co/production-monitoring/"
+                className="underline hover:text-stone-700"
+              >
+                ระบบ WP
+              </a>
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Action footer */}
+      <div className="border-t border-stone-100 bg-stone-50/60 px-5 py-3 flex-shrink-0">
+        <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
+      </div>
+    </div>
+  );
+}
+
+function TabBtn({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+        active ? 'text-sky-700 border-sky-500' : 'text-stone-500 border-transparent hover:text-stone-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Tile-style KV — matches WP detail modal grid layout (label top, value bottom in a stone-50 box). */
+function KVTile({
+  label,
+  value,
+  align = 'right',
+  valueClass = '',
+  valueStyle = {},
+}: {
+  label: string;
+  value: string;
+  align?: 'left' | 'right';
+  valueClass?: string;
+  valueStyle?: React.CSSProperties;
+}) {
+  return (
+    <div className="rounded-lg bg-stone-50/60 border border-stone-100 px-3 py-2 flex items-baseline justify-between gap-2">
+      <span className="text-xs text-stone-500 font-medium flex-shrink-0">{label}:</span>
+      <span
+        className={`text-sm text-stone-900 break-words ${align === 'right' ? 'text-right' : 'text-left'} ${valueClass}`}
+        style={valueStyle}
+      >
+        {value || '—'}
+      </span>
     </div>
   );
 }
@@ -823,14 +933,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function KV({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline gap-3 px-3 py-2 text-sm">
-      <span className="text-stone-500 min-w-[100px] shrink-0">{label}</span>
-      <span className="text-stone-900 break-words">{value || '—'}</span>
-    </div>
-  );
-}
 
 // Friendly labels for known detail keys (port of `lb` map in WP frontend ~line 1109)
 const DETAIL_LABELS: Record<string, string> = {

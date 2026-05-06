@@ -1,39 +1,38 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { JobForm } from './job-form';
-import { OrderForm } from './order-form';
 import type { BoardJob } from '@/lib/board';
 import { IconFileText, IconPlus } from '@/lib/icons';
 
 interface ToolbarProps {
   canCreate: boolean;
   isAdmin: boolean;
-  /** Visible jobs after server-side filter — passed for future use, not currently consumed by toolbar. */
   jobs: BoardJob[];
   defaultOrderer: string;
 }
 
-/** Order/job creation buttons. Bulk-forward moved to the inline
- *  checkbox-mode flow (FilterChips toggle + BulkActionsBar) per user
- *  decision 2026-05-06 #5. */
+/** Quick-actions row above the Kanban. Order entry moved to the
+ *  dedicated /orders/new page per user feedback 2026-05-06 — only the
+ *  "+ งานเดี่ยว" button (for orphan recovery) and "สั่งงานใหม่" link
+ *  stay here as quick-access. */
 export function BoardToolbar({ canCreate, isAdmin, jobs, defaultOrderer }: ToolbarProps) {
   void jobs;
   void isAdmin;
-  const [orderOpen, setOrderOpen] = useState(false);
+  void defaultOrderer;
   const [addJobOpen, setAddJobOpen] = useState(false);
 
   if (!canCreate) return null;
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOrderOpen(true)}
+      <Link
+        href="/orders/new"
         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark transition-colors"
       >
         <IconFileText size={13} />
-        ใบสั่งใหม่
-      </button>
+        สั่งงานใหม่
+      </Link>
       <button
         type="button"
         onClick={() => setAddJobOpen(true)}
@@ -43,7 +42,6 @@ export function BoardToolbar({ canCreate, isAdmin, jobs, defaultOrderer }: Toolb
         <IconPlus size={13} />
         งานเดี่ยว
       </button>
-      <OrderForm open={orderOpen} onClose={() => setOrderOpen(false)} defaultOrderer={defaultOrderer} />
       <JobForm open={addJobOpen} onClose={() => setAddJobOpen(false)} />
     </>
   );
