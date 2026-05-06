@@ -9,7 +9,8 @@ import { AutoSync } from '@/lib/auto-sync';
 import { IconAlertCircle, IconSearch } from '@/lib/icons';
 import { DEPT_LABELS, type Dept } from '@/lib/board';
 import { distinctYears, filterByYearMonth, THAI_MONTHS_FULL } from '@/lib/list-helpers';
-import { PageSizeBar, resolvePerPage } from '@/components/page-size-bar';
+import { PageSizeBar } from '@/components/page-size-bar';
+import { resolvePerPage } from '@/lib/page-size';
 import { CancelledClient, RestoreButton } from './client';
 
 export const metadata: Metadata = {

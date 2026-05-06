@@ -8,7 +8,8 @@ import { displayDate } from '@/lib/jobs';
 import { AutoSync } from '@/lib/auto-sync';
 import { IconTruck, IconSearch, IconFolder } from '@/lib/icons';
 import { distinctYears, filterByYearMonth, dateMonthLabel, THAI_MONTHS_FULL } from '@/lib/list-helpers';
-import { PageSizeBar, resolvePerPage } from '@/components/page-size-bar';
+import { PageSizeBar } from '@/components/page-size-bar';
+import { resolvePerPage } from '@/lib/page-size';
 import Link from 'next/link';
 import { ShippedClient } from './client';
 

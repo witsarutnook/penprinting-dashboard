@@ -11,7 +11,7 @@ import { computeUrgency, getBangkokToday, URGENCY_LABELS } from '@/lib/calendar'
 import { parseDateDMY } from '@/lib/analytics';
 import { OrdersClient } from './client';
 import { OrdersTable, type OrderRow } from './orders-table';
-import { resolvePerPage } from '@/components/page-size-bar';
+import { resolvePerPage } from '@/lib/page-size';
 import Link from 'next/link';
 
 export const metadata: Metadata = {

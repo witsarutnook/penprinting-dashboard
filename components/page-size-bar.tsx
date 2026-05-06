@@ -1,14 +1,9 @@
 'use client';
 
-export const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
-export const DEFAULT_PAGE_SIZE = 20;
+import { PAGE_SIZE_OPTIONS } from '@/lib/page-size';
 
-/** Resolve a `?per=` param to a safe integer. Falls back to default if
- *  the value isn't in the allowlist. Use server-side. */
-export function resolvePerPage(raw: string | undefined): number {
-  const n = Number(raw);
-  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(n) ? n : DEFAULT_PAGE_SIZE;
-}
+// Re-export so existing imports from this file keep working.
+export { resolvePerPage, PAGE_SIZE_OPTIONS, DEFAULT_PAGE_SIZE } from '@/lib/page-size';
 
 /** Page-size dropdown for /orders, /shipped, /cancelled. Replaces `?per=`
  *  in the current URL on change — no client routing, just a hard reload
