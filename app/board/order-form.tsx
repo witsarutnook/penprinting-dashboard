@@ -426,30 +426,30 @@ function MainTab({
                   </select>
                 </div>
               </Field>
-              <Field label="กระดาษปก">
-                <input type="text" value={data.paperCover} onChange={(e) => patch({ paperCover: e.target.value })}
-                  className={inputCls} />
+              <Field label="กระดาษปก" className="sm:col-span-1">
+                <div className="flex gap-2">
+                  <input type="text" value={data.paperCover} onChange={(e) => patch({ paperCover: e.target.value })}
+                    className={`${inputCls} flex-grow`} placeholder="เช่น อาร์ตการ์ด 230" />
+                  <input type="text" value={data.coverColorNote} onChange={(e) => patch({ coverColorNote: e.target.value })}
+                    className={`${inputCls} w-32 sm:w-36`} placeholder="หมายเหตุสีปก" aria-label="หมายเหตุสีปก" />
+                </div>
               </Field>
               <RadioRowField
                 label="สีปก" name="coverColor" options={COVER_COLORS}
                 value={data.coverColor} onChange={(v) => patch({ coverColor: v })}
               />
-              <Field label="หมายเหตุสีปก">
-                <input type="text" value={data.coverColorNote} onChange={(e) => patch({ coverColorNote: e.target.value })}
-                  className={inputCls} />
-              </Field>
-              <Field label="กระดาษเนื้อใน">
-                <input type="text" value={data.paperInner} onChange={(e) => patch({ paperInner: e.target.value })}
-                  className={inputCls} />
+              <Field label="กระดาษเนื้อใน" className="sm:col-span-1">
+                <div className="flex gap-2">
+                  <input type="text" value={data.paperInner} onChange={(e) => patch({ paperInner: e.target.value })}
+                    className={`${inputCls} flex-grow`} placeholder="เช่น อาร์ตมัน 130" />
+                  <input type="text" value={data.innerColorNote} onChange={(e) => patch({ innerColorNote: e.target.value })}
+                    className={`${inputCls} w-32 sm:w-36`} placeholder="หมายเหตุสีเนื้อใน" aria-label="หมายเหตุสีเนื้อใน" />
+                </div>
               </Field>
               <RadioRowField
                 label="สีเนื้อใน" name="innerColor" options={COVER_COLORS}
                 value={data.innerColor} onChange={(v) => patch({ innerColor: v })}
               />
-              <Field label="หมายเหตุสีเนื้อใน">
-                <input type="text" value={data.innerColorNote} onChange={(e) => patch({ innerColorNote: e.target.value })}
-                  className={inputCls} />
-              </Field>
             </div>
           </Section>
 
