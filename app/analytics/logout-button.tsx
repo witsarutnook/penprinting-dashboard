@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { IconLogOut } from '@/lib/icons';
+import { broadcastWrite } from '@/lib/auto-sync';
 
 export function LogoutButton() {
   const [busy, setBusy] = useState(false);
@@ -9,6 +10,10 @@ export function LogoutButton() {
     setBusy(true);
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
+      // Tell other tabs to refresh — without this, sidebar in tab B keeps
+      // showing the logged-in username until the next 15s auto-sync tick
+      // or the user clicks something.
+      broadcastWrite('/api/auth/logout');
     } finally {
       window.location.href = '/login';
     }

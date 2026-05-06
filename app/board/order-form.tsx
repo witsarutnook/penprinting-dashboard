@@ -13,7 +13,7 @@ import {
 } from '@/lib/photobook';
 import {
   IconX, IconCheck, IconAlertTriangle, IconAlertCircle, IconFileText, IconPlus, IconPrinter,
-  IconTrash, IconDownload,
+  IconTrash, IconDownload, IconRefreshCw, IconArrowLeft,
 } from '@/lib/icons';
 import type { OrderSummary } from '@/lib/board';
 import type { Template } from '@/lib/types';
@@ -754,7 +754,17 @@ function MainTab({
                 className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium disabled:opacity-50"
                 title="ใส่ค่าจาก spec ของงานเก่าลูกค้านี้ — ระบบจะเซ็ตวันที่รับเป็นวันนี้และเคลียร์กำหนดส่ง"
               >
-                {loadingLast ? '⏳ กำลังดึงข้อมูล...' : '↩ ดึงรายละเอียดจากงานล่าสุดของลูกค้านี้'}
+                {loadingLast ? (
+                  <>
+                    <IconRefreshCw size={12} className="animate-spin" />
+                    กำลังดึงข้อมูล...
+                  </>
+                ) : (
+                  <>
+                    <IconArrowLeft size={12} />
+                    ดึงรายละเอียดจากงานล่าสุดของลูกค้านี้
+                  </>
+                )}
               </button>
             )}
           </Field>

@@ -2,7 +2,7 @@
 
 > Last scan: **2026-05-06 PM** (penprinting-auditor) — หลังจบ Phase 3.5.10 + 3.5.11 + critical/high audit close-out
 >
-> Latest update: **2026-05-06 PM** — Critical + 5 High + 7 Medium ปิดครบ. เหลือ 5 Low (cosmetic)
+> Latest update: **2026-05-06 PM** — 🎉 **ปิดครบทุก tier** (1 Critical + 5 High + 7 Medium + 5 Low — 1 false positive)
 >
 > ✅ = ปิดแล้ว / commit hash อยู่ในวงเล็บ
 > ⏳ = ยังเหลือ
@@ -31,24 +31,7 @@ _(ปิดครบ — ดู Closed section)_
 
 ## 🟢 Low
 
-- [ ] **L-emoji-1** — order-form.tsx:731 ใช้ `⏳` + `↩`
-  - Fix: ใช้ `IconRefreshCw` / `IconArrowLeft`
-
-- [ ] **L-emoji-2** — tracking-card/client.tsx:250 ใช้ `⚠`
-  - Fix: ใช้ `IconAlertTriangle`
-
-- [ ] **L-emoji-3** — card.tsx:175 ใช้ `↩` ใน undo toast
-  - Fix: icon component
-
-- [ ] **L-logout-broadcast** — logout ไม่ `broadcastWrite` → tab อื่นค้าง user-name
-  - File: [app/analytics/logout-button.tsx:11](app/analytics/logout-button.tsx:11)
-  - Fix: `broadcastWrite('/api/auth/logout')` ก่อน redirect
-
-- [ ] **L-dead-1** — column.tsx:91 dead `void list` ใน IIFE
-  - Fix: simplify เป็น `const sourceStaffLabel = DEPT_LABELS[sourceDept] || sourceDept`
-
-- [ ] **L-dead-2** — orders-table.tsx:32-33 unused `jobDeptStaffLabel?` field
-  - Fix: ลบจาก type
+_(ปิดครบ — ดู Closed section)_
 
 ---
 
@@ -78,6 +61,16 @@ _(ปิดครบ — ดู Closed section)_
 
 ## ✅ Closed
 
+### Batch 4 — cosmetic cleanup (5 Low)
+2026-05-06 PM (1 commit — see git for hash)
+
+- [x] **L-emoji-1** — `app/board/order-form.tsx` "ดึงงานเก่า" button uses `IconRefreshCw` (animate-spin) for loading + `IconArrowLeft` for idle. No more `⏳` / `↩` glyphs.
+- [x] **L-emoji-2** — `app/orders/[id]/tracking-card/client.tsx` PIN-warning chip uses `IconAlertTriangle`. No more `⚠`.
+- [x] **L-emoji-3** — false positive at the time of audit. `app/board/card.tsx` already uses icon components in the undo toast.
+- [x] **L-logout-broadcast** — `app/analytics/logout-button.tsx` calls `broadcastWrite('/api/auth/logout')` before redirect. Other tabs see the channel and clear stale username on next sync tick.
+- [x] **L-dead-1** — `app/board/column.tsx` dropped the IIFE + `void list` dead-code. `sourceStaffLabel` is now a plain `const`. Also removed the now-unused `STAFF` import.
+- [x] **L-dead-2** — `app/orders/orders-table.tsx` removed the unused `jobDeptStaffLabel?` field from `OrderRow` (declared, never set, never read).
+
 ### Batch 3 — perf / security / data integrity (4 Medium)
 2026-05-06 PM (1 commit — see git for hash)
 ⚠️ M-bulk-forward-N-roundtrips ต้อง deploy Apps Script ก่อน — รัน `production-monitoring/apps-script/dashboard/push.sh` แล้ว Apps Script editor → Manage deployments → Edit existing → New version. Vercel side มี backwards-compat fallback (loop getNextId) จนกว่า Apps Script จะ deploy.
@@ -106,10 +99,14 @@ _(ปิดครบ — ดู Closed section)_
 
 ---
 
-## 🎯 Recommended close order (remaining)
+## 🎯 ปิดครบ — เหลือไว้ track audit รอบถัดไป
 
-1. **Batch 3 (perf/security):** M-bulk-forward-N-roundtrips (Apps Script change!) → M-login-ratelimit-map → M-orders-date-range-tz → M-jobByOrderId-last-write-wins
-2. **Batch 4 (cosmetic):** Lows ทั้งหมด — 1 commit
+ทุก finding จาก audit รอบ 2026-05-06 ปิดหมดแล้ว. ไฟล์นี้ยังคงเป็น running log ของ audit findings ในอนาคต — เมื่อรัน `/audit` รอบใหม่:
+
+1. เพิ่มหมวดใหม่ที่ด้านบน (Critical / High / Medium / Low) ตามรูปแบบเดิม
+2. แก้ตามลำดับ batch
+3. Tick `[x]` + ย้ายลง Closed section ทันทีหลังแก้
+4. อัปเดต `Latest update` date-stamp ที่ header
 
 ## 📝 Update protocol
 

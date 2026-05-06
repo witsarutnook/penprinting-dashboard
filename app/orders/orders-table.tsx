@@ -29,8 +29,6 @@ export interface OrderRow {
   jobUrgency: string;
   jobUrgencyLabel: string;
   isOrphan: boolean;
-  /** Where this row's job currently sits — for the modal "ขั้นตอนปัจจุบัน" hint. */
-  jobDeptStaffLabel?: string;
 }
 
 interface Props {

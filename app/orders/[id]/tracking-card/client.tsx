@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { toPng } from 'html-to-image';
-import { IconDownload, IconArrowLeft, IconAlertCircle } from '@/lib/icons';
+import { IconDownload, IconArrowLeft, IconAlertCircle, IconAlertTriangle } from '@/lib/icons';
 
 const ACCENT = '#1e3a8a';
 const CONTACT_PHONE = '043-220-582';
@@ -245,9 +245,11 @@ export function TrackingCardClient({
             padding: '8px 14px', background: '#fef3c7',
             border: '1px solid #fbbf24', borderRadius: 6,
             fontSize: 13, color: '#92400e', maxWidth: 460, textAlign: 'center',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
           }}
         >
-          ⚠ ใบสั่งงานนี้ไม่มี PIN (อาจถูกสร้างก่อนระบบรองรับ tracking)
+          <IconAlertTriangle size={14} />
+          ใบสั่งงานนี้ไม่มี PIN (อาจถูกสร้างก่อนระบบรองรับ tracking)
         </div>
       )}
     </div>

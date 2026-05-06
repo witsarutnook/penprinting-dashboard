@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { type BoardColumn, type Dept, DEPT_LABELS, STAFF } from '@/lib/board';
+import { type BoardColumn, type Dept, DEPT_LABELS } from '@/lib/board';
 import { getStaffTheme } from '@/lib/staff-icons';
 import { broadcastWrite } from '@/lib/auto-sync';
 import { computeFromType, getVisibleTargets } from '@/lib/forward';
@@ -82,15 +82,9 @@ export function Column({
     if (!id || !Number.isFinite(id)) return;
     const targetStaff = column.staff.id;
 
-    // Find the source-staff label for the toast (best-effort lookup using
-    // sourceDept's STAFF — falls back to id string).
-    const sourceStaffLabel = (() => {
-      const list = STAFF[sourceDept as Dept];
-      // Find which staff currently owns this job — we don't know without fetching,
-      // so just use the dept label.
-      return DEPT_LABELS[sourceDept as Dept] || sourceDept;
-      void list;
-    })();
+    // Best-effort source label for the toast — we don't have the actual
+    // source staff at drop time, so the dept name is the cleanest fallback.
+    const sourceStaffLabel = DEPT_LABELS[sourceDept as Dept] || sourceDept;
     const targetStaffLabel = column.staff.name;
 
     setError(null);
