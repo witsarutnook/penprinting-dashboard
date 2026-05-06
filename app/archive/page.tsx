@@ -5,6 +5,7 @@ import { cookies } from 'next/headers';
 import { searchArchive, AppsScriptError, type ArchiveSearchResult } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { LogoutButton } from '../analytics/logout-button';
+import { IconArrowLeft, IconCheck, IconFolderOpen } from '@/lib/icons';
 
 export const metadata: Metadata = {
   title: 'Search Archive',
@@ -43,8 +44,12 @@ export default async function ArchivePage({ searchParams }: { searchParams: Sear
       <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
-            <Link href="/" className="text-stone-500 hover:text-stone-700 text-sm">
-              ←
+            <Link
+              href="/"
+              className="text-stone-500 hover:text-stone-700 inline-flex items-center"
+              aria-label="กลับหน้าหลัก"
+            >
+              <IconArrowLeft size={18} />
             </Link>
             <h1 className="text-lg sm:text-xl font-bold text-stone-900">Search Archive</h1>
             <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 hidden sm:inline">
@@ -126,15 +131,18 @@ function Results({ result, query }: { result: ArchiveSearchResult; query: string
 
   return (
     <>
-      <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3">
-        ✓ พบ <span className="font-semibold tabular-nums">{total}</span> รายการสำหรับ{' '}
-        <span className="font-mono text-xs bg-white px-1.5 py-0.5 rounded">{query}</span>
-        {showing < total && (
-          <span className="text-stone-500">
-            {' '}
-            (แสดง {showing} แรก — เพิ่มคำค้นให้เจาะจงเพื่อกรองให้แคบลง)
-          </span>
-        )}
+      <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-2">
+        <IconCheck size={14} className="flex-shrink-0" />
+        <span>
+          พบ <span className="font-semibold tabular-nums">{total}</span> รายการสำหรับ{' '}
+          <span className="font-mono text-xs bg-white px-1.5 py-0.5 rounded">{query}</span>
+          {showing < total && (
+            <span className="text-stone-500">
+              {' '}
+              (แสดง {showing} แรก — เพิ่มคำค้นให้เจาะจงเพื่อกรองให้แคบลง)
+            </span>
+          )}
+        </span>
       </div>
 
       <div className="space-y-4">
@@ -206,7 +214,9 @@ function CellValue({ value }: { value: unknown }) {
 function EmptyState() {
   return (
     <div className="bg-white rounded-xl border border-dashed border-stone-200 p-8 text-center">
-      <div className="text-3xl mb-2">🗂</div>
+      <div className="flex justify-center mb-2 text-stone-300">
+        <IconFolderOpen size={36} />
+      </div>
       <p className="text-sm text-stone-600">
         ค้นหาออเดอร์เก่าจาก archive — รวมทั้ง <code className="text-xs bg-stone-100 px-1 rounded">shipped</code>,{' '}
         <code className="text-xs bg-stone-100 px-1 rounded">cancelled</code>,{' '}

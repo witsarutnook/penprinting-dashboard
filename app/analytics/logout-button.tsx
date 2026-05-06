@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { IconLogOut } from '@/lib/icons';
 
 export function LogoutButton() {
   const [busy, setBusy] = useState(false);
@@ -16,10 +17,11 @@ export function LogoutButton() {
     <button
       onClick={onClick}
       disabled={busy}
-      className="text-stone-500 hover:text-stone-900 disabled:opacity-50"
+      className="text-stone-500 hover:text-stone-900 disabled:opacity-50 inline-flex items-center gap-1"
       title="ออกจากระบบ"
     >
-      {busy ? '...' : '🚪 ออก'}
+      <IconLogOut size={14} />
+      {busy ? '...' : 'ออก'}
     </button>
   );
 }

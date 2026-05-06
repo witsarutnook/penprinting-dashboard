@@ -13,6 +13,7 @@ import {
 import { CalendarGrid } from './grid';
 import { LogoutButton } from '../analytics/logout-button';
 import { AutoSync } from '@/lib/auto-sync';
+import { IconArrowLeft, IconArrowRight } from '@/lib/icons';
 
 export const metadata: Metadata = {
   title: 'Calendar',
@@ -88,8 +89,12 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
       <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
-            <Link href="/" className="text-stone-500 hover:text-stone-700 text-sm">
-              ←
+            <Link
+              href="/"
+              className="text-stone-500 hover:text-stone-700 inline-flex items-center"
+              aria-label="กลับหน้าหลัก"
+            >
+              <IconArrowLeft size={18} />
             </Link>
             <h1 className="text-lg sm:text-xl font-bold text-stone-900">Calendar</h1>
           </div>
@@ -160,8 +165,9 @@ function NavBar({ monthLabel, prevHref, nextHref, todayHref }: {
         <Link
           href={prevHref}
           className="w-9 h-9 inline-flex items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-stone-300"
+          aria-label="เดือนก่อน"
         >
-          ←
+          <IconArrowLeft size={16} />
         </Link>
         <h2 className="text-lg font-semibold text-stone-900 px-2 min-w-[140px] text-center tabular-nums">
           {monthLabel}
@@ -169,8 +175,9 @@ function NavBar({ monthLabel, prevHref, nextHref, todayHref }: {
         <Link
           href={nextHref}
           className="w-9 h-9 inline-flex items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-stone-300"
+          aria-label="เดือนถัดไป"
         >
-          →
+          <IconArrowRight size={16} />
         </Link>
       </div>
       <Link

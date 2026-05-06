@@ -9,6 +9,7 @@ import {
   DEPT_LABELS,
   type Dept,
 } from '@/lib/calendar';
+import { IconUser, IconFolder } from '@/lib/icons';
 
 const TH_WEEKDAYS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
 
@@ -254,10 +255,18 @@ function DayJobsList({ jobs }: { jobs: CalendarDay['jobs'] }) {
           </span>
           <div className="flex-grow min-w-0">
             <div className="text-stone-900 truncate">{j.name || '(ไม่มีชื่อ)'}</div>
-            <div className="text-xs text-stone-500 mt-0.5 flex flex-wrap gap-x-2">
-              {j.customer && <span>👤 {j.customer}</span>}
+            <div className="text-xs text-stone-500 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              {j.customer && (
+                <span className="inline-flex items-center gap-1">
+                  <IconUser size={11} />
+                  {j.customer}
+                </span>
+              )}
               {(j.dept as Dept) in DEPT_LABELS && (
-                <span>📂 {DEPT_LABELS[j.dept as Dept]}</span>
+                <span className="inline-flex items-center gap-1">
+                  <IconFolder size={11} />
+                  {DEPT_LABELS[j.dept as Dept]}
+                </span>
               )}
               {j.staff && <span>· {j.staff}</span>}
               <span className="text-stone-400">#{j.id}</span>

@@ -8,6 +8,7 @@ import { LogoutButton } from '../analytics/logout-button';
 import { Column } from './column';
 import { BoardToolbar } from './toolbar';
 import { AutoSync } from '@/lib/auto-sync';
+import { IconArrowLeft } from '@/lib/icons';
 
 export const metadata: Metadata = {
   title: 'Kanban Board',
@@ -38,8 +39,12 @@ export default async function BoardPage() {
       <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
         <div className="max-w-full mx-auto px-3 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
-            <Link href="/" className="text-stone-500 hover:text-stone-700 text-sm">
-              ←
+            <Link
+              href="/"
+              className="text-stone-500 hover:text-stone-700 inline-flex items-center"
+              aria-label="กลับหน้าหลัก"
+            >
+              <IconArrowLeft size={18} />
             </Link>
             <h1 className="text-lg sm:text-xl font-bold text-stone-900">Kanban Board</h1>
           </div>

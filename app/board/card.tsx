@@ -12,6 +12,20 @@ import {
 } from '@/lib/board';
 import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
 import { broadcastWrite } from '@/lib/auto-sync';
+import {
+  IconCheck,
+  IconX,
+  IconPencil,
+  IconTrash,
+  IconAlertTriangle,
+  IconAlertCircle,
+  IconInfo,
+  IconCornerUpRight,
+  IconRefreshCw,
+  IconUser,
+  IconUsers,
+  IconPlus,
+} from '@/lib/icons';
 import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -79,8 +93,12 @@ export function Card({
           )}
         </div>
         {job.customer && (
-          <div className="text-[11px] text-stone-500 mt-1 truncate" title={job.customer}>
-            👤 {job.customer}
+          <div
+            className="text-[11px] text-stone-500 mt-1 truncate flex items-center gap-1"
+            title={job.customer}
+          >
+            <IconUser size={11} className="flex-shrink-0" />
+            <span className="truncate">{job.customer}</span>
           </div>
         )}
         <div className="flex items-center justify-between gap-2 mt-1.5 text-[11px]">
@@ -171,10 +189,10 @@ function DetailContent({
         <button
           type="button"
           onClick={onClose}
-          className="text-stone-400 hover:text-stone-700 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100 -mr-2 -mt-1"
+          className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100 -mr-2 -mt-1"
           aria-label="ปิด"
         >
-          ×
+          <IconX size={20} />
         </button>
       </div>
 
@@ -232,14 +250,17 @@ function DetailContent({
 
         <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
 
-        <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600">
-          ℹ️ feature parity เกือบครบ — undo forward 10s ใช้ใน{' '}
-          <a
-            href="https://app.penprinting.co/production-monitoring/"
-            className="underline hover:text-stone-800"
-          >
-            ระบบเดิม (WP)
-          </a>
+        <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600 flex items-start gap-2">
+          <IconInfo size={14} className="flex-shrink-0 mt-0.5 text-stone-500" />
+          <span>
+            feature parity เกือบครบ — undo forward 10s ใช้ใน{' '}
+            <a
+              href="https://app.penprinting.co/production-monitoring/"
+              className="underline hover:text-stone-800"
+            >
+              ระบบเดิม (WP)
+            </a>
+          </span>
         </div>
       </div>
     </div>
@@ -417,8 +438,9 @@ function ActionButtons({
       </h3>
       {actionMode === 'forward' ? (
         <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
-          <label className="block text-xs font-medium text-stone-700 mb-1.5">
-            ↪ ส่งต่อไปที่
+          <label className="block text-xs font-medium text-stone-700 mb-1.5 flex items-center gap-1.5">
+            <IconCornerUpRight size={14} />
+            ส่งต่อไปที่
           </label>
           <select
             value={actionTarget}
@@ -455,21 +477,23 @@ function ActionButtons({
       ) : actionMode === 'cowork' ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-stone-700">
-              👥 Co-work — ผู้ช่วยงาน
+            <label className="text-xs font-medium text-stone-700 flex items-center gap-1.5">
+              <IconUsers size={14} />
+              Co-work — ผู้ช่วยงาน
             </label>
             <button
               type="button"
               onClick={() => setCoworkRows((rows) => [...rows, { dept: '', staff: '' }])}
               disabled={busy !== null}
-              className="text-[11px] text-accent hover:text-accent-dark font-medium disabled:opacity-50"
+              className="text-[11px] text-accent hover:text-accent-dark font-medium disabled:opacity-50 inline-flex items-center gap-1"
             >
-              + เพิ่มแถว
+              <IconPlus size={11} />
+              เพิ่มแถว
             </button>
           </div>
           {coworkRows.length === 0 ? (
             <p className="text-xs text-stone-500 px-1 py-2">
-              ไม่มีผู้ช่วยงาน — กด &quot;+ เพิ่มแถว&quot; เพื่อใส่
+              ไม่มีผู้ช่วยงาน — กด &quot;เพิ่มแถว&quot; เพื่อใส่
             </p>
           ) : (
             <div className="space-y-2">
@@ -532,7 +556,7 @@ function ActionButtons({
                       aria-label="ลบแถว"
                       title="ลบแถวนี้"
                     >
-                      ×
+                      <IconX size={14} />
                     </button>
                   </div>
                 );
@@ -560,8 +584,9 @@ function ActionButtons({
         </div>
       ) : actionMode === 'reassign' ? (
         <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
-          <label className="block text-xs font-medium text-stone-700 mb-1.5">
-            🔄 ย้ายไปที่ <span className="text-stone-400 font-normal">(แผนกเดิม: {DEPT_LABELS[dept]})</span>
+          <label className="block text-xs font-medium text-stone-700 mb-1.5 flex items-center gap-1.5">
+            <IconRefreshCw size={14} />
+            ย้ายไปที่ <span className="text-stone-400 font-normal">(แผนกเดิม: {DEPT_LABELS[dept]})</span>
           </label>
           <select
             value={actionTarget}
@@ -602,18 +627,20 @@ function ActionButtons({
             type="button"
             onClick={moveToShipped}
             disabled={busy !== null}
-            className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {busy === 'ship' ? 'กำลังส่ง...' : '✅ จัดส่งเสร็จ'}
+            <IconCheck size={16} />
+            {busy === 'ship' ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
           </button>
           {canForward && (
             <button
               type="button"
               onClick={() => startAction('forward')}
               disabled={busy !== null}
-              className="px-3 py-2 rounded-lg bg-sky-100 text-sky-800 text-sm font-medium hover:bg-sky-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-100 text-sky-800 text-sm font-medium hover:bg-sky-200 disabled:opacity-50"
             >
-              ↪ ส่งต่อ
+              <IconCornerUpRight size={16} />
+              ส่งต่อ
             </button>
           )}
           {canReassign && (
@@ -621,27 +648,30 @@ function ActionButtons({
               type="button"
               onClick={() => startAction('reassign')}
               disabled={busy !== null}
-              className="px-3 py-2 rounded-lg bg-violet-100 text-violet-800 text-sm font-medium hover:bg-violet-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-100 text-violet-800 text-sm font-medium hover:bg-violet-200 disabled:opacity-50"
             >
-              🔄 ย้าย
+              <IconRefreshCw size={16} />
+              ย้าย
             </button>
           )}
           <button
             type="button"
             onClick={() => startAction('cowork')}
             disabled={busy !== null}
-            className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
           >
-            👥 Co-work
+            <IconUsers size={16} />
+            Co-work
           </button>
           {isAdmin && (
             <button
               type="button"
               onClick={onEdit}
               disabled={busy !== null}
-              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
             >
-              ✏️ แก้ไข
+              <IconPencil size={16} />
+              แก้ไข
             </button>
           )}
           {isAdmin && (
@@ -649,9 +679,10 @@ function ActionButtons({
               type="button"
               onClick={cancelJob}
               disabled={busy !== null}
-              className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
             >
-              {busy === 'cancel' ? 'กำลังยกเลิก...' : '⚠️ ยกเลิก (admin)'}
+              <IconAlertTriangle size={16} />
+              {busy === 'cancel' ? 'กำลังยกเลิก...' : 'ยกเลิก (admin)'}
             </button>
           )}
           {isAdmin && (
@@ -659,16 +690,18 @@ function ActionButtons({
               type="button"
               onClick={deleteJob}
               disabled={busy !== null}
-              className="px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
             >
-              {busy === 'delete' ? 'กำลังลบ...' : '🗑 ลบงาน'}
+              <IconTrash size={16} />
+              {busy === 'delete' ? 'กำลังลบ...' : 'ลบงาน'}
             </button>
           )}
         </div>
       )}
       {error && (
-        <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          ❌ {error}
+        <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+          <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+          <span>{error}</span>
         </div>
       )}
       <p className="text-[11px] text-stone-400 mt-2">

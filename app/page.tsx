@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { IconArrowRight } from '@/lib/icons';
 
 export default function Home() {
   return (
@@ -20,27 +21,27 @@ export default function Home() {
         <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
           <Link
             href="/board"
-            className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-dark transition-colors"
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-dark transition-colors"
           >
-            Kanban Board →
+            Kanban Board <IconArrowRight size={16} />
           </Link>
           <Link
             href="/analytics"
-            className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
           >
-            Analytics →
+            Analytics <IconArrowRight size={16} />
           </Link>
           <Link
             href="/calendar"
-            className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
           >
-            Calendar →
+            Calendar <IconArrowRight size={16} />
           </Link>
           <Link
             href="/archive"
-            className="px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-stone-700 rounded-lg font-medium border border-stone-200 hover:border-stone-300 transition-colors"
           >
-            Archive →
+            Archive <IconArrowRight size={16} />
           </Link>
           <a
             href="https://app.penprinting.co/production-monitoring/"
@@ -51,8 +52,8 @@ export default function Home() {
         </div>
 
         <p className="text-xs text-stone-500 pt-2">
-          <Link href="/login" className="hover:text-stone-700 underline">
-            เข้าสู่ระบบ →
+          <Link href="/login" className="hover:text-stone-700 underline inline-flex items-center gap-1">
+            เข้าสู่ระบบ <IconArrowRight size={12} />
           </Link>
         </p>
 

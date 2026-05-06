@@ -12,6 +12,7 @@ import {
 } from './charts';
 import { LogoutButton } from './logout-button';
 import { AutoSync } from '@/lib/auto-sync';
+import { IconArrowLeft } from '@/lib/icons';
 
 export const metadata: Metadata = {
   title: 'Analytics',
@@ -60,8 +61,12 @@ export default async function AnalyticsPage({
       <header className="border-b border-stone-200 bg-white">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <Link href="/" className="text-stone-500 hover:text-stone-700 text-sm">
-              ←
+            <Link
+              href="/"
+              className="text-stone-500 hover:text-stone-700 inline-flex items-center"
+              aria-label="กลับหน้าหลัก"
+            >
+              <IconArrowLeft size={18} />
             </Link>
             <h1 className="text-xl font-bold text-stone-900">Analytics</h1>
           </div>

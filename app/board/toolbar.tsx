@@ -5,6 +5,7 @@ import { JobForm } from './job-form';
 import { OrderForm } from './order-form';
 import { BulkForwardModal } from './bulk-forward-modal';
 import type { BoardJob } from '@/lib/board';
+import { IconFileText, IconPlus, IconCornerUpRight } from '@/lib/icons';
 
 interface ToolbarProps {
   canCreate: boolean;
@@ -27,9 +28,10 @@ export function BoardToolbar({ canCreate, isAdmin, jobs, defaultOrderer }: Toolb
         <button
           type="button"
           onClick={() => setBulkOpen(true)}
-          className="px-3 py-1.5 rounded-lg bg-sky-100 text-sky-800 text-xs font-medium hover:bg-sky-200 transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-100 text-sky-800 text-xs font-medium hover:bg-sky-200 transition-colors"
         >
-          ↪ ส่งต่อหลายงาน
+          <IconCornerUpRight size={13} />
+          ส่งต่อหลายงาน
         </button>
       )}
       {canCreate && (
@@ -37,17 +39,19 @@ export function BoardToolbar({ canCreate, isAdmin, jobs, defaultOrderer }: Toolb
           <button
             type="button"
             onClick={() => setOrderOpen(true)}
-            className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark transition-colors"
           >
-            📝 ใบสั่งใหม่
+            <IconFileText size={13} />
+            ใบสั่งใหม่
           </button>
           <button
             type="button"
             onClick={() => setAddJobOpen(true)}
-            className="px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200 transition-colors"
             title="เพิ่ม job เดี่ยวๆ (ไม่มีใบสั่งงาน) — ใช้สำหรับ recover orphan"
           >
-            + งานเดี่ยว
+            <IconPlus size={13} />
+            งานเดี่ยว
           </button>
         </>
       )}

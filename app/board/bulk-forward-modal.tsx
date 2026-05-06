@@ -16,6 +16,7 @@ import {
   type ForwardTarget,
 } from '@/lib/forward';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { IconX, IconCornerUpRight, IconAlertCircle } from '@/lib/icons';
 
 const MAX_BATCH = 25;
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
@@ -215,9 +216,10 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
     >
       <div className="flex flex-col max-h-[90vh]">
         <header className="px-5 py-3 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
-          <h2 className="text-base font-bold text-stone-900">
-            ↪ ส่งต่อหลายงาน
-            <span className="ml-2 text-xs font-normal text-stone-400">
+          <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+            <IconCornerUpRight size={18} />
+            ส่งต่อหลายงาน
+            <span className="text-xs font-normal text-stone-400">
               ({selected.size}/{MAX_BATCH})
             </span>
           </h2>
@@ -225,20 +227,21 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
             type="button"
             onClick={onClose}
             disabled={busy}
-            className="text-stone-400 hover:text-stone-700 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100 disabled:opacity-50"
+            className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100 disabled:opacity-50"
             aria-label="ปิด"
           >
-            ×
+            <IconX size={20} />
           </button>
         </header>
 
         <div className="flex-grow overflow-y-auto px-5 py-4 space-y-4">
           {/* Target picker */}
           <div>
-            <label className="block text-xs font-medium text-stone-700 mb-1.5">
-              ↪ ส่งต่อไปที่
+            <label className="block text-xs font-medium text-stone-700 mb-1.5 flex items-center gap-1.5">
+              <IconCornerUpRight size={13} />
+              ส่งต่อไปที่
               {selectedJobs.length > 0 && (
-                <span className="ml-2 text-stone-400 font-normal">
+                <span className="text-stone-400 font-normal">
                   ({commonTargets.length} ปลายทางที่ใช้ร่วมกันได้)
                 </span>
               )}
@@ -334,8 +337,9 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
           </div>
 
           {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              ❌ {error}
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
           {progress && !error && (

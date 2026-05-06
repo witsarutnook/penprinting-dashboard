@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { STAFF, DEPT_LABELS, type Dept, type BoardJob } from '@/lib/board';
 import { dmyToISOInput, bangkokTodayISO } from '@/lib/jobs';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { IconX, IconPencil, IconPlus, IconAlertCircle } from '@/lib/icons';
 
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
 
@@ -146,16 +147,17 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
     >
       <form onSubmit={onSubmit} className="flex flex-col max-h-[90vh]">
         <header className="px-5 py-3 border-b border-stone-200 flex items-center justify-between">
-          <h2 className="text-base font-bold text-stone-900">
-            {isEdit ? `✏️ แก้ไขงาน #${initial?.id}` : '➕ เพิ่มงานใหม่'}
+          <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+            {isEdit ? <IconPencil size={18} /> : <IconPlus size={18} />}
+            {isEdit ? `แก้ไขงาน #${initial?.id}` : 'เพิ่มงานใหม่'}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="text-stone-400 hover:text-stone-700 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+            className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
             aria-label="ปิด"
           >
-            ×
+            <IconX size={20} />
           </button>
         </header>
 
@@ -237,8 +239,9 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
           </Field>
 
           {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              ❌ {error}
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
         </div>

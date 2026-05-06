@@ -5,6 +5,13 @@ import { useRouter } from 'next/navigation';
 import { STAFF, DEPT_LABELS, type Dept } from '@/lib/board';
 import { bangkokTodayISO } from '@/lib/jobs';
 import { broadcastWrite } from '@/lib/auto-sync';
+import {
+  IconX,
+  IconCheck,
+  IconAlertTriangle,
+  IconAlertCircle,
+  IconFileText,
+} from '@/lib/icons';
 
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
 
@@ -144,16 +151,21 @@ export function OrderForm({ open, onClose, defaultOrderer }: OrderFormProps) {
       {success ? (
         <div className="flex flex-col max-h-[90vh]">
           <header className="px-5 py-3 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
-            <h2 className="text-base font-bold text-stone-900">
-              {success.partial ? '⚠️ ใบสั่งบันทึกบางส่วน' : '✅ สร้างใบสั่งงานเสร็จ'}
+            <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+              {success.partial ? (
+                <IconAlertTriangle size={18} className="text-amber-600" />
+              ) : (
+                <IconCheck size={18} className="text-emerald-600" />
+              )}
+              {success.partial ? 'ใบสั่งบันทึกบางส่วน' : 'สร้างใบสั่งงานเสร็จ'}
             </h2>
             <button
               type="button"
               onClick={onClose}
-              className="text-stone-400 hover:text-stone-700 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+              className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
               aria-label="ปิด"
             >
-              ×
+              <IconX size={20} />
             </button>
           </header>
           <div className="p-5 space-y-3">
@@ -174,18 +186,22 @@ export function OrderForm({ open, onClose, defaultOrderer }: OrderFormProps) {
               </div>
             </div>
             {success.warning && (
-              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
-                ⚠️ {success.warning}
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900 flex items-start gap-2">
+                <IconAlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>{success.warning}</span>
               </div>
             )}
-            <p className="text-xs text-stone-500">
-              📝 ฟีเจอร์เต็ม (Photobook tab, edit mode, templates, duplicate detection) ใน{' '}
-              <a
-                href="https://app.penprinting.co/production-monitoring/"
-                className="underline hover:text-stone-700"
-              >
-                ระบบ WP
-              </a>
+            <p className="text-xs text-stone-500 flex items-start gap-1.5">
+              <IconFileText size={13} className="flex-shrink-0 mt-0.5 text-stone-400" />
+              <span>
+                ฟีเจอร์เต็ม (Photobook tab, edit mode, templates, duplicate detection) ใน{' '}
+                <a
+                  href="https://app.penprinting.co/production-monitoring/"
+                  className="underline hover:text-stone-700"
+                >
+                  ระบบ WP
+                </a>
+              </span>
             </p>
             <div className="flex gap-2 pt-2">
               <button
@@ -208,14 +224,17 @@ export function OrderForm({ open, onClose, defaultOrderer }: OrderFormProps) {
       ) : (
         <form onSubmit={onSubmit} className="flex flex-col max-h-[90vh]">
           <header className="px-5 py-3 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
-            <h2 className="text-base font-bold text-stone-900">📝 สร้างใบสั่งงาน</h2>
+            <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+              <IconFileText size={18} />
+              สร้างใบสั่งงาน
+            </h2>
             <button
               type="button"
               onClick={onClose}
-              className="text-stone-400 hover:text-stone-700 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+              className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
               aria-label="ปิด"
             >
-              ×
+              <IconX size={20} />
             </button>
           </header>
 
@@ -330,8 +349,9 @@ export function OrderForm({ open, onClose, defaultOrderer }: OrderFormProps) {
             </Field>
 
             {error && (
-              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                ❌ {error}
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>{error}</span>
               </div>
             )}
           </div>
