@@ -92,7 +92,7 @@ export interface BoardJob {
   daysUntilDue: number | null;
   orderId: number | null;
   hasCowork: boolean;
-  /** Co-work assignments (array of { dept, staff } objects) — null if no cowork */
+  /** Co-work staff ids (print dept only) — string[] in WP format */
   cowork: unknown;
   /** Full order summary for detail modal — null if job has no orderId */
   order: OrderSummary | null;
@@ -100,6 +100,30 @@ export interface BoardJob {
   status: string;
   /** Date job was started (DD/MM/YYYY) */
   dateInRaw: string;
+  /** True when this card is a co-work guest copy (rendered in another print
+   *  staff's column because they were added as a co-worker). Read-only. */
+  isGuest?: boolean;
+}
+
+/** Parse cowork field — accepts WP format (`string[]` of print staff ids) AND
+ *  legacy v2 format (`{dept,staff}[]`). Returns the print-dept staff id list. */
+export function coworkPrintStaffIds(cowork: unknown): string[] {
+  if (!Array.isArray(cowork)) return [];
+  const ids: string[] = [];
+  for (const c of cowork) {
+    if (typeof c === 'string' && c.trim()) {
+      ids.push(c.trim());
+    } else if (c && typeof c === 'object') {
+      const obj = c as Record<string, unknown>;
+      const dept = String(obj.dept || '').trim();
+      const staff = String(obj.staff || '').trim();
+      // Only print dept fans out (matches WP behavior)
+      if ((dept === 'print' || dept === '') && staff) ids.push(staff);
+    }
+  }
+  // Dedupe + filter to known print staff
+  const valid = new Set(STAFF.print.map((s) => s.id));
+  return Array.from(new Set(ids)).filter((id) => valid.has(id));
 }
 
 export interface BoardColumn {
@@ -202,6 +226,18 @@ export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}):
     const key = `${j.dept}:${j.staff}`;
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key)!.push(job);
+
+    // Fan out: when a print-dept job has cowork members, also place a guest
+    // copy in each cowork member's column (matches WP renderJobCard behavior).
+    if (j.dept === 'print') {
+      const coworkIds = coworkPrintStaffIds(j.cowork);
+      for (const coStaff of coworkIds) {
+        if (coStaff === j.staff) continue; // never duplicate to host's own column
+        const guestKey = `print:${coStaff}`;
+        if (!byKey.has(guestKey)) byKey.set(guestKey, []);
+        byKey.get(guestKey)!.push({ ...job, isGuest: true });
+      }
+    }
   });
 
   // Sort each bucket

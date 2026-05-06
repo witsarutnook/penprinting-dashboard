@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
-import { STAFF, type Dept } from '@/lib/board';
+import { STAFF } from '@/lib/board';
 
 /**
  * Set the co-work list (collaborators) for a job — all roles, mirrors WP
@@ -17,7 +17,10 @@ export async function POST(req: Request) {
   const session = await requireSession();
   if (session instanceof NextResponse) return session;
 
-  let body: { id?: number | string; cowork?: Array<{ dept?: string; staff?: string }> };
+  let body: {
+    id?: number | string;
+    cowork?: Array<string | { dept?: string; staff?: string }>;
+  };
   try {
     body = await req.json();
   } catch {
@@ -29,29 +32,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing job id' }, { status: 400 });
   }
 
+  // Accept both shapes: WP-format string[] of print staff ids, or legacy
+  // {dept,staff}[]. Output: string[] of print staff ids only — matches WP
+  // storage convention so cowork data round-trips between v2 and WP.
   const list = Array.isArray(body.cowork) ? body.cowork : [];
-  // Validate every entry — drop empties, reject if any has invalid dept/staff.
-  const cleaned: Array<{ dept: string; staff: string }> = [];
+  const validPrint = new Set(STAFF.print.map((s) => s.id));
+  const cleaned: string[] = [];
   const seen = new Set<string>();
   for (const entry of list) {
-    const dept = String(entry?.dept || '').trim();
-    const staff = String(entry?.staff || '').trim();
-    if (!dept && !staff) continue;
-    if (!dept || !staff) {
-      return NextResponse.json({ error: 'รายการ co-work ต้องระบุทั้งแผนกและผู้รับงาน' }, { status: 400 });
+    let staff = '';
+    if (typeof entry === 'string') {
+      staff = entry.trim();
+    } else if (entry && typeof entry === 'object') {
+      const dept = String(entry.dept || '').trim();
+      // Reject any non-print dept entry — WP only fans out print
+      if (dept && dept !== 'print') {
+        return NextResponse.json({ error: `co-work รองรับเฉพาะแผนกพิมพ์ — รับ ${dept}` }, { status: 400 });
+      }
+      staff = String(entry.staff || '').trim();
     }
-    const validInDept = STAFF[dept as Dept]?.some((s) => s.id === staff);
-    if (!validInDept) {
-      return NextResponse.json({ error: `${dept}/${staff} ไม่ใช่คู่แผนก-ผู้รับงานที่ถูกต้อง` }, { status: 400 });
+    if (!staff) continue;
+    if (!validPrint.has(staff)) {
+      return NextResponse.json({ error: `เครื่อง "${staff}" ไม่ใช่ผู้รับงานในแผนกพิมพ์` }, { status: 400 });
     }
-    const key = `${dept}:${staff}`;
-    if (seen.has(key)) {
-      return NextResponse.json({ error: `${dept}/${staff} ซ้ำในรายการ` }, { status: 400 });
-    }
-    seen.add(key);
-    cleaned.push({ dept, staff });
+    if (seen.has(staff)) continue;
+    seen.add(staff);
+    cleaned.push(staff);
   }
-
   try {
     const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
       id,

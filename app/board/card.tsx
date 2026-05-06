@@ -9,6 +9,7 @@ import {
   URGENCY_LABELS,
   DEPT_LABELS,
   STAFF,
+  coworkPrintStaffIds,
 } from '@/lib/board';
 import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
 import { broadcastWrite } from '@/lib/auto-sync';
@@ -31,6 +32,7 @@ import {
   IconPlus,
   IconCheckSquare,
   IconSquare,
+  IconLock,
 } from '@/lib/icons';
 import { JobForm } from './job-form';
 
@@ -43,17 +45,12 @@ function urgencyDaysLabel(urgency: string, days: number): string {
   return `รับ ${days}ว`;
 }
 
-/** "[กราฟิก] ปุ๊ก, [พิมพ์] SM74" — friendly inline list for card display. */
+/** "SM74, MO 5สี" — friendly inline list of cowork machine names. */
 function coworkInline(raw: unknown): string {
-  const items = parseCoworkArray(raw);
-  if (items.length === 0) return '';
-  return items
-    .map((it) => {
-      const dept = it.dept;
-      const staff = STAFF[dept as Dept]?.find((s) => s.id === it.staff)?.name || it.staff;
-      const deptLabel = DEPT_LABELS[dept as Dept] || dept;
-      return `[${deptLabel}] ${staff}`;
-    })
+  const ids = coworkPrintStaffIds(raw);
+  if (ids.length === 0) return '';
+  return ids
+    .map((id) => STAFF.print.find((s) => s.id === id)?.name || id)
     .join(', ');
 }
 
@@ -88,6 +85,7 @@ export function Card({
   // Compute primary action button per WP renderJobCard rules
   const dept = String(job.dept);
   const staff = job.staff;
+  const isGuest = !!job.isGuest;
   const isAdmin = sessionRole === 'admin';
   const canCreate = isAdmin || sessionRole === 'sales';
   const fromType = computeFromType(dept, staff);
@@ -95,21 +93,24 @@ export function Card({
 
   type CardAction = { kind: 'ship' } | { kind: 'forward'; label: string } | null;
   let primaryAction: CardAction = null;
-  if (dept === 'post' && staff === 'ship') {
-    primaryAction = { kind: 'ship' };
-  } else if (dept === 'print' && staff === 'outsource') {
-    if (canCreate && forwardTargets.length > 0) {
-      primaryAction = { kind: 'forward', label: 'งานกลับ → รอจัดส่ง' };
+  // Guest cowork cards are read-only — no actions, primary owner moves the job.
+  if (!isGuest) {
+    if (dept === 'post' && staff === 'ship') {
+      primaryAction = { kind: 'ship' };
+    } else if (dept === 'print' && staff === 'outsource') {
+      if (canCreate && forwardTargets.length > 0) {
+        primaryAction = { kind: 'forward', label: 'งานกลับ → รอจัดส่ง' };
+      }
+    } else if (dept === 'post' && staff === 'diecut_out') {
+      if (canCreate && forwardTargets.length > 0) {
+        primaryAction = { kind: 'forward', label: 'งานกลับ → รอจัดส่ง' };
+      }
+    } else if (forwardTargets.length > 0) {
+      primaryAction = { kind: 'forward', label: 'เสร็จ-ส่งต่อ' };
     }
-  } else if (dept === 'post' && staff === 'diecut_out') {
-    if (canCreate && forwardTargets.length > 0) {
-      primaryAction = { kind: 'forward', label: 'งานกลับ → รอจัดส่ง' };
-    }
-  } else if (forwardTargets.length > 0) {
-    primaryAction = { kind: 'forward', label: 'เสร็จ-ส่งต่อ' };
   }
-  // Co-work: print dept only (excluding outsource), per WP behavior
-  const showCowork = dept === 'print' && staff !== 'outsource';
+  // Co-work: print dept only (excluding outsource), and only on the host card.
+  const showCowork = !isGuest && dept === 'print' && staff !== 'outsource';
 
   function open() {
     if (bulkMode) {
@@ -169,26 +170,30 @@ export function Card({
   return (
     <>
       <div
-        className={`w-full text-left rounded-lg border bg-white px-2.5 py-1.5 transition-all relative ${
+        className={`w-full text-left rounded-lg border px-2.5 py-1.5 transition-all relative ${
           bulkMode && isSelected
-            ? 'ring-2 ring-sky-400 border-sky-300'
-            : bulkMode
-              ? 'hover:bg-sky-50/30 cursor-pointer'
-              : ''
-        } ${job.hasCowork ? 'border-dashed bg-violet-50/30' : ''}`}
+            ? 'ring-2 ring-sky-400 border-sky-300 bg-white'
+            : isGuest
+              ? 'bg-violet-50 border-violet-200 border-dashed'
+              : job.hasCowork
+                ? 'bg-violet-50/30 border-dashed bg-white'
+                : 'bg-white'
+        } ${bulkMode && !isSelected ? 'hover:bg-sky-50/30 cursor-pointer' : ''}`}
         onClick={bulkMode ? open : undefined}
         style={{
           borderColor: bulkMode && isSelected
             ? undefined
-            : job.hasCowork
-              ? `${VENDOR_PURPLE}50`
-              : isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
+            : isGuest
+              ? `${VENDOR_PURPLE}60`
+              : job.hasCowork
+                ? `${VENDOR_PURPLE}50`
+                : isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
           borderLeft: `3px solid ${urgencyColor}`,
         }}
       >
-        {/* Top row: name + ร่วมพิมพ์ pill + รายละเอียด button */}
+        {/* Top row: name + ร่วมพิมพ์/guest badge + รายละเอียด button */}
         <div className="flex items-start justify-between gap-1.5">
-          {bulkMode && (
+          {bulkMode && !isGuest && (
             <span
               className={`flex-shrink-0 mt-0.5 ${isSelected ? 'text-sky-600' : 'text-stone-300'}`}
               aria-hidden="true"
@@ -198,15 +203,23 @@ export function Card({
           )}
           <div className="text-[13px] font-semibold text-stone-900 leading-tight flex-grow break-words flex items-center gap-1 flex-wrap">
             <span>{job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}</span>
-            {job.hasCowork && (
+            {isGuest ? (
+              <span
+                className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0 rounded bg-violet-200 text-violet-800 whitespace-nowrap font-medium leading-tight"
+                title="Co-work — ย้ายได้จากเครื่องหลักเท่านั้น"
+              >
+                <IconLock size={9} />
+                ร่วมพิมพ์
+              </span>
+            ) : job.hasCowork ? (
               <span
                 className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium leading-tight"
                 title={coworkTooltip(job.cowork)}
               >
                 <IconUsers size={9} />
-                ร่วมพิมพ์
+                + {coworkPrintStaffIds(job.cowork).length}
               </span>
-            )}
+            ) : null}
           </div>
           <button
             type="button"
@@ -565,11 +578,8 @@ function CoworkDialog({
     const dlg = dialogRef.current;
     if (!dlg) return;
     if (open && !dlg.open) {
-      // Pre-check existing cowork (only print-dept entries — drop legacy graphic/post)
-      const existing = parseCoworkArray(job.cowork)
-        .filter((c) => c.dept === 'print' || c.dept === '')
-        .map((c) => c.staff);
-      setSelected(new Set(existing));
+      // Pre-check existing cowork — handles both WP string[] and legacy {dept,staff}[]
+      setSelected(new Set(coworkPrintStaffIds(job.cowork)));
       setError(null);
       dlg.showModal();
     } else if (!open && dlg.open) {
@@ -604,7 +614,8 @@ function CoworkDialog({
   async function submit() {
     setError(null);
     setBusy(true);
-    const cowork = Array.from(selected).map((staff) => ({ dept: 'print', staff }));
+    // WP-compatible format: string[] of print staff ids
+    const cowork = Array.from(selected);
     const res = await fetch('/api/jobs/cowork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1347,15 +1358,6 @@ function ActionButtons({
               ย้าย
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => startAction('cowork')}
-            disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-100 text-violet-800 text-sm font-medium hover:bg-violet-200 disabled:opacity-50"
-          >
-            <IconUsers size={16} />
-            Co-work
-          </button>
           {isAdmin && (
             <button
               type="button"
@@ -1473,13 +1475,20 @@ interface CoworkEntry {
   staff: string;
 }
 
+/** Parse cowork field — accepts WP string[] (assumes print dept) and legacy
+ *  v2 object form. Always returns {dept, staff}[]. */
 function parseCoworkArray(cowork: unknown): CoworkEntry[] {
   if (!Array.isArray(cowork)) return [];
-  return cowork
-    .filter((c): c is Record<string, unknown> => c !== null && typeof c === 'object')
-    .map((c) => ({
-      dept: String(c.dept || ''),
-      staff: String(c.staff || ''),
-    }))
-    .filter((c) => c.staff);
+  const out: CoworkEntry[] = [];
+  for (const c of cowork) {
+    if (typeof c === 'string' && c.trim()) {
+      out.push({ dept: 'print', staff: c.trim() });
+    } else if (c && typeof c === 'object') {
+      const obj = c as Record<string, unknown>;
+      const dept = String(obj.dept || '').trim();
+      const staff = String(obj.staff || '').trim();
+      if (staff) out.push({ dept: dept || 'print', staff });
+    }
+  }
+  return out;
 }

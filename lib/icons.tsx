@@ -347,3 +347,11 @@ export const IconSquare = makeIcon(
   <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
   'IconSquare',
 );
+
+export const IconLock = makeIcon(
+  <>
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </>,
+  'IconLock',
+);
