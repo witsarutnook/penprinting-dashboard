@@ -10,6 +10,7 @@ import {
   DEPT_LABELS,
   STAFF,
 } from '@/lib/board';
+import { computeFromType, getVisibleTargets } from '@/lib/forward';
 import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -231,7 +232,7 @@ function DetailContent({
         <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
 
         <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600">
-          ℹ️ ฟีเจอร์ที่ยังไม่มี (ส่งต่อ • co-work) ใช้ใน{' '}
+          ℹ️ ฟีเจอร์ที่ยังไม่มี (co-work • bulk forward) ใช้ใน{' '}
           <a
             href="https://app.penprinting.co/production-monitoring/"
             className="underline hover:text-stone-800"
@@ -258,9 +259,14 @@ function ActionButtons({
   onSuccess: () => void;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel'>(null);
+  const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel' | 'forward'>(null);
   const [error, setError] = useState<string | null>(null);
+  const [forwardMode, setForwardMode] = useState(false);
+  const [forwardTarget, setForwardTarget] = useState('');
   const isAdmin = sessionRole === 'admin';
+  const fromType = computeFromType(String(job.dept), String(job.staff));
+  const forwardTargets = fromType ? getVisibleTargets(fromType, isAdmin) : [];
+  const canForward = forwardTargets.length > 0;
 
   async function callApi(path: string, body: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(path, {
@@ -324,51 +330,136 @@ function ActionButtons({
     }
   }
 
+  async function submitForward() {
+    if (!forwardTarget) {
+      setError('กรุณาเลือกปลายทาง');
+      return;
+    }
+    const target = forwardTargets.find((t) => t.value === forwardTarget);
+    if (!target) {
+      setError('ปลายทางไม่ถูกต้อง');
+      return;
+    }
+    setError(null);
+    setBusy('forward');
+    const ok = await callApi('/api/jobs/forward', {
+      id: job.id,
+      targetDept: target.dept,
+      targetStaff: target.value,
+    });
+    setBusy(null);
+    if (ok) {
+      router.refresh();
+      onSuccess();
+    }
+  }
+
+  function startForward() {
+    setError(null);
+    setForwardTarget('');
+    setForwardMode(true);
+  }
+
+  function cancelForward() {
+    setForwardMode(false);
+    setForwardTarget('');
+    setError(null);
+  }
+
   return (
     <section>
       <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
         การดำเนินการ
       </h3>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={moveToShipped}
-          disabled={busy !== null}
-          className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {busy === 'ship' ? 'กำลังส่ง...' : '✅ จัดส่งเสร็จ'}
-        </button>
-        {isAdmin && (
+      {forwardMode ? (
+        <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
+          <label className="block text-xs font-medium text-stone-700 mb-1.5">
+            ↪ ส่งต่อไปที่
+          </label>
+          <select
+            value={forwardTarget}
+            onChange={(e) => setForwardTarget(e.target.value)}
+            className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            autoFocus
+          >
+            <option value="">— เลือกปลายทาง —</option>
+            {forwardTargets.map((t) => (
+              <option key={`${t.dept}:${t.value}`} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2 mt-3">
+            <button
+              type="button"
+              onClick={submitForward}
+              disabled={busy !== null || !forwardTarget}
+              className="flex-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {busy === 'forward' ? 'กำลังส่งต่อ...' : 'ยืนยันส่งต่อ'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelForward}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={onEdit}
+            onClick={moveToShipped}
             disabled={busy !== null}
-            className="px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+            className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            ✏️ แก้ไข
+            {busy === 'ship' ? 'กำลังส่ง...' : '✅ จัดส่งเสร็จ'}
           </button>
-        )}
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={cancelJob}
-            disabled={busy !== null}
-            className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
-          >
-            {busy === 'cancel' ? 'กำลังยกเลิก...' : '⚠️ ยกเลิก (admin)'}
-          </button>
-        )}
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={deleteJob}
-            disabled={busy !== null}
-            className="px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
-          >
-            {busy === 'delete' ? 'กำลังลบ...' : '🗑 ลบงาน'}
-          </button>
-        )}
-      </div>
+          {canForward && (
+            <button
+              type="button"
+              onClick={startForward}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-sky-100 text-sky-800 text-sm font-medium hover:bg-sky-200 disabled:opacity-50"
+            >
+              ↪ ส่งต่อ
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onEdit}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+            >
+              ✏️ แก้ไข
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={cancelJob}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+            >
+              {busy === 'cancel' ? 'กำลังยกเลิก...' : '⚠️ ยกเลิก (admin)'}
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={deleteJob}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-red-100 text-red-800 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
+            >
+              {busy === 'delete' ? 'กำลังลบ...' : '🗑 ลบงาน'}
+            </button>
+          )}
+        </div>
+      )}
       {error && (
         <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           ❌ {error}
