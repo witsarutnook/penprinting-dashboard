@@ -89,13 +89,45 @@ export async function loadAllFresh(): Promise<LoadAllResponse> {
   return withDefaults(data);
 }
 
-/** Apps Script actions that mutate Sheet state — used to auto-bust the
- *  loadAll fetch-cache so subsequent page renders show fresh data. */
-const WRITE_ACTIONS: ReadonlySet<string> = new Set([
-  'addJob', 'updateJob', 'deleteJob', 'moveToShipped', 'cancelJob',
-  'restoreJob', 'setCowork', 'addOrder', 'updateOrder', 'deleteOrder',
-  'bulkForward', 'addTemplate', 'deleteTemplate', 'getNextId', 'getNextOrderId',
-]);
+/** Per-action invalidation map. After a successful write we revalidate
+ *  ONLY the paths whose data shape actually changes — pages outside this
+ *  set keep their warm 60s ISR cache, so navigating to them feels
+ *  instant instead of triggering a fresh Apps Script roundtrip.
+ *
+ *  Page → data dependency:
+ *  - /board     uses jobs + orders (cowork) + audit (undo)
+ *  - /orders    uses jobs (current step) + orders + shipped (status) + cancelled (status)
+ *  - /shipped   uses shipped + orders (display name)
+ *  - /cancelled uses cancelled
+ *  - /calendar  uses jobs + orders
+ *  - /analytics uses jobs + orders + shipped + cancelled + audit
+ *  - /orders/new uses templates + orders (recentOrders + duplicate)
+ *
+ *  Pages NOT in any list (none right now) keep cache forever until the
+ *  next 60s ISR window. /archive uses a separate searchArchive call.
+ *  /orders/[id]/print + /tracking-card fetch a single order by id —
+ *  not affected by loadAll cache. */
+const PATHS_BY_ACTION: Record<string, readonly string[]> = {
+  // Job CRUD — every job-aware page
+  addJob:        ['/board', '/orders', '/calendar', '/analytics'],
+  updateJob:     ['/board', '/orders', '/calendar', '/analytics'],
+  deleteJob:     ['/board', '/orders', '/calendar', '/analytics'],
+  setCowork:     ['/board'],
+  bulkForward:   ['/board', '/orders', '/calendar', '/analytics'],
+  // Status transitions — touch the destination data set too
+  moveToShipped: ['/board', '/orders', '/shipped', '/calendar', '/analytics'],
+  cancelJob:     ['/board', '/orders', '/cancelled', '/calendar', '/analytics'],
+  restoreJob:    ['/board', '/orders', '/cancelled', '/calendar', '/analytics'],
+  // Order CRUD — order-aware pages (cascade-cancel makes deleteOrder bust /cancelled)
+  addOrder:      ['/board', '/orders', '/orders/new', '/analytics'],
+  updateOrder:   ['/board', '/orders', '/orders/new', '/analytics'],
+  deleteOrder:   ['/board', '/orders', '/cancelled', '/analytics'],
+  // Templates only show up in order entry
+  addTemplate:    ['/orders/new'],
+  deleteTemplate: ['/orders/new'],
+  // getNextId / getNextOrderId — counter mints, no Sheet data changes,
+  // explicitly NOT in this map so they don't bust anything.
+};
 
 /** POST {action, token, ...body} — mirrors WP `apiPost`. Used for actions that
  *  take complex bodies (searchArchive, bulkForward, mutations) — token goes in body.
@@ -119,21 +151,19 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
   if (data && typeof data === 'object' && 'error' in data) {
     throw new AppsScriptError(action, (data as { error: string }).error);
   }
-  // Successful write — bust the loadAll fetch cache so /board, /orders etc.
-  // see the change on the very next render. Uses revalidatePath rather than
-  // revalidateTag because the Apps Script GET URL changes per env-token and
-  // tagging via fetch options proved unstable on Vercel (analytics page
-  // crash 2026-05-06).
-  if (WRITE_ACTIONS.has(action)) {
+  // Successful write — bust ONLY the paths whose data shape actually
+  // changed (auditor sidebar-perf). Previously busted all six paths on
+  // every write, which kept ISR cache permanently cold and made every
+  // sidebar nav feel like a fresh Apps Script roundtrip. Pages not in
+  // this action's list keep their warm 60s cache and respond instantly.
+  // Uses revalidatePath rather than revalidateTag because the Apps
+  // Script GET URL changes per env-token and tagging via fetch options
+  // proved unstable on Vercel (analytics page crash 2026-05-06).
+  const paths = PATHS_BY_ACTION[action];
+  if (paths && paths.length > 0) {
     try {
       const { revalidatePath } = await import('next/cache');
-      // Bust every path that depends on loadAll snapshot.
-      revalidatePath('/board');
-      revalidatePath('/orders');
-      revalidatePath('/shipped');
-      revalidatePath('/cancelled');
-      revalidatePath('/analytics');
-      revalidatePath('/calendar');
+      for (const p of paths) revalidatePath(p);
     } catch {
       // ignore — non-fatal
     }
