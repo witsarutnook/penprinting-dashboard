@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useTransition } from 'react';
 import { getBottomNavItems } from './nav-config';
 import { useIsActive } from './sidebar';
 
@@ -39,11 +41,27 @@ function BottomNavLink({
   icon: React.ComponentType<{ size?: number; className?: string }>;
 }) {
   const isActive = useIsActive(href);
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  function handleClick(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    if (isActive) return;
+    e.preventDefault();
+    startTransition(() => router.push(href));
+  }
+
   return (
     <Link
       href={href}
+      onClick={handleClick}
+      aria-busy={isPending}
       className={`flex flex-col items-center justify-center gap-0.5 py-2.5 text-[10px] transition-colors ${
-        isActive ? 'text-sky-700 font-semibold' : 'text-stone-500'
+        isActive
+          ? 'text-sky-700 font-semibold'
+          : isPending
+            ? 'text-stone-700 bg-stone-100'
+            : 'text-stone-500'
       }`}
     >
       <Icon size={20} className="flex-shrink-0" />

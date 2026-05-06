@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useState, useTransition } from 'react';
 import { getNavGroups, type NavItem } from './nav-config';
 import { IconLogOut } from '@/lib/icons';
 
@@ -64,21 +64,49 @@ export function Sidebar({ user, role }: SidebarProps) {
 
 function NavLink({ item }: { item: NavItem }) {
   const isActive = useIsActive(item.href);
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const Icon = item.icon;
+
+  function handleClick(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    if (isActive) return;
+    e.preventDefault();
+    startTransition(() => router.push(item.href));
+  }
+
   return (
     <li>
       <Link
         href={item.href}
+        onClick={handleClick}
+        aria-busy={isPending}
         className={`flex items-center gap-2.5 px-5 py-2 text-sm transition-colors border-l-2 ${
           isActive
             ? 'bg-sky-50 text-sky-800 font-medium border-l-sky-500'
-            : 'text-stone-600 hover:bg-stone-50 border-l-transparent'
+            : isPending
+              ? 'bg-stone-100 text-stone-700 border-l-stone-400'
+              : 'text-stone-600 hover:bg-stone-50 border-l-transparent'
         }`}
       >
         <Icon size={16} className="flex-shrink-0" />
         <span className="truncate">{item.label}</span>
+        {isPending && <PendingDot />}
       </Link>
     </li>
+  );
+}
+
+/** Pulsing dot shown at the trailing edge of a NavLink while its
+ *  router transition is in flight. Lives next to the label so the user
+ *  immediately sees that the click registered, even before the next
+ *  page's server work returns. */
+function PendingDot() {
+  return (
+    <span
+      aria-hidden="true"
+      className="ml-auto inline-flex size-1.5 flex-shrink-0 animate-pulse rounded-full bg-stone-500"
+    />
   );
 }
 
