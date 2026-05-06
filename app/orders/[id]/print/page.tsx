@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
+import QRCode from 'qrcode';
 import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { displayDate } from '@/lib/jobs';
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
 };
 
 const ACCENT = '#1e3a8a';
+const TRACK_BASE_URL = 'https://dashboard.penprinting.co/track';
 
 interface OrderRaw {
   orderType?: 'photobook' | 'normal';
@@ -75,6 +77,21 @@ export default async function OrderPrintPage({ params }: { params: { id: string 
   const printName = raw.forwardPrint
     ? STAFF.print.find((s) => s.id === raw.forwardPrint)?.name || raw.forwardPrint
     : '';
+
+  // QR linking to /track?id=<orderId> — let customers self-serve status
+  // by scanning from the printed A4 invoice.
+  const trackUrl = `${TRACK_BASE_URL}?id=${id}`;
+  let qrDataUrl = '';
+  try {
+    qrDataUrl = await QRCode.toDataURL(trackUrl, {
+      width: 240,
+      margin: 0,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#000000', light: '#ffffff' },
+    });
+  } catch {
+    // QR generation failed — header just won't show the code.
+  }
 
   return (
     <div
@@ -182,7 +199,7 @@ export default async function OrderPrintPage({ params }: { params: { id: string 
             <div
               style={{
                 padding: '8px 12px', background: ACCENT, color: '#fff',
-                display: 'flex', alignItems: 'center', minWidth: 200,
+                display: 'flex', alignItems: 'center', gap: 10, minWidth: 200,
               }}
             >
               <div style={{ textAlign: 'right', flex: 1 }}>
@@ -198,7 +215,24 @@ export default async function OrderPrintPage({ params }: { params: { id: string 
                     <b style={{ fontSize: 14, letterSpacing: '2px' }}>{pin}</b>
                   </div>
                 )}
+                <div style={{ fontSize: 9, opacity: 0.75, marginTop: 5, lineHeight: 1.2 }}>
+                  สแกนเพื่อตรวจสถานะ
+                </div>
               </div>
+              {qrDataUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={qrDataUrl}
+                  alt={`QR ตรวจสถานะ ${id}`}
+                  style={{
+                    width: 60, height: 60,
+                    background: '#fff',
+                    padding: 3,
+                    borderRadius: 4,
+                    flexShrink: 0,
+                  }}
+                />
+              )}
             </div>
           </div>
 
