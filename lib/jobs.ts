@@ -25,7 +25,14 @@ export function dmyToISOInput(input: string | null | undefined): string {
 }
 
 /** Display-format date as D/M/YYYY (no leading zeros) — matches WP screenshot.
- *  Accepts YYYY-MM-DD or DD/MM/YYYY input; returns "—" for empty/invalid. */
+ *  Accepts:
+ *    - YYYY-MM-DD (Apps Script string storage)
+ *    - DD/MM/YYYY (legacy display)
+ *    - JS Date.toString() output ("Tue Apr 21 2026 00:00:00 GMT+0700 ...")
+ *      — happens when Sheets auto-converts string cells to Date objects;
+ *        sheetToArray then calls String(value) which yields this format.
+ *    - Date with HH:MM time → adds time after if was originally there
+ *  Returns "—" for empty/invalid. */
 export function displayDate(input: string | null | undefined): string {
   if (!input) return '—';
   const s = String(input).trim();
@@ -38,10 +45,43 @@ export function displayDate(input: string | null | undefined): string {
   } else if (dmy) {
     d = +dmy[1]; m = +dmy[2]; y = +dmy[3];
   } else {
-    return s;
+    // Fallback: try Date parser. Use Asia/Bangkok TZ for extraction so
+    // "Tue Apr 21 2026 00:00:00 GMT+0700" → 21/4/2026 (not 20/4 in UTC).
+    const dt = new Date(s);
+    if (isNaN(dt.getTime())) return s;
+    const fmt = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Bangkok',
+      day: 'numeric',
+      month: 'numeric',
+      year: 'numeric',
+    });
+    return fmt.format(dt);
   }
   if (!d || !m || !y) return s;
   return `${d}/${m}/${y}`;
+}
+
+/** Display date+time as D/M/YYYY HH:MM (Bangkok TZ). Used by cancelled list
+ *  and audit timestamps where the original cell had time-of-day. */
+export function displayDateTime(input: string | null | undefined): string {
+  if (!input) return '—';
+  const s = String(input).trim();
+  if (!s) return '—';
+  // If string already in DD/MM/YYYY HH:MM format, return as-is.
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}(\s+\d{1,2}:\d{2})?$/.test(s)) return s;
+  const dt = new Date(s);
+  if (isNaN(dt.getTime())) return s;
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    day: 'numeric',
+    month: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  // en-GB → "21/4/2026, 08:15"; strip the comma to match WP "21/4/2026 08:15".
+  return fmt.format(dt).replace(',', '');
 }
 
 /** Today as YYYY-MM-DD in Asia/Bangkok TZ — default for dateIn on new jobs. */

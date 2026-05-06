@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { displayDate } from '@/lib/jobs';
+import { displayDateTime } from '@/lib/jobs';
 import { AutoSync } from '@/lib/auto-sync';
 import { IconAlertCircle, IconSearch } from '@/lib/icons';
 import { DEPT_LABELS, type Dept } from '@/lib/board';
@@ -96,7 +96,7 @@ export default async function CancelledPage({ searchParams }: { searchParams: Se
                       {c.reason}
                     </td>
                     <td className="px-4 py-2 text-right text-stone-500 tabular-nums hidden md:table-cell">
-                      {displayDate(c.cancelledAt)}
+                      {displayDateTime(c.cancelledAt)}
                       <span className="text-stone-400 ml-2 hidden lg:inline">โดย {c.cancelledBy}</span>
                     </td>
                   </tr>
