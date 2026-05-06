@@ -1,32 +1,25 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
+import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate, bangkokTodayISO } from '@/lib/jobs';
+import { validatePhotobook, type PhotobookItem } from '@/lib/photobook';
 
 /**
- * Create a new order — admin + sales (matches WP `PERM.canCreate`).
+ * Create a new order — admin + sales.
  *
- * MVP scope (Phase 3.5.5 iteration 1): standard orders only — no Photobook
- * tab + repeater (deferred), no template loading (deferred), no
- * duplicate-order detection (deferred — admin can spot duplicates in WP if
- * needed).
+ * Phase 3.5.5b additions:
+ *   - Photobook mode (`orderType: 'photobook'`) — validates `photobookItems`
+ *     and stores them under `details.photobook` matching WP shape.
+ *   - Duplicate detection — if a non-cancelled order with the same
+ *     case-insensitive (name, customer) combo exists, return 409 with
+ *     `duplicates[]`. Caller can resubmit with `force: true` to override.
  *
- * Server flow (mirrors WP submitOrder, production-monitoring.js:1740):
- *   1. Validate header fields + assignDept/assignStaff combo.
- *   2. Allocate orderId via Apps Script `getNextOrderId` (atomic per-month counter).
- *   3. Allocate jobId via `getNextId` (sequential job counter).
- *   4. Generate 4-digit PIN for the public tracking page.
- *   5. POST `addOrder` with the full ORDERS_HEADERS payload.
- *   6. POST `addJob` to create the initial workflow card.
- *   7. Return both IDs + the PIN so the UI can show a success toast.
- *
- * If addOrder fails → caller sees an error and nothing is written.
- * If addJob fails after addOrder succeeded → return a partial-success
- * response so the UI can guide the admin to the orphan-recovery flow.
- *
- * Request body: { name, customer, dateIn?, dateDue, price?, orderer,
- *                 assignDept, assignStaff, details? }
+ * Server flow:
+ *   1. Validate header + dept/staff combo + photobook items if photobook.
+ *   2. (Unless force) Fetch loadAllFresh, scan orders for duplicate combo.
+ *   3. Allocate orderId + jobId, generate PIN.
+ *   4. addOrder → addJob (with partial-success surfacing).
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);
@@ -41,7 +34,10 @@ export async function POST(req: Request) {
     orderer?: string;
     assignDept?: string;
     assignStaff?: string;
-    details?: Record<string, unknown>;
+    notes?: string;
+    orderType?: 'normal' | 'photobook';
+    photobookItems?: PhotobookItem[];
+    force?: boolean;
   };
   try {
     body = await req.json();
@@ -49,7 +45,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  // ── Validation ────────────────────────────────────────────
+  const orderType = body.orderType === 'photobook' ? 'photobook' : 'normal';
+  const isPB = orderType === 'photobook';
+
+  // ── Header validation ────────────────────────────────────
   const name = (body.name || '').trim();
   const customer = (body.customer || '').trim();
   const dateDue = toISODate(body.dateDue);
@@ -72,6 +71,54 @@ export async function POST(req: Request) {
       { error: `ผู้รับงาน "${assignStaff}" ไม่ตรงกับแผนก "${assignDept}"` },
       { status: 400 },
     );
+  }
+
+  // ── Photobook validation ────────────────────────────────
+  let photobookItems: PhotobookItem[] = [];
+  if (isPB) {
+    const v = validatePhotobook(body.photobookItems);
+    if (!v.ok) return NextResponse.json({ error: v.errors.join(' • ') }, { status: 400 });
+    photobookItems = v.cleaned;
+  }
+
+  // ── Snapshot for duplicate check + ID allocation ────────
+  let snap;
+  try {
+    snap = await loadAllFresh();
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
+  }
+
+  // Duplicate detection — case-insensitive (name, customer) combo on
+  // non-cancelled orders. Mirrors WP findDuplicateOrders (line 1849).
+  if (!body.force) {
+    const nLower = name.toLowerCase();
+    const cLower = customer.toLowerCase();
+    const dups = snap.orders
+      .filter((o) => {
+        if (String(o.status || '').toLowerCase() === 'cancelled') return false;
+        const oName = String(o.name || '').trim().toLowerCase();
+        const oCust = String(o.customer || '').trim().toLowerCase();
+        return oName === nLower && oCust === cLower;
+      })
+      .slice(0, 5)
+      .map((o) => ({
+        id: Number(o.id),
+        name: String(o.name || ''),
+        customer: String(o.customer || ''),
+        dateIn: String(o.dateIn || ''),
+      }));
+    if (dups.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'duplicate',
+          duplicates: dups,
+          message: `พบใบสั่งงานคล้ายกัน ${dups.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // ── Allocate IDs ─────────────────────────────────────────
@@ -102,8 +149,9 @@ export async function POST(req: Request) {
 
   // ── Build payloads ───────────────────────────────────────
   const pin = String(Math.floor(1000 + Math.random() * 9000));
-  const details = (body.details && typeof body.details === 'object') ? body.details : {};
-  const fullDetails = { ...details, pin };
+  const details: Record<string, unknown> = { pin };
+  if (body.notes) details.notes = body.notes;
+  if (isPB) details.photobook = photobookItems;
 
   const orderPayload = {
     id: orderId,
@@ -116,8 +164,8 @@ export async function POST(req: Request) {
     assignStaff,
     orderer,
     status: 'sent',
-    details: fullDetails,
-    rawData: { ...body, pin },
+    details,
+    rawData: { ...body, orderType, pin },
   };
 
   const jobPayload = {
@@ -131,7 +179,7 @@ export async function POST(req: Request) {
     orderId,
   };
 
-  // ── Sequenced writes — mirror WP rollback semantics ──────
+  // ── Sequenced writes ─────────────────────────────────────
   try {
     const orderResp = await post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayload });
     if (orderResp.error) return NextResponse.json({ error: orderResp.error }, { status: 400 });
@@ -140,7 +188,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `addOrder failed — ${msg}` }, { status: 502 });
   }
 
-  // Order saved. Job creation is best-effort — surface partial failure.
   try {
     const jobResp = await post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: jobPayload });
     if (jobResp.error) {
@@ -151,7 +198,7 @@ export async function POST(req: Request) {
           jobId: null,
           pin,
           partial: true,
-          warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${jobResp.error}. ใช้ปุ่ม "สร้างงานใหม่" ในระบบ WP เพื่อ recover.`,
+          warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${jobResp.error}.`,
         },
         { status: 200 },
       );
@@ -165,11 +212,11 @@ export async function POST(req: Request) {
         jobId: null,
         pin,
         partial: true,
-        warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${msg}. ใช้ปุ่ม "สร้างงานใหม่" ในระบบ WP เพื่อ recover.`,
+        warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${msg}.`,
       },
       { status: 200 },
     );
   }
 
-  return NextResponse.json({ ok: true, orderId, jobId, pin });
+  return NextResponse.json({ ok: true, orderId, jobId, pin, orderType });
 }

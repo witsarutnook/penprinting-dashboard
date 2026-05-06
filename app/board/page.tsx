@@ -19,6 +19,7 @@ import { FilterChips } from '@/components/board/filter-chips';
 import { SearchBox } from '@/components/board/search-box';
 import { BulkModeProvider } from '@/components/board/bulk-context';
 import { BulkActionsBar } from '@/components/board/bulk-actions-bar';
+import { UndoProvider } from '@/components/board/undo-context';
 
 export const metadata: Metadata = {
   title: 'Kanban Board',
@@ -90,6 +91,7 @@ export default async function BoardPage({
   return (
     <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
+      <UndoProvider>
       <BulkModeProvider>
         {/* Top date row + search */}
         <div className="bg-white border-b border-stone-100">
@@ -148,6 +150,7 @@ export default async function BoardPage({
 
         <BulkActionsBar jobs={visibleJobs} isAdmin={session.role === 'admin'} />
       </BulkModeProvider>
+      </UndoProvider>
     </DashboardShell>
   );
 }

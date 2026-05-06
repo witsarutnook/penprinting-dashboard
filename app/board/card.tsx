@@ -14,6 +14,8 @@ import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/fo
 import { broadcastWrite } from '@/lib/auto-sync';
 import { displayDate } from '@/lib/jobs';
 import { useBulkMode } from '@/components/board/bulk-context';
+import { useUndo } from '@/components/board/undo-context';
+import { OrderForm } from './order-form';
 import {
   IconCheck,
   IconX,
@@ -47,6 +49,7 @@ export function Card({
 }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [editOrderOpen, setEditOrderOpen] = useState(false);
   const { mode: bulkMode, selected, toggleJob } = useBulkMode();
   const isSelected = selected.has(job.id);
   const urgencyColor = URGENCY_COLORS[job.urgency];
@@ -64,6 +67,10 @@ export function Card({
   function startEdit() {
     dialogRef.current?.close();
     setEditOpen(true);
+  }
+  function startEditOrder() {
+    dialogRef.current?.close();
+    setEditOrderOpen(true);
   }
 
   // Click backdrop closes the dialog
@@ -165,10 +172,19 @@ export function Card({
           job={job}
           onClose={close}
           onEdit={startEdit}
+          onEditOrder={startEditOrder}
           sessionRole={sessionRole}
         />
       </dialog>
       <JobForm initial={job} open={editOpen} onClose={() => setEditOpen(false)} />
+      {job.order && (
+        <OrderForm
+          open={editOrderOpen}
+          onClose={() => setEditOrderOpen(false)}
+          defaultOrderer={job.order.orderer}
+          initial={job.order}
+        />
+      )}
     </>
   );
 }
@@ -179,13 +195,16 @@ function DetailContent({
   job,
   onClose,
   onEdit,
+  onEditOrder,
   sessionRole,
 }: {
   job: BoardJob;
   onClose: () => void;
   onEdit: () => void;
+  onEditOrder: () => void;
   sessionRole: string | null;
 }) {
+  const canEditOrder = sessionRole === 'admin' || sessionRole === 'sales';
   const urgencyColor = URGENCY_COLORS[job.urgency];
   const dept = job.dept as Dept;
   const deptLabel = DEPT_LABELS[dept] || job.dept;
@@ -251,16 +270,31 @@ function DetailContent({
         </Section>
 
         {job.order && (
-          <Section title="ข้อมูลใบสั่งงาน">
-            <KV label="ลูกค้า" value={job.order.customer} />
-            <KV label="วันรับ" value={job.order.dateIn} />
-            <KV label="กำหนดส่ง" value={job.order.dateDue} />
-            {job.order.price !== '' && job.order.price != null && (
-              <KV label="ราคา" value={String(job.order.price)} />
-            )}
-            {job.order.orderer && <KV label="ผู้สั่งงาน" value={job.order.orderer} />}
-            {job.order.status && <KV label="สถานะใบสั่ง" value={job.order.status} />}
-          </Section>
+          <section>
+            <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center justify-between">
+              <span>ข้อมูลใบสั่งงาน #{job.order.id}</span>
+              {canEditOrder && (
+                <button
+                  type="button"
+                  onClick={onEditOrder}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-accent hover:bg-accent/10 normal-case tracking-normal"
+                >
+                  <IconPencil size={11} />
+                  แก้ใบสั่งงาน
+                </button>
+              )}
+            </h3>
+            <div className="rounded-lg border border-stone-200 divide-y divide-stone-100 bg-stone-50/40">
+              <KV label="ลูกค้า" value={job.order.customer} />
+              <KV label="วันรับ" value={job.order.dateIn} />
+              <KV label="กำหนดส่ง" value={job.order.dateDue} />
+              {job.order.price !== '' && job.order.price != null && (
+                <KV label="ราคา" value={String(job.order.price)} />
+              )}
+              {job.order.orderer && <KV label="ผู้สั่งงาน" value={job.order.orderer} />}
+              {job.order.status && <KV label="สถานะใบสั่ง" value={job.order.status} />}
+            </div>
+          </section>
         )}
 
         {job.order?.details && Object.keys(job.order.details).length > 0 && (
@@ -315,6 +349,7 @@ function ActionButtons({
   onSuccess: () => void;
 }) {
   const router = useRouter();
+  const { recordForward } = useUndo();
   const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel' | 'forward' | 'reassign' | 'cowork'>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign' | 'cowork'>(null);
@@ -403,16 +438,44 @@ function ActionButtons({
     }
     setError(null);
     setBusy('forward');
-    const ok = await callApi('/api/jobs/forward', {
-      id: job.id,
-      targetDept: target.dept,
-      targetStaff: target.value,
+    // Snapshot the source state BEFORE the API call — needed for undo if admin.
+    const preForwardSnapshot = {
+      name: job.name,
+      dept: String(job.dept),
+      staff: job.staff,
+      date: job.dateRaw,
+      dateIn: job.dateInRaw,
+      status: job.status,
+      orderId: job.orderId,
+      cowork: job.cowork,
+    };
+    const res = await fetch('/api/jobs/forward', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: job.id,
+        targetDept: target.dept,
+        targetStaff: target.value,
+      }),
     });
     setBusy(null);
-    if (ok) {
-      router.refresh();
-      onSuccess();
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data?.error || `HTTP ${res.status}`);
+      return;
     }
+    const data = await res.json().catch(() => ({}));
+    broadcastWrite('/api/jobs/forward');
+    if (sessionRole === 'admin' && data?.newId) {
+      recordForward({
+        newJobId: Number(data.newId),
+        snapshot: preForwardSnapshot,
+        destinationLabel: target.label,
+        jobName: job.name,
+      });
+    }
+    router.refresh();
+    onSuccess();
   }
 
   async function submitReassign() {

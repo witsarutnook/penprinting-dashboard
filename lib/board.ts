@@ -55,7 +55,9 @@ export const STAFF: Record<Dept, StaffDef[]> = {
 };
 
 /** Compact summary of the parent order — denormalized into BoardJob so the
- *  detail modal has everything it needs without an extra fetch. */
+ *  detail modal has everything it needs without an extra fetch. Extended to
+ *  match the full Order shape so the order edit form can prefill values
+ *  without a second loadAll round-trip. */
 export interface OrderSummary {
   id: number;
   name: string;
@@ -63,10 +65,15 @@ export interface OrderSummary {
   dateIn: string;
   dateDue: string;
   price: string | number;
+  /** Initial dept/staff assignment when the order was created. Edit form prefills with these. */
+  assignDept: string;
+  assignStaff: string;
   orderer: string;
   status: string;
   /** Parsed details JSON (form fields) — passed through as-is */
   details: Record<string, unknown> | null;
+  /** Raw form snapshot — carries `orderType: 'photobook' | 'normal'` */
+  rawData: Record<string, unknown> | null;
 }
 
 export interface BoardJob {
@@ -152,10 +159,15 @@ export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}):
           dateIn: String(order.dateIn || ''),
           dateDue: String(order.dateDue || ''),
           price: order.price,
+          assignDept: String(order.assignDept || ''),
+          assignStaff: String(order.assignStaff || ''),
           orderer: String(order.orderer || ''),
           status: String(order.status || ''),
           details: (order.details && typeof order.details === 'object')
             ? (order.details as Record<string, unknown>)
+            : null,
+          rawData: (order.rawData && typeof order.rawData === 'object')
+            ? (order.rawData as Record<string, unknown>)
             : null,
         }
       : null;
