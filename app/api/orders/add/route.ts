@@ -3,74 +3,70 @@ import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate, bangkokTodayISO } from '@/lib/jobs';
-import { validatePhotobook, type PhotobookItem } from '@/lib/photobook';
+import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 
 /**
- * Create a new order — admin + sales.
- *
- * Phase 3.5.5b additions:
- *   - Photobook mode (`orderType: 'photobook'`) — validates `photobookItems`
- *     and stores them under `details.photobook` matching WP shape.
- *   - Duplicate detection — if a non-cancelled order with the same
- *     case-insensitive (name, customer) combo exists, return 409 with
- *     `duplicates[]`. Caller can resubmit with `force: true` to override.
+ * Create a new order — admin + sales. Accepts the full WP-shape OrderFormData
+ * (mirrors gatherFormData() at production-monitoring.js:1595).
  *
  * Server flow:
- *   1. Validate header + dept/staff combo + photobook items if photobook.
- *   2. (Unless force) Fetch loadAllFresh, scan orders for duplicate combo.
- *   3. Allocate orderId + jobId, generate PIN.
- *   4. addOrder → addJob (with partial-success surfacing).
+ *   1. Validate required header fields + assignStaff XOR forwardPrint.
+ *   2. Validate photobook items if orderType=photobook.
+ *   3. (Unless force) duplicate detection by (name, customer) lowercase.
+ *   4. Allocate orderId + jobId, generate PIN.
+ *   5. Build order payload — `details` + `rawData` both contain the full
+ *      form snapshot (matches WP buildDetails behavior).
+ *   6. addOrder → addJob; surface partial-success.
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);
   if (session instanceof NextResponse) return session;
 
-  let body: {
-    name?: string;
-    customer?: string;
-    dateIn?: string;
-    dateDue?: string;
-    price?: string | number;
-    orderer?: string;
-    assignDept?: string;
-    assignStaff?: string;
-    notes?: string;
-    orderType?: 'normal' | 'photobook';
-    photobookItems?: PhotobookItem[];
-    force?: boolean;
-  };
+  let body: Partial<OrderFormData> & { force?: boolean; price?: string | number };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
+  // ── Header validation ────────────────────────────────────
+  const name = String(body.name || '').trim();
+  const customer = String(body.customer || '').trim();
+  const dateDue = toISODate(body.dateDue);
+  const dateIn = toISODate(body.dateIn) || bangkokTodayISO();
+  const orderer = String(body.orderer || '').trim();
+  const assignStaffInput = String(body.assignStaff || '');
+  const forwardPrintInput = String(body.forwardPrint || '');
   const orderType = body.orderType === 'photobook' ? 'photobook' : 'normal';
   const isPB = orderType === 'photobook';
 
-  // ── Header validation ────────────────────────────────────
-  const name = (body.name || '').trim();
-  const customer = (body.customer || '').trim();
-  const dateDue = toISODate(body.dateDue);
-  const dateIn = toISODate(body.dateIn) || bangkokTodayISO();
-  const orderer = (body.orderer || '').trim();
-  const assignDept = String(body.assignDept || '');
-  const assignStaff = String(body.assignStaff || '');
   const errors: string[] = [];
   if (!name) errors.push('กรุณาระบุชื่องาน');
   if (!customer) errors.push('กรุณาระบุชื่อลูกค้า');
   if (!dateDue) errors.push('กรุณาระบุกำหนดส่ง');
   if (!orderer) errors.push('กรุณาระบุผู้สั่งงาน');
-  if (!assignDept) errors.push('กรุณาเลือกแผนก');
-  if (!assignStaff) errors.push('กรุณาเลือกผู้รับงาน');
+  if (!assignStaffInput && !forwardPrintInput) {
+    errors.push('กรุณาเลือก มอบหมายกราฟฟิก หรือ ส่งต่อพิมพ์ อย่างน้อย 1 อย่าง');
+  }
   if (errors.length) return NextResponse.json({ error: errors.join(' • ') }, { status: 400 });
 
-  const validStaff = STAFF[assignDept as Dept]?.some((s) => s.id === assignStaff);
-  if (!validStaff) {
-    return NextResponse.json(
-      { error: `ผู้รับงาน "${assignStaff}" ไม่ตรงกับแผนก "${assignDept}"` },
-      { status: 400 },
-    );
+  // Determine actual assignment: graphic if assignStaff set, else print
+  let assignDept: Dept;
+  let assignStaff: string;
+  if (assignStaffInput) {
+    assignDept = 'graphic';
+    assignStaff = assignStaffInput;
+    const valid = STAFF.graphic.some((s) => s.id === assignStaff);
+    if (!valid) {
+      return NextResponse.json({ error: `กราฟฟิก "${assignStaff}" ไม่ถูกต้อง` }, { status: 400 });
+    }
+  } else {
+    assignDept = 'print';
+    assignStaff = forwardPrintInput;
+    const valid = STAFF.print.some((s) => s.id === assignStaff);
+    if (!valid) {
+      return NextResponse.json({ error: `ส่งต่อพิมพ์ "${assignStaff}" ไม่ถูกต้อง` }, { status: 400 });
+    }
   }
 
   // ── Photobook validation ────────────────────────────────
@@ -90,8 +86,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
-  // Duplicate detection — case-insensitive (name, customer) combo on
-  // non-cancelled orders. Mirrors WP findDuplicateOrders (line 1849).
   if (!body.force) {
     const nLower = name.toLowerCase();
     const cLower = customer.toLowerCase();
@@ -127,19 +121,13 @@ export async function POST(req: Request) {
   try {
     const orderRes = await post<{ id?: number; error?: string }>('getNextOrderId', {});
     if (orderRes.error || !orderRes.id) {
-      return NextResponse.json(
-        { error: `ขอเลขใบสั่งไม่สำเร็จ — ${orderRes.error || 'unknown'}` },
-        { status: 502 },
-      );
+      return NextResponse.json({ error: `ขอเลขใบสั่งไม่สำเร็จ — ${orderRes.error || 'unknown'}` }, { status: 502 });
     }
     orderId = Number(orderRes.id);
 
     const jobRes = await post<{ nextId?: number; error?: string }>('getNextId', {});
     if (jobRes.error || !jobRes.nextId) {
-      return NextResponse.json(
-        { error: `ขอ job id ไม่สำเร็จ — ${jobRes.error || 'unknown'}` },
-        { status: 502 },
-      );
+      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${jobRes.error || 'unknown'}` }, { status: 502 });
     }
     jobId = Number(jobRes.nextId);
   } catch (err) {
@@ -149,9 +137,11 @@ export async function POST(req: Request) {
 
   // ── Build payloads ───────────────────────────────────────
   const pin = String(Math.floor(1000 + Math.random() * 9000));
-  const details: Record<string, unknown> = { pin };
-  if (body.notes) details.notes = body.notes;
-  if (isPB) details.photobook = photobookItems;
+  // Full form snapshot stored under both `details` and `rawData` (matches WP).
+  const formSnapshot: Record<string, unknown> = { ...body, pin, orderType };
+  if (isPB) formSnapshot.photobook = photobookItems;
+  // Drop non-storage fields
+  delete formSnapshot.force;
 
   const orderPayload = {
     id: orderId,
@@ -164,8 +154,8 @@ export async function POST(req: Request) {
     assignStaff,
     orderer,
     status: 'sent',
-    details,
-    rawData: { ...body, orderType, pin },
+    details: formSnapshot,
+    rawData: formSnapshot,
   };
 
   const jobPayload = {
@@ -193,11 +183,7 @@ export async function POST(req: Request) {
     if (jobResp.error) {
       return NextResponse.json(
         {
-          ok: true,
-          orderId,
-          jobId: null,
-          pin,
-          partial: true,
+          ok: true, orderId, jobId: null, pin, partial: true,
           warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${jobResp.error}.`,
         },
         { status: 200 },
@@ -207,11 +193,7 @@ export async function POST(req: Request) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json(
       {
-        ok: true,
-        orderId,
-        jobId: null,
-        pin,
-        partial: true,
+        ok: true, orderId, jobId: null, pin, partial: true,
         warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${msg}.`,
       },
       { status: 200 },

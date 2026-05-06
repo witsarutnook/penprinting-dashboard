@@ -181,7 +181,7 @@ export function Card({
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
               job.hasCowork
                 ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
-                : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
             } disabled:opacity-50`}
           >
             <IconUsers size={11} />
@@ -682,7 +682,7 @@ function ActionButtons({
           </div>
         </div>
       ) : actionMode === 'cowork' ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+        <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3 space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-xs font-medium text-stone-700 flex items-center gap-1.5">
               <IconUsers size={14} />
@@ -775,7 +775,7 @@ function ActionButtons({
               type="button"
               onClick={submitCowork}
               disabled={busy !== null}
-              className="flex-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 px-3 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {busy === 'cowork' ? 'กำลังบันทึก...' : 'บันทึก co-work'}
             </button>
@@ -865,7 +865,7 @@ function ActionButtons({
             type="button"
             onClick={() => startAction('cowork')}
             disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-100 text-violet-800 text-sm font-medium hover:bg-violet-200 disabled:opacity-50"
           >
             <IconUsers size={16} />
             Co-work

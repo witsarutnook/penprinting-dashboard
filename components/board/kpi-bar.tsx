@@ -1,17 +1,15 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
 import {
-  IconCalendar,
-  IconClock,
-  IconBolt,
-  IconAlertTriangle,
+  IconCalendar, IconClock, IconBolt, IconAlertTriangle,
 } from '@/lib/icons';
 import type { Urgency } from '@/lib/calendar';
+import type { BoardJob } from '@/lib/board';
+import { KPIDetailModal } from './kpi-detail-modal';
 
 interface Bucket {
-  key: '' | Urgency;       // '' = "all" / รอดำเนินการ-bucket label (matches user decision 2A: disjoint)
+  key: Urgency;
   label: string;
   count: number;
   bgClass: string;
@@ -22,73 +20,49 @@ interface Bucket {
 
 interface Props {
   totals: Record<Urgency, number>;
+  /** Visible jobs (post server filter) — passed to detail modal so the job
+   *  list there matches what's on the board. */
+  jobs: BoardJob[];
 }
 
 /** WP-style KPI bar — 4 disjoint urgency buckets matching the screenshot.
- *  Click a card → filters the board to that urgency via URL param. */
-export function KPIBar({ totals }: Props) {
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const currentU = params.get('u') as Urgency | null;
+ *  Click a card → opens KPI detail modal with per-dept breakdown + flat
+ *  job list (matches reference WP screenshot). */
+export function KPIBar({ totals, jobs }: Props) {
+  const [activeBucket, setActiveBucket] = useState<Urgency | null>(null);
 
   const buckets: Bucket[] = [
     {
-      key: 'normal',
-      label: 'รอดำเนินการ',
-      count: totals.normal,
-      bgClass: 'bg-amber-100',
-      iconClass: 'text-amber-700',
-      numClass: 'text-amber-700',
+      key: 'normal', label: 'รอดำเนินการ', count: totals.normal,
+      bgClass: 'bg-amber-100', iconClass: 'text-amber-700', numClass: 'text-amber-700',
       Icon: IconCalendar,
     },
     {
-      key: 'urgent',
-      label: 'ด่วน ≤3 วัน',
-      count: totals.urgent,
-      bgClass: 'bg-orange-100',
-      iconClass: 'text-orange-700',
-      numClass: 'text-orange-700',
+      key: 'urgent', label: 'ด่วน ≤3 วัน', count: totals.urgent,
+      bgClass: 'bg-orange-100', iconClass: 'text-orange-700', numClass: 'text-orange-700',
       Icon: IconClock,
     },
     {
-      key: 'dday',
-      label: 'D-Day (วันนี้)',
-      count: totals.dday,
-      bgClass: 'bg-violet-100',
-      iconClass: 'text-violet-700',
-      numClass: 'text-violet-700',
+      key: 'dday', label: 'D-Day (วันนี้)', count: totals.dday,
+      bgClass: 'bg-violet-100', iconClass: 'text-violet-700', numClass: 'text-violet-700',
       Icon: IconBolt,
     },
     {
-      key: 'overdue',
-      label: 'เลยกำหนด',
-      count: totals.overdue,
-      bgClass: 'bg-red-100',
-      iconClass: 'text-red-700',
-      numClass: 'text-red-700',
+      key: 'overdue', label: 'เลยกำหนด', count: totals.overdue,
+      bgClass: 'bg-red-100', iconClass: 'text-red-700', numClass: 'text-red-700',
       Icon: IconAlertTriangle,
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {buckets.map((b) => {
-        const isActive = currentU === b.key;
-        const next = new URLSearchParams(params.toString());
-        if (isActive) next.delete('u');
-        else next.set('u', b.key);
-        const qs = next.toString();
-        const href = qs ? `${pathname}?${qs}` : pathname;
-        return (
-          <Link
+    <>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {buckets.map((b) => (
+          <button
             key={b.key}
-            href={href}
-            scroll={false}
-            className={`flex items-center gap-3 px-4 py-3 rounded-2xl border bg-white transition-all ${
-              isActive
-                ? 'border-sky-300 ring-2 ring-sky-100'
-                : 'border-stone-100 hover:border-stone-200 hover:shadow-sm'
-            }`}
+            type="button"
+            onClick={() => setActiveBucket(b.key)}
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl border border-stone-100 bg-white hover:border-stone-200 hover:shadow-sm transition-all text-left"
           >
             <div
               className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${b.bgClass}`}
@@ -101,9 +75,15 @@ export function KPIBar({ totals }: Props) {
                 {b.count}
               </div>
             </div>
-          </Link>
-        );
-      })}
-    </div>
+          </button>
+        ))}
+      </div>
+      <KPIDetailModal
+        open={activeBucket !== null}
+        onClose={() => setActiveBucket(null)}
+        urgency={activeBucket}
+        jobs={jobs}
+      />
+    </>
   );
 }
