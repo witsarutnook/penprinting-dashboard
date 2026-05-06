@@ -4,13 +4,13 @@ import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { displayDate } from '@/lib/jobs';
 import { AutoSync } from '@/lib/auto-sync';
-import { IconSearch, IconFileText, IconPlus, IconAlertCircle, IconPrinter } from '@/lib/icons';
+import { IconSearch, IconFileText, IconPlus, IconAlertCircle } from '@/lib/icons';
 import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
-import { computeUrgency, getBangkokToday, URGENCY_COLORS, URGENCY_LABELS } from '@/lib/calendar';
+import { computeUrgency, getBangkokToday, URGENCY_LABELS } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
 import { OrdersClient } from './client';
+import { OrdersTable, type OrderRow } from './orders-table';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
@@ -32,20 +32,6 @@ const STATUS_FILTERS = [
   { key: 'cancelled', label: 'ยกเลิก' },
 ];
 
-interface OrderRow {
-  id: number;
-  name: string;
-  customer: string;
-  dateIn: string;
-  dateDue: string;
-  orderStatus: string;        // sent / draft / shipped / cancelled
-  orderStatusLabel: string;
-  orderStatusClass: string;
-  step: string;               // "กราฟิก → ปุ๊ก" / "จัดส่งแล้ว" / "ยกเลิก" / "—"
-  jobUrgency: string;         // urgency key for badge color
-  jobUrgencyLabel: string;
-  isOrphan: boolean;          // active order with no job
-}
 
 export default async function OrdersListPage({
   searchParams,
@@ -135,12 +121,23 @@ export default async function OrdersListPage({
       orderStatusLabel = 'สั่งแล้ว'; orderStatusClass = 'bg-sky-50 text-sky-700'; normalised = 'sent';
     }
 
+    // Pull PIN from order rawData (if present) — surfaced in detail modal
+    const rawData = (o.rawData && typeof o.rawData === 'object'
+      ? o.rawData as Record<string, unknown>
+      : {});
+    const detailsRecord = (o.details && typeof o.details === 'object'
+      ? o.details as Record<string, unknown>
+      : {});
+    const pin = String(rawData.pin || detailsRecord.pin || '');
+
     return {
       id: Number(o.id),
       name: String(o.name || ''),
       customer: String(o.customer || ''),
       dateIn: String(o.dateIn || ''),
       dateDue: String(o.dateDue || ''),
+      orderer: String(o.orderer || ''),
+      pin,
       orderStatus: normalised,
       orderStatusLabel,
       orderStatusClass,
@@ -295,87 +292,7 @@ export default async function OrdersListPage({
             </p>
           </div>
         ) : (
-          <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
-            <table className="w-full text-sm min-w-[1024px]">
-              <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium w-12">#</th>
-                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">เลขที่ใบสั่ง</th>
-                  <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
-                  <th className="text-left px-3 py-2 font-medium">ลูกค้า</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">วันที่รับ</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">กำหนดส่ง</th>
-                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">สถานะใบสั่ง</th>
-                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">ขั้นตอนปัจจุบัน</th>
-                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">สถานะงาน</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {filtered.slice(0, 500).map((o, idx) => {
-                  const urgencyColor = o.jobUrgency in URGENCY_COLORS ? URGENCY_COLORS[o.jobUrgency as 'normal'] : '#9ca3af';
-                  const showUrgencyBadge = o.step !== 'จัดส่งแล้ว' && o.step !== 'ยกเลิก' && o.step !== 'ร่าง' && o.step !== 'ไม่พบงาน';
-                  const canEdit = (session.role === 'admin' || session.role === 'sales')
-                    && o.orderStatus !== 'shipped' && o.orderStatus !== 'cancelled';
-                  return (
-                    <tr key={o.id} className={`hover:bg-stone-50 ${o.isOrphan ? 'bg-red-50/30' : ''}`}>
-                      <td className="px-3 py-2 tabular-nums text-stone-400">{idx + 1}</td>
-                      <td className="px-3 py-2 tabular-nums text-stone-700 font-medium whitespace-nowrap">
-                        {canEdit ? (
-                          <Link href={`/orders/${o.id}/edit`} className="text-sky-700 hover:underline">
-                            #{o.id}
-                          </Link>
-                        ) : (
-                          <>#{o.id}</>
-                        )}
-                        <Link
-                          href={`/orders/${o.id}/print`}
-                          target="_blank"
-                          className="ml-1.5 text-stone-400 hover:text-sky-700"
-                          title="พิมพ์ใบสั่งงาน"
-                          aria-label="พิมพ์"
-                        >
-                          <IconPrinter size={12} className="inline-block" />
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2 font-medium text-stone-900 max-w-[14rem] truncate" title={o.name}>{o.name}</td>
-                      <td className="px-3 py-2 text-stone-600 max-w-[12rem] truncate" title={o.customer}>{o.customer || '—'}</td>
-                      <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">{displayDate(o.dateIn)}</td>
-                      <td className="px-3 py-2 text-right text-stone-700 tabular-nums whitespace-nowrap">{displayDate(o.dateDue)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${o.orderStatusClass}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            o.orderStatus === 'cancelled' ? 'bg-red-500'
-                              : o.orderStatus === 'shipped' ? 'bg-emerald-500'
-                                : o.orderStatus === 'draft' ? 'bg-amber-500'
-                                  : 'bg-sky-500'
-                          }`} />
-                          {o.orderStatusLabel}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-stone-700 whitespace-nowrap">{o.step}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {showUrgencyBadge ? (
-                          <span
-                            className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium tabular-nums"
-                            style={{ background: urgencyColor + '20', color: urgencyColor }}
-                          >
-                            {o.jobUrgencyLabel}
-                          </span>
-                        ) : (
-                          <span className="text-stone-400 text-xs">{o.jobUrgencyLabel}</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {filtered.length > 500 && (
-              <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-                แสดง 500 รายการแรก จากทั้งหมด {filtered.length} — ใช้ตัวกรองเพื่อจำกัดให้แคบลง
-              </div>
-            )}
-          </div>
+          <OrdersTable rows={filtered} role={session.role} />
         )}
       </div>
     </DashboardShell>

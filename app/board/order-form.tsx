@@ -29,6 +29,10 @@ interface OrderFormProps {
   templates?: Template[];
   /** Whether the user can manage (save/delete) templates — admin + sales. */
   canManageTemplates?: boolean;
+  /** Duplicate-flow prefill — rawData of another order. Spec fields are
+   *  populated but dates / customer / name are cleared so the user fills
+   *  fresh values for the new order. Mirrors WP duplicateOrder(). */
+  initialPrefill?: Record<string, unknown> | null;
 }
 
 interface SuccessInfo {
@@ -55,6 +59,7 @@ const COVER_COLORS = ['1สี', '2สี', '3สี', '4สี'];
 export function OrderForm({
   open, onClose, defaultOrderer, initial, inline = false,
   templates = [], canManageTemplates = false,
+  initialPrefill = null,
 }: OrderFormProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const router = useRouter();
@@ -76,6 +81,23 @@ export function OrderForm({
   // Initialize on open (inline mode is always considered "open")
   useEffect(() => {
     if (!open && !inline) return;
+    if (!initial && initialPrefill) {
+      // Duplicate flow — populate from another order's rawData but clear
+      // identifying fields so user fills fresh values.
+      const next = orderFormFromRaw(initialPrefill, defaultOrderer);
+      next.name = '';
+      next.customer = '';
+      next.dateIn = bangkokTodayISO();
+      next.dateDue = '';
+      setData(next);
+      setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
+      setTab('main');
+      setBusy(false);
+      setError(null);
+      setSuccess(null);
+      setDuplicate(null);
+      return;
+    }
     if (initial) {
       const raw = initial.rawData || {};
       const next = orderFormFromRaw(raw, initial.orderer || defaultOrderer);
@@ -105,7 +127,7 @@ export function OrderForm({
     setError(null);
     setSuccess(null);
     setDuplicate(null);
-  }, [open, initial, defaultOrderer, inline]);
+  }, [open, initial, defaultOrderer, inline, initialPrefill]);
 
   // Sync native dialog (modal mode only)
   useEffect(() => {

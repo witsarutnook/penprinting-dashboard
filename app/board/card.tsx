@@ -173,8 +173,15 @@ export function Card({
 
   function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
     if (!draggable) return;
-    // Encode dept in MIME type so columns can validate same-dept during dragover
+    // Encode dept in MIME type so columns can validate same-dept during dragover.
+    // Also set a generic any-job marker so cross-dept drops can light up
+    // (only valid forward targets allow drop). Source dept stored as a plain
+    // string the drop handler can read on drop (browsers DO expose values
+    // for non-protected types like 'text/plain' / our custom dept-source one
+    // during drop; only during dragover are values hidden).
     e.dataTransfer.setData(`application/x-job-${dept}`, String(job.id));
+    e.dataTransfer.setData('application/x-job-any', String(job.id));
+    e.dataTransfer.setData('application/x-job-source-dept', dept);
     e.dataTransfer.setData('text/plain', String(job.id));
     e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true);
@@ -736,7 +743,6 @@ function DetailContent({
   onEditOrder: () => void;
   sessionRole: string | null;
 }) {
-  const canEditOrder = sessionRole === 'admin' || sessionRole === 'sales';
   const [tab, setTab] = useState<DetailTab>('info');
   const dept = job.dept as Dept;
   const deptLabelLong = DEPT_LABELS[dept] || job.dept;
