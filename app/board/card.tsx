@@ -242,8 +242,8 @@ export function Card({
         </div>
 
         {/* Action row — primary action + Co-work + urgency badge */}
-        <div className="flex items-center justify-between gap-1.5 mt-1.5 text-xs flex-wrap">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-2 mt-1.5 text-xs flex-wrap">
+          <div className="flex items-center gap-1.5">
             {primaryAction?.kind === 'ship' && (
               <button
                 type="button"
@@ -252,10 +252,10 @@ export function Card({
                   handleShipClick();
                 }}
                 disabled={bulkMode || shipBusy}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 font-medium text-[11px] disabled:opacity-50"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 font-medium text-[12px] disabled:opacity-50"
                 title="จัดส่งเสร็จ — ปิดงาน"
               >
-                <IconCheck size={11} />
+                <IconCheck size={13} />
                 {shipBusy ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
               </button>
             )}
@@ -268,9 +268,9 @@ export function Card({
                   else setForwardOpen(true);
                 }}
                 disabled={bulkMode}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-50 text-sky-700 hover:bg-sky-100 font-medium text-[11px] disabled:opacity-50"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-sky-50 text-sky-700 hover:bg-sky-100 font-medium text-[12px] disabled:opacity-50"
               >
-                <IconCheck size={11} />
+                <IconCheck size={13} />
                 {primaryAction.label}
               </button>
             )}
@@ -283,19 +283,19 @@ export function Card({
                   else setCoworkOpen(true);
                 }}
                 disabled={bulkMode}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium text-[11px] transition-colors ${
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium text-[12px] transition-colors ${
                   job.hasCowork
                     ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
                     : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
                 } disabled:opacity-50`}
               >
-                <IconUsers size={11} />
+                <IconUsers size={13} />
                 {job.hasCowork ? 'แก้ Co-work' : 'Co-work'}
               </button>
             )}
           </div>
           <span
-            className="px-1.5 py-0 rounded font-medium tabular-nums whitespace-nowrap text-[10px] leading-snug"
+            className="px-1.5 py-0.5 rounded font-medium tabular-nums whitespace-nowrap text-[10px] leading-snug"
             style={{ background: urgencyColor + '20', color: urgencyColor }}
           >
             {URGENCY_LABELS[job.urgency]}
