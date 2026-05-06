@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type DragEvent } from 'react';
+import { useState, useTransition, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { type BoardColumn, type Dept, DEPT_LABELS, STAFF } from '@/lib/board';
 import { getStaffTheme } from '@/lib/staff-icons';
@@ -36,6 +36,7 @@ export function Column({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const [, startTransition] = useTransition();
   const isAdmin = sessionRole === 'admin';
   const isVendor = !!column.staff.isVendor;
   const theme = getStaffTheme(dept, column.staff.id);
@@ -94,6 +95,9 @@ export function Column({
     try {
       // Same-dept → reassign
       if (dropType === 'reassign') {
+        // Show toast IMMEDIATELY so the user sees instant feedback —
+        // the actual request still takes ~500-2s but UX feels snappy.
+        toast.show(`กำลังย้าย #${id}: ${sourceStaffLabel} → ${targetStaffLabel}`);
         const res = await fetch('/api/jobs/reassign', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -108,8 +112,9 @@ export function Column({
           return;
         }
         broadcastWrite('/api/jobs/reassign');
-        toast.show(`ย้ายงาน #${id}: ${sourceStaffLabel} → ${targetStaffLabel}`);
-        router.refresh();
+        toast.success(`ย้ายงาน #${id} → ${targetStaffLabel}`);
+        // Use startTransition so the refresh doesn't block the UI thread.
+        startTransition(() => router.refresh());
         return;
       }
 
@@ -140,6 +145,7 @@ export function Column({
         )) {
           return;
         }
+        toast.show(`กำลังส่งต่อ #${id} → ${match.label}...`);
         const res = await fetch('/api/jobs/forward', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -154,8 +160,8 @@ export function Column({
           return;
         }
         broadcastWrite('/api/jobs/forward');
-        toast.show(`ส่งต่องาน #${id} → ${match.label}`);
-        router.refresh();
+        toast.success(`ส่งต่อ #${id} → ${match.label}`);
+        startTransition(() => router.refresh());
       }
     } finally {
       setBusy(false);

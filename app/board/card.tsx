@@ -170,6 +170,17 @@ export function Card({
   const [isDragging, setIsDragging] = useState(false);
   const draggable = !bulkMode && !isGuest;
 
+  // Safety net: if dragend never fires (browser quirk / unmount mid-drag),
+  // the body[data-dragging] flag would stick and disable auto-sync forever.
+  // Clear on unmount.
+  useEffect(() => {
+    return () => {
+      if (document.body.dataset.dragging === '1') {
+        delete document.body.dataset.dragging;
+      }
+    };
+  }, []);
+
   function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
     if (!draggable) {
       e.preventDefault();

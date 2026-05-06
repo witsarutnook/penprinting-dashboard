@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { displayDate } from '@/lib/jobs';
@@ -10,6 +10,7 @@ import {
   IconX, IconPencil, IconTrash, IconPrinter, IconAlertCircle, IconFileText,
   IconCheck, IconCornerUpRight,
 } from '@/lib/icons';
+import { useToast } from '@/components/toast-provider';
 
 export interface OrderRow {
   id: number;
@@ -36,10 +37,15 @@ interface Props {
 }
 
 /** WP-style /orders table: rows are clickable → opens a detail modal with
- *  the 5 quick-actions (สั่งซ้ำ / แก้ไข / Tracking / พิมพ์ / ลบ). */
+ *  the 5 quick-actions (สั่งซ้ำ / แก้ไข / Tracking / พิมพ์ / ลบ).
+ *
+ *  Perf note: rows are React.memo'd and the click handler comes via a
+ *  stable useCallback so opening the detail modal does NOT re-render
+ *  500 rows. Without this, a row-click on /orders feels noticeably laggy. */
 export function OrdersTable({ rows, role }: Props) {
   const [activeId, setActiveId] = useState<number | null>(null);
   const active = rows.find((r) => r.id === activeId) || null;
+  const onRowClick = useCallback((id: number) => setActiveId(id), []);
 
   return (
     <>
@@ -59,76 +65,9 @@ export function OrdersTable({ rows, role }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
-            {rows.slice(0, 500).map((o, idx) => {
-              const urgencyColor = o.jobUrgency in URGENCY_COLORS
-                ? URGENCY_COLORS[o.jobUrgency as 'normal']
-                : '#9ca3af';
-              const showUrgencyBadge =
-                o.step !== 'จัดส่งแล้ว' &&
-                o.step !== 'ยกเลิก' &&
-                o.step !== 'ร่าง' &&
-                o.step !== 'ไม่พบงาน';
-              return (
-                <tr
-                  key={o.id}
-                  onClick={() => setActiveId(o.id)}
-                  className={`cursor-pointer hover:bg-sky-50/40 transition-colors ${
-                    o.isOrphan ? 'bg-red-50/30' : ''
-                  }`}
-                >
-                  <td className="px-3 py-2 tabular-nums text-stone-400">{idx + 1}</td>
-                  <td className="px-3 py-2 tabular-nums text-stone-700 font-medium whitespace-nowrap">
-                    <span className="text-sky-700 hover:underline">#{o.id}</span>
-                  </td>
-                  <td
-                    className="px-3 py-2 font-medium text-stone-900 max-w-[14rem] truncate"
-                    title={o.name}
-                  >
-                    {o.name}
-                  </td>
-                  <td
-                    className="px-3 py-2 text-stone-600 max-w-[12rem] truncate"
-                    title={o.customer}
-                  >
-                    {o.customer || '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">
-                    {displayDate(o.dateIn)}
-                  </td>
-                  <td className="px-3 py-2 text-right text-stone-700 tabular-nums whitespace-nowrap">
-                    {displayDate(o.dateDue)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${o.orderStatusClass}`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          o.orderStatus === 'cancelled' ? 'bg-red-500'
-                            : o.orderStatus === 'shipped' ? 'bg-emerald-500'
-                              : o.orderStatus === 'draft' ? 'bg-amber-500'
-                                : 'bg-sky-500'
-                        }`}
-                      />
-                      {o.orderStatusLabel}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-stone-700 whitespace-nowrap">{o.step}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {showUrgencyBadge ? (
-                      <span
-                        className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium tabular-nums"
-                        style={{ background: urgencyColor + '20', color: urgencyColor }}
-                      >
-                        {o.jobUrgencyLabel}
-                      </span>
-                    ) : (
-                      <span className="text-stone-400 text-xs">{o.jobUrgencyLabel}</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.slice(0, 500).map((o, idx) => (
+              <OrderRowMemo key={o.id} order={o} idx={idx} onClick={onRowClick} />
+            ))}
           </tbody>
         </table>
         {rows.length > 500 && (
@@ -149,6 +88,76 @@ export function OrdersTable({ rows, role }: Props) {
 
 // ─── Detail modal ─────────────────────────────────────────
 
+// ─── Memoized row ─────────────────────────────────────────
+
+/** Each row receives a stable `onClick` callback so it only re-renders
+ *  when its own `order` prop changes (not when activeId changes). */
+const OrderRowMemo = memo(function OrderRow({
+  order: o, idx, onClick,
+}: {
+  order: OrderRow;
+  idx: number;
+  onClick: (id: number) => void;
+}) {
+  const urgencyColor = o.jobUrgency in URGENCY_COLORS
+    ? URGENCY_COLORS[o.jobUrgency as 'normal']
+    : '#9ca3af';
+  const showUrgencyBadge =
+    o.step !== 'จัดส่งแล้ว' &&
+    o.step !== 'ยกเลิก' &&
+    o.step !== 'ร่าง' &&
+    o.step !== 'ไม่พบงาน';
+  return (
+    <tr
+      onClick={() => onClick(o.id)}
+      className={`cursor-pointer hover:bg-sky-50/40 transition-colors ${
+        o.isOrphan ? 'bg-red-50/30' : ''
+      }`}
+    >
+      <td className="px-3 py-2 tabular-nums text-stone-400">{idx + 1}</td>
+      <td className="px-3 py-2 tabular-nums text-stone-700 font-medium whitespace-nowrap">
+        <span className="text-sky-700 hover:underline">#{o.id}</span>
+      </td>
+      <td className="px-3 py-2 font-medium text-stone-900 max-w-[14rem] truncate" title={o.name}>
+        {o.name}
+      </td>
+      <td className="px-3 py-2 text-stone-600 max-w-[12rem] truncate" title={o.customer}>
+        {o.customer || '—'}
+      </td>
+      <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">
+        {displayDate(o.dateIn)}
+      </td>
+      <td className="px-3 py-2 text-right text-stone-700 tabular-nums whitespace-nowrap">
+        {displayDate(o.dateDue)}
+      </td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${o.orderStatusClass}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${
+            o.orderStatus === 'cancelled' ? 'bg-red-500'
+              : o.orderStatus === 'shipped' ? 'bg-emerald-500'
+                : o.orderStatus === 'draft' ? 'bg-amber-500'
+                  : 'bg-sky-500'
+          }`} />
+          {o.orderStatusLabel}
+        </span>
+      </td>
+      <td className="px-3 py-2 text-stone-700 whitespace-nowrap">{o.step}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        {showUrgencyBadge ? (
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium tabular-nums"
+            style={{ background: urgencyColor + '20', color: urgencyColor }}
+          >
+            {o.jobUrgencyLabel}
+          </span>
+        ) : (
+          <span className="text-stone-400 text-xs">{o.jobUrgencyLabel}</span>
+        )}
+      </td>
+    </tr>
+  );
+});
+
 function OrderDetailModal({
   order, role, onClose,
 }: {
@@ -157,6 +166,8 @@ function OrderDetailModal({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const toast = useToast();
+  const [, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [busy, setBusy] = useState<null | 'delete'>(null);
   const [error, setError] = useState<string | null>(null);
@@ -194,22 +205,28 @@ function OrderDetailModal({
       `⚠ ลบถาวร — กู้คืนไม่ได้!\n` +
       `Job ที่ผูกอยู่จะไม่ถูกลบอัตโนมัติ — โปรดยกเลิกหรือตรวจสอบก่อน`,
     )) return;
+    const id = order.id;
+    const name = order.name;
     setError(null);
     setBusy('delete');
+    // Optimistic — show toast + close modal IMMEDIATELY for instant UX feel.
+    toast.show(`กำลังลบใบสั่ง #${id}...`);
+    onClose();
     try {
       const res = await fetch('/api/orders/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: order.id }),
+        body: JSON.stringify({ id }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || `HTTP ${res.status}`);
+        toast.error(data?.error || `ลบไม่สำเร็จ (HTTP ${res.status})`);
         return;
       }
       broadcastWrite('/api/orders/delete');
-      router.refresh();
-      onClose();
+      toast.success(`ลบใบสั่ง #${id} "${name}" แล้ว`);
+      // Refresh in transition — UI doesn't block waiting for server re-render
+      startTransition(() => router.refresh());
     } finally {
       setBusy(null);
     }
