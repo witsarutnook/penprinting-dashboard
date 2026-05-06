@@ -61,14 +61,33 @@ async function get<T>(
   return data as T;
 }
 
+/** Defensive defaults — Apps Script sometimes returns a snapshot missing
+ *  fields (empty Sheet, schema drift, transient error). Without this,
+ *  pages calling `data.orders.forEach()` etc. throw at runtime with
+ *  "Cannot read properties of undefined". Reported on /analytics
+ *  (Digest 958503229, 2026-05-06). */
+function withDefaults(data: Partial<LoadAllResponse>): LoadAllResponse {
+  return {
+    jobs: data.jobs || [],
+    orders: data.orders || [],
+    shipped: data.shipped || [],
+    cancelled: data.cancelled || [],
+    audit: data.audit || [],
+    nextId: typeof data.nextId === 'number' ? data.nextId : 100,
+    templates: data.templates || [],
+  };
+}
+
 /** Fetch the full snapshot used by the dashboard frontend (60s ISR cache). */
 export async function loadAll(): Promise<LoadAllResponse> {
-  return get<LoadAllResponse>('loadAll');
+  const data = await get<Partial<LoadAllResponse>>('loadAll');
+  return withDefaults(data);
 }
 
 /** Fetch loadAll with no caching — for write-path lookups (nextId allocation, etc). */
 export async function loadAllFresh(): Promise<LoadAllResponse> {
-  return get<LoadAllResponse>('loadAll', {}, { revalidate: 0 });
+  const data = await get<Partial<LoadAllResponse>>('loadAll', {}, { revalidate: 0 });
+  return withDefaults(data);
 }
 
 /** Apps Script actions that mutate Sheet state — used to auto-bust the
