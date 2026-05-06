@@ -2,85 +2,109 @@
 
 > **อ่านไฟล์นี้ + [PATTERNS.md](PATTERNS.md) + [CLAUDE.md](CLAUDE.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> Session ก่อนหน้า (2026-05-06) ทำไป ~20 commits — ตอนนี้ Phase 3.5 + Phase 2.3 ปิดเกือบหมด เหลือแค่ list-page polish + drag-drop. v2 dashboard มี feature parity กับ WP เกือบครบ.
+> Session ก่อนหน้า (2026-05-06 PM) — **MEGA SESSION** 30+ commits ปิด Phase 3.5.10 + 3.5.11 + critical/high audit backlog ทั้งหมด. v2 dashboard ถึง **full WP feature parity**.
 
-## ✅ เสร็จแล้วใน session ก่อนหน้า
+## ✅ เสร็จแล้วในรอบล่าสุด (2026-05-06 PM)
 
-- Phase 3.5.4-3.5.8 ทั้งหมด (Add/edit job, Forward+Bulk+Reassign, Co-work, Auto-sync, Order entry)
-- Phase 3.5.5b — Photobook tab + Order edit + Duplicate detection
-- Phase 3.5.7b — Undo forward 10s toast
-- Phase 2.3 Stage A+B+C — DashboardShell, sidebar, bottom-nav, KPI bar, filter chips, dept icon-headers, inline bulk-mode, dept-card pattern
-- Icon refactor — all SVG outline (lib/icons.tsx)
-- KPI click → detail modal (per-dept breakdown + job table)
-- Order form full WP port — 3 tabs, ~50 fields matching WP screenshot
-- Card visual match WP — sizes, buttons, cowork inline display, ร่วมพิมพ์ pill, all-violet cowork color
-- GMT date fix — displayDate handles JS Date.toString() format
-- Card body click no longer opens detail (only "รายละเอียด" button does)
+### Phase 3.5.10 + 3.5.11 — WP-parity + audit close-out
+
+**Kanban / card / detail modal:**
+- Inline forward + co-work dialogs บน card (ไม่เด้ง detail page)
+- Drag-drop reassign (same-dept) + cross-dept forward via custom MIME
+- Drag-vs-click handler split (handleDragStart bails on button targets)
+- Co-work guest fan-out (violet read-only cards), format = WP `string[]`
+- จัดส่งเสร็จ จำกัด `post:ship`, "ลบถาวร" ออกจาก detail (ยกเลิกพอ)
+- ActionButtons cowork code path ลบ (CoworkDialog เป็น canonical UI)
+
+**/orders /shipped /cancelled WP-parity:**
+- Year/Month dropdowns + ค้นหา + Export CSV + ค้นหาในประวัติ
+- /orders: date-range filter, ขั้นตอนปัจจุบัน + สถานะงาน, ตรวจสอบข้อมูล (orphan count), detail modal 5 actions (สั่งซ้ำ/แก้ไข/Tracking/พิมพ์/ลบ)
+- Per-page selector 20/50/100 (default 20)
+- /cancelled: strikethrough + restore button + `/api/jobs/restore`
+
+**Order entry overhaul:**
+- `/orders/new` เป็น real inline page (ไม่ใช่ modal), `max-w-7xl`
+- บันทึกร่าง + พิมพ์+สั่ง buttons
+- `/orders/[id]/edit` page (admins/sales)
+- Drafts promote ผ่าน `/api/orders/promote-draft` (idempotent)
+- Customer autocomplete (1.6k entries) + ดึงรายละเอียดจากงานล่าสุด (lazy `/api/orders/raw/[id]`)
+- Templates UI (Quick-fill + บันทึก + จัดการ)
+- Cascade-cancel jobs ตอนลบ order
+
+**New routes:**
+- `/orders/[id]/edit` — full inline edit + draft promote CTA
+- `/orders/[id]/print` — A4 invoice auto-print
+- `/orders/[id]/tracking-card` — printable label + QR + html-to-image PNG
+- `/track` — public (no auth) + `/api/track/lookup` (cookie rate-limit 15/hr)
+
+**Infrastructure / perf / DX:**
+- Toast system (`components/toast-provider.tsx`) — 4 variants
+- ConfirmDialog (`components/confirm-provider.tsx`) — แทน native confirm/prompt
+- Auto-sync guards (skip when dialog open / typing / dragging) + cleanup
+- `revalidatePath` ทุก successful write
+- Defensive defaults ใน `loadAll()`
+- React.memo OrdersTable rows + optimistic toasts + `startTransition`
+- KPI modal rows clickable + ใช้ `allJobs` (ไม่ใช่ visibleJobs)
+
+**Critical audit fixes:**
+- C1 forward + bulk-forward race (atomic getNextId per item)
+- C2 tracking-card QR URL aligned กับ v2 `/track`
+- C3 cowork dept dropdown ที่ submit payload ไม่ถูก
+- C4 `body.dataset.dragging` stuck flag ฆ่า auto-sync
+- C5 promote-draft duplicate jobs on retry
+
+### API routes added
+- POST `/api/orders/promote-draft`, `/api/orders/delete`
+- POST `/api/orders/templates/{add,delete}`
+- GET `/api/orders/raw/[id]`
+- POST `/api/jobs/restore`
+- POST `/api/track/lookup`
+
+---
 
 ## ⏳ ที่ยังเหลือ (priority order)
 
-### 1. Drag-drop reassign — replace ปุ่ม 🔄 ย้าย
-WP behavior: drag a card within same dept → drop on another staff column → reassign.
+### 1. Documentation sweep
+- `production-monitoring/monitoring.md` + `Tech-Roadmap-Status.md` มีข้อมูลซ้อน WP/v2 — refactor ให้แยกชัด
+- หรือ split monitoring.md เป็น `monitoring.md` (WP) + `dashboard-v2.md` (Next.js) เป็น 2 source of truth
 
-**Files to touch:**
-- [app/board/card.tsx](app/board/card.tsx) — add `draggable={true}` + `onDragStart` setting `dataTransfer.setData('text/plain', String(job.id))`. Remove the 🔄 ย้าย button from ActionButtons.
-- [app/board/column.tsx](app/board/column.tsx) — add `onDragOver` (preventDefault if same-dept), `onDrop` reading the job-id and POSTing `/api/jobs/reassign`. Show drag-over state with ring-2 ring-sky-300.
-- Mobile: HTML5 drag doesn't work on touch. Either keep ปุ่ม ย้าย visible only on `md:hidden`, or skip mobile (defer).
+### 2. Phase 2.1 Apps Script TS migration ที่เหลือ
+Code.js เหลือ ~657 บรรทัด แตกเป็น 4 sections:
+- Auth (HMAC + cookie) ~80 บรรทัด — risky (break = unauth ทุก endpoint, smoke test ทั้งหมด)
+- Load operations ~150 บรรทัด — read-heavy, low-risk extraction
+- Write operations ~220 บรรทัด — addJob/deleteJob/updateJob/cancelJob/forwardJob/bulkForward — core CRUD
+- API handlers (doGet/doPost) ~120 บรรทัด — entry-point, ไว้สุดท้าย
 
-**API:** `/api/jobs/reassign` already exists, no backend change needed.
+แนะนำลำดับ: Load → Auth (smoke test ใหญ่) → Write (CRUD) → API last
 
-**Spec:**
-- Validation: source.dept === target.dept (server already enforces, frontend should hide invalid drop zones)
-- Show ghost during drag, drop-target highlight on dragover
-- On drop: optimistic UI? or just router.refresh()?  — start with router.refresh() (consistent with rest of v2)
+### 3. Per-user audit signing
+ตอนนี้ทุก v2 mutation ลง audit log ด้วย actor = `admin:dashboard` (service token). แก้:
+- Dashboard side: sign per-user token ด้วย `DASHBOARD_AUTH_SECRET` หลัง login → forward คู่กับ session cookie
+- Apps Script: parse user token + override actor = `<role>:<user>` ก่อน `appendAudit`
+- Cookie ขนาด ~250 bytes เพิ่ม — OK สำหรับทุก request
 
-### 2. /orders match WP table layout
-**Reference screenshot from user:** columns are
-`#` | `เลขที่ใบสั่งงาน` (sortable, link) | `ชื่องาน` | `ลูกค้า` | `วันที่รับ` | `กำหนดส่ง` | `สถานะใบสั่ง` (● สั่งแล้ว) | `ขั้นตอนปัจจุบัน` (e.g. "กราฟิก → ปุ๊ก") | `สถานะงาน` (urgency badge) | `ลบ`
+### 4. Sentry wiring
+`NEXT_PUBLIC_SENTRY_DSN` env มีอยู่ในโปรเจกต์ แต่ยังไม่ได้ instrument:
+- ติด `@sentry/nextjs` package
+- `sentry.client.config.ts` + `sentry.server.config.ts`
+- Source map upload ผ่าน `withSentryConfig` ใน next.config
 
-**Plus:**
-- Date range filter (วันที่รับ from/to) — replace the status pill filters
-- Search box (have)
-- "Export CSV" button
-- "ตรวจสอบข้อมูล" button (orphan check — like WP)
+### 5. TV display kiosk บน v2 (deferred earlier)
+User requested skip ในรอบที่ผ่านมา — ยังเป็น backlog item:
+- Port `production-monitoring/assets/production-tv.{js,css}` → `app/tv/page.tsx`
+- Read-only Kanban + 30s auto-refresh + secret key auth
+- Dark theme, big fonts, 3-column mosaic
 
-**Files:** [app/orders/page.tsx](app/orders/page.tsx) — refactor table.
+### 6. QR บน /orders/[id]/print
+A4 invoice ตอนนี้ไม่มี QR — เพิ่ม QR ที่ link ไป `/track?id=<orderId>` ที่มุมบน-ขวา
 
-**Hard part:** computing "ขั้นตอนปัจจุบัน" + "สถานะงาน" per order. Need to:
-- Find the active job for that order (jobs.find(j => j.orderId === o.id))
-- If found: ขั้นตอน = "{DEPT_LABELS[job.dept]} → {staffName}", สถานะงาน = job urgency
-- If shipped: ขั้นตอน = "จัดส่งแล้ว"
-- If cancelled: ขั้นตอน = "ยกเลิก"
+### 7. Phase 3.6 — Decommission decision (ระยะยาว)
+หลัง v2 = full parity แล้ว — ตัดสินใจ:
+- **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
+- **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น admin/sales
+- ควรทำหลังจบ #3 (per-user audit signing) เพื่อ feature parity ครบจริงๆ
 
-### 3. /shipped match WP layout
-- Year filter dropdown (ทั้งหมด / 2025 / 2026)
-- Month filter dropdown (ทั้งหมด / มกราคม-ธันวาคม) — auto-filtered by year
-- Search (have)
-- Export CSV button
-- "ค้นหาในประวัติ" button — points to /archive
-- Table: # / ชื่องาน / ลูกค้า / วันที่จัดส่ง / เดือน / สถานะ (● จัดส่งแล้ว)
-
-**Files:** [app/shipped/page.tsx](app/shipped/page.tsx)
-
-### 4. /cancelled match WP layout
-- Year/Month filter (same pattern as /shipped)
-- Search
-- Export CSV
-- Table: # / ชื่องาน (red strikethrough) / แผนก / ยกเลิกโดย / วันที่ยกเลิก (with time, displayDateTime — already has) / เหตุผล / `กู้คืน` button
-
-**New endpoint:** `/api/jobs/restore` (admin only, calls Apps Script `restoreJob`):
-- Body: `{ id }` — fetches cancelled row, calls Apps Script restoreJob action
-- Apps Script side already implemented (`production-monitoring/apps-script/dashboard/Code.js:567 restoreJob`)
-
-**Files:**
-- new `app/api/jobs/restore/route.ts`
-- [app/cancelled/page.tsx](app/cancelled/page.tsx) — strikethrough class on name col, restore button per row that POSTs to /api/jobs/restore
-
-### 5. Templates UI (deferred to 3.5.9 — lowest priority)
-- Apps Script already has `addTemplate` / `deleteTemplate` actions (admin+sales)
-- Templates loaded in `loadAll().templates`
-- UI: Quick-fill dropdown + "บันทึกเป็น template" + "จัดการ" buttons in OrderForm header
-- Pre-fills form from selected template's `rawData`
+---
 
 ## 📚 Where to dig
 
@@ -91,19 +115,24 @@ WP behavior: drag a card within same dept → drop on another staff column → r
 | URL state / Context patterns | [PATTERNS.md](PATTERNS.md) §3 |
 | Iconography (lib/icons.tsx) | [PATTERNS.md](PATTERNS.md) §4 |
 | Form patterns (`<dialog>`, repeater, edit-mode) | [PATTERNS.md](PATTERNS.md) §5 |
-| WP source code | `production-monitoring/assets/production-monitoring.js` (5600 lines, search for `function name`) |
-| WP Apps Script | `production-monitoring/apps-script/dashboard/Code.js` |
+| Toast / Confirm system | `components/{toast,confirm}-provider.tsx` |
+| Auto-sync + write cache-bust | `lib/auto-sync.tsx` |
+| WP source (reference) | `production-monitoring/assets/production-monitoring.js` |
+| WP Apps Script | `production-monitoring/apps-script/dashboard/Code.js` (657 บรรทัดเหลือ) |
 | Project routes/auth/env | [CLAUDE.md](CLAUDE.md) |
 
 ## 🧠 Decisions to remember
 
-1. **Edit/delete/cancel = admin only** on v2 (stricter than Apps Script `ROLE_REQUIREMENTS`). Forward / reassign / cowork / move-to-shipped = all roles. See [feedback_dashboard_v2_edit_admin_only.md](~/.claude/projects/-Users-witsarut-p-Desktop-Project-Report-Penprinting/memory/).
+1. **Edit/delete/cancel = admin only** บน v2 (stricter than Apps Script `ROLE_REQUIREMENTS`). Forward / reassign / cowork / move-to-shipped = all roles. See [feedback_dashboard_v2_edit_admin_only.md](~/.claude/projects/-Users-witsarut-p-Desktop-Project-Report-Penprinting/memory/).
 2. **All cowork UI = violet** (no amber).
 3. **All icons = SVG outline** ([lib/icons.tsx](lib/icons.tsx)) — no emoji.
-4. **Date display = `displayDate()` from lib/jobs.ts** — handles ISO, DD/MM/YYYY, and JS Date.toString() (GMT format) all in one. Use `displayDateTime()` for timestamp columns.
+4. **Date display = `displayDate()` from lib/jobs.ts** — handles ISO, DD/MM/YYYY, JS Date.toString() (GMT) all in one. Use `displayDateTime()` for timestamp columns.
 5. **Filter state in URL** (searchParams), not localStorage.
-6. **Bulk select = inline checkbox mode** on cards — toggled from filter-chips row.
-7. **Card body click ≠ open detail** — only the "รายละเอียด" button does. Bulk-mode click = toggle selection.
+6. **Bulk select = inline checkbox mode** — toggled from filter-chips row.
+7. **Card body click ≠ open detail** — only "รายละเอียด" button. Bulk-mode click = toggle selection.
+8. **Toast/Confirm > native** — ใช้ `useToast()` + `useConfirm()` แทน `alert()`/`confirm()` ทุกที่ (consistent UI + non-blocking).
+9. **`revalidatePath` after write** — ทุก successful mutation ต้อง bust cache เพื่อ next read สด (ไม่งั้นข้อมูลเก่า ISR ค้าง 60s).
+10. **Drag MIME types** — same-dept reassign = `application/x-pp-reassign`, cross-dept forward = `application/x-pp-forward` (กัน drop-target รับผิด).
 
 ## 🛠 Quick start for next session
 
@@ -124,4 +153,4 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 2. ถ้าเจอ pattern ใหม่ — เพิ่มใน [PATTERNS.md](PATTERNS.md)
 3. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) iteration table
 
-_อัปเดตล่าสุด: 2026-05-06 (handoff after big session)_
+_อัปเดตล่าสุด: 2026-05-06 PM (mega-session: Phase 3.5.10 + 3.5.11 + audit close-out)_
