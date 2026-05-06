@@ -76,25 +76,43 @@ export async function POST(req: Request) {
   const jobsById = new Map<number, (typeof snap.jobs)[number]>();
   snap.jobs.forEach((j) => jobsById.set(Number(j.id), j));
 
-  // Atomically allocate ONE id PER item from Apps Script LockService.
-  // Pre-allocating N ids client-side from a cached snap.nextId is racy —
-  // a concurrent forward could grab `a+1` while we're using `[a, a+1, …]`
-  // in our batch. Calling getNextId N times guarantees unique ids even
-  // under concurrency at the cost of N round-trips. Bulk-forward is
-  // admin-only + rare (cap 25) so this trade-off is acceptable.
-  // Reported by auditor C1 (2026-05-06).
-  const allocatedIds: number[] = [];
+  // Atomically allocate N ids in ONE round-trip via the getNextIds Apps
+  // Script action (introduced v5.10.0 — auditor M-bulk-forward-N-roundtrips).
+  // Previously this looped getNextId N times — 25 items × ~300-500ms per
+  // round-trip routinely flirted with the Vercel 10s function timeout on
+  // a slow Sheet day. doPost wraps everything in LockService so a single
+  // batched call is just as race-safe as N sequential calls.
+  //
+  // Backwards-compat: if the Apps Script side hasn't been redeployed yet
+  // (getNextIds returns "Unknown action"), fall back to the per-item loop
+  // so the dashboard keeps working until clasp push lands.
+  let allocatedIds: number[];
   try {
-    for (let i = 0; i < cleaned.length; i++) {
-      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-      if (r.error || !r.nextId) {
-        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
-      }
-      allocatedIds.push(Number(r.nextId));
+    const r = await post<{ ids?: number[]; error?: string }>('getNextIds', { count: cleaned.length });
+    if (!Array.isArray(r.ids) || r.ids.length !== cleaned.length) {
+      throw new Error('getNextIds returned unexpected shape');
     }
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
+    allocatedIds = r.ids.map(Number);
+  } catch (errBatch) {
+    // Fall back to per-item allocation — slower but compatible with the
+    // pre-v5.10.0 Apps Script.
+    console.warn('[bulk-forward] getNextIds unavailable, falling back to N×getNextId:', errBatch);
+    allocatedIds = [];
+    try {
+      for (let i = 0; i < cleaned.length; i++) {
+        const single = await post<{ nextId?: number; error?: string }>('getNextId', {});
+        if (single.error || !single.nextId) {
+          return NextResponse.json(
+            { error: `ขอ job id ไม่สำเร็จ — ${single.error || 'no id returned'}` },
+            { status: 502 },
+          );
+        }
+        allocatedIds.push(Number(single.nextId));
+      }
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `ขอ job ids ไม่สำเร็จ — ${msg}` }, { status: 502 });
+    }
   }
   const buildItems: Array<{ oldId: number; newJob: Record<string, unknown> }> = [];
 

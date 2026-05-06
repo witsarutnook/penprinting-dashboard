@@ -104,13 +104,21 @@ async function OrdersData({
   const today = getBangkokToday();
   const allOrders = snap ? [...snap.orders].sort((a, b) => Number(b.id) - Number(a.id)) : [];
 
-  // Index jobs / shipped / cancelled by orderId for O(1) step lookup
-  const jobByOrderId = new Map<number, { dept: string; staff: string; date: string }>();
+  // Index jobs / shipped / cancelled by orderId. Jobs is one-to-many because
+  // an order can have multiple active jobs during recovery scenarios — keep
+  // ALL of them and surface a "+N" badge when the count > 1 (auditor
+  // M-jobByOrderId-last-write-wins). Picking the lowest job id makes the
+  // primary "ขั้นตอนปัจจุบัน" stable across renders.
+  const jobsByOrderId = new Map<number, Array<{ id: number; dept: string; staff: string; date: string }>>();
   const shippedByOrderId = new Set<number>();
   const cancelledByOrderId = new Set<number>();
   if (snap) {
     for (const j of snap.jobs) {
-      if (j.orderId) jobByOrderId.set(Number(j.orderId), { dept: j.dept, staff: j.staff, date: j.date });
+      if (!j.orderId) continue;
+      const key = Number(j.orderId);
+      const arr = jobsByOrderId.get(key) || [];
+      arr.push({ id: Number(j.id), dept: j.dept, staff: j.staff, date: j.date });
+      jobsByOrderId.set(key, arr);
     }
     for (const s of snap.shipped) {
       if (s.orderId) shippedByOrderId.add(Number(s.orderId));
@@ -124,7 +132,11 @@ async function OrdersData({
     const status = String(o.status || '').toLowerCase();
     const isShipped = status === 'shipped' || shippedByOrderId.has(Number(o.id));
     const isCancelled = status === 'cancelled' || cancelledByOrderId.has(Number(o.id));
-    const job = jobByOrderId.get(Number(o.id));
+    const orderJobs = jobsByOrderId.get(Number(o.id));
+    const job = orderJobs && orderJobs.length > 0
+      ? orderJobs.reduce((a, b) => (a.id <= b.id ? a : b))
+      : undefined;
+    const extraJobCount = orderJobs ? Math.max(0, orderJobs.length - 1) : 0;
 
     let step = '—';
     let jobUrgency: 'overdue' | 'dday' | 'urgent' | 'normal' = 'normal';
@@ -141,6 +153,7 @@ async function OrdersData({
       const deptLabel = DEPT_LABELS[job.dept as Dept] || job.dept;
       const staffName = STAFF[job.dept as Dept]?.find((s) => s.id === job.staff)?.name || job.staff;
       step = `${deptLabel} → ${staffName}`;
+      if (extraJobCount > 0) step += ` (+${extraJobCount})`;
       const due = parseDateDMY(job.date);
       jobUrgency = computeUrgency(due, today);
       jobUrgencyLabel = URGENCY_LABELS[jobUrgency];
@@ -192,16 +205,31 @@ async function OrdersData({
     };
   });
 
-  const fromDate = filters.fromIso ? new Date(`${filters.fromIso}T00:00:00`) : null;
-  const toDate = filters.toIso ? new Date(`${filters.toIso}T23:59:59`) : null;
+  // Compare dates as `YYYY-MM-DD` strings in Bangkok time. The previous
+  // shape compared Date objects across mixed time zones — `parseDateDMY`
+  // returns a UTC midnight while `new Date('YYYY-MM-DDT00:00:00')` is in
+  // server-local time. On Vercel (UTC server) with Bangkok-origin Sheet
+  // dates, comparisons drifted by a day at boundaries (auditor
+  // M-orders-date-range-tz). Lexical YYYY-MM-DD compare is timezone-free.
+  const bangkokIsoFmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const dateInIso = (raw: string): string | null => {
+    const d = parseDateDMY(raw);
+    if (!d) return null;
+    return bangkokIsoFmt.format(d); // 'YYYY-MM-DD'
+  };
 
   const filtered = enriched.filter((o) => {
     if (filters.statusFilter && o.orderStatus !== filters.statusFilter) return false;
-    if (fromDate || toDate) {
-      const d = parseDateDMY(o.dateIn);
-      if (!d) return false;
-      if (fromDate && d < fromDate) return false;
-      if (toDate && d > toDate) return false;
+    if (filters.fromIso || filters.toIso) {
+      const iso = dateInIso(o.dateIn);
+      if (!iso) return false;
+      if (filters.fromIso && iso < filters.fromIso) return false;
+      if (filters.toIso && iso > filters.toIso) return false;
     }
     if (filters.query) {
       const haystack = `${o.name} ${o.customer} ${o.id}`.toLowerCase();

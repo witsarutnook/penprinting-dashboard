@@ -2,7 +2,7 @@
 
 > Last scan: **2026-05-06 PM** (penprinting-auditor) — หลังจบ Phase 3.5.10 + 3.5.11 + critical/high audit close-out
 >
-> Latest update: **2026-05-06 PM** — Critical + 5 High batch ปิดครบ
+> Latest update: **2026-05-06 PM** — Critical + 5 High + 7 Medium ปิดครบ. เหลือ 5 Low (cosmetic)
 >
 > ✅ = ปิดแล้ว / commit hash อยู่ในวงเล็บ
 > ⏳ = ยังเหลือ
@@ -25,25 +25,7 @@ _(ปิดครบ — ดู Closed section)_
 
 ## 🟡 Medium
 
-- [ ] **M-bulk-forward-N-roundtrips** — getNextId × N sequential อาจ timeout
-  - File: [app/api/jobs/bulk-forward/route.ts:88-94](app/api/jobs/bulk-forward/route.ts:88)
-  - 25 items × 200-500ms = ~12s แค่ id allocation + 1 round สำหรับ bulkForward → เกิน Vercel 10s บาง cold start
-  - Fix: เพิ่ม `getNextIds(count)` action ใน Apps Script (atomic batch ใน LockService เดียว)
-
-- [ ] **M-login-ratelimit-map** — `/api/auth/login` rate-limit เป็น in-memory Map
-  - File: [app/api/auth/login/route.ts:7-9](app/api/auth/login/route.ts:7)
-  - Vercel multi-instance → limit ไม่ carry across cold starts/regions → brute force ทะลุได้
-  - Fix: port `attachRateCookie` pattern จาก [/api/track/lookup](app/api/track/lookup/route.ts) (signed cookie state)
-
-- [ ] **M-orders-date-range-tz** — date-range filter off-by-day ที่ boundary
-  - File: [app/orders/page.tsx:158-161](app/orders/page.tsx:158)
-  - `parseDateDMY` fall through `new Date(iso)` = UTC, `fromDate = new Date(iso + 'T00:00:00')` = local; server runs UTC แต่ Sheet dates เป็น Bangkok
-  - Fix: normalize ทั้ง 2 ฝั่งผ่าน `Asia/Bangkok` formatter หรือเปรียบเทียบ string YYYY-MM-DD
-
-- [ ] **M-jobByOrderId-last-write-wins** — duplicate orderId แสดงไม่ครบ
-  - File: [app/orders/page.tsx:68-73](app/orders/page.tsx:68)
-  - ถ้า order มี job มากกว่า 1 (recovery scenario) — column "ขั้นตอนปัจจุบัน" แสดงแค่ตัวสุดท้าย
-  - Fix: prefer lowest job id + เพิ่ม count badge
+_(ปิดครบ — ดู Closed section)_
 
 ---
 
@@ -95,6 +77,15 @@ _(ปิดครบ — ดู Closed section)_
 ---
 
 ## ✅ Closed
+
+### Batch 3 — perf / security / data integrity (4 Medium)
+2026-05-06 PM (1 commit — see git for hash)
+⚠️ M-bulk-forward-N-roundtrips ต้อง deploy Apps Script ก่อน — รัน `production-monitoring/apps-script/dashboard/push.sh` แล้ว Apps Script editor → Manage deployments → Edit existing → New version. Vercel side มี backwards-compat fallback (loop getNextId) จนกว่า Apps Script จะ deploy.
+
+- [x] **M-bulk-forward-N-roundtrips** — เพิ่ม `getNextIds(count)` action ใน Apps Script (helpers.ts + google-apps-script.js dispatch + audit-skip). `app/api/jobs/bulk-forward/route.ts` ใช้ batch call แทน loop — 25 items × 1 round-trip แทน 25. Backwards-compat fallback ครอบ catch ที่ Apps Script ยังไม่มี action นี้.
+- [x] **M-login-ratelimit-map** — ported `attachRateCookie` pattern (cookie name `pp_login_rl`, path `/api/auth`, 5min/5 attempts) จาก `/api/track/lookup`. State stable across Vercel cold starts. Successful login clears cookie. Rate cookie expires when window does so browser GC's it.
+- [x] **M-orders-date-range-tz** — เปรียบเทียบ date เป็น YYYY-MM-DD strings ใน `Asia/Bangkok` zone (Intl.DateTimeFormat 'en-CA') แทน Date object compare. ไม่มี off-by-day boundary bug เพราะ lexical string compare = timezone-free.
+- [x] **M-jobByOrderId-last-write-wins** — เก็บ array ของ jobs ต่อ orderId แทน Map<id, job>. แสดง lowest job id เป็นหลัก + "(+N)" suffix เมื่อ order มี job มากกว่า 1.
 
 ### Batch 2 — UX / middleware (3 Medium)
 2026-05-06 PM (1 commit — see git for hash)
