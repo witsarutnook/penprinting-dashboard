@@ -115,11 +115,22 @@ export interface BoardSnapshot {
 
 const URGENCY_RANK: Record<Urgency, number> = { overdue: 0, dday: 1, urgent: 2, normal: 3 };
 
-/** Build the kanban view from loadAll snapshot. Sort: urgency severity → due date asc → name. */
-export function computeBoard(data: LoadAllResponse): BoardSnapshot {
+export interface BoardFilters {
+  /** Filter by dept — sidebar deep-links use this. */
+  dept?: Dept | '';
+  /** Filter by urgency bucket — KPI cards / filter chips use this. */
+  urgency?: Urgency | '';
+  /** Free-text search across job name + customer + orderId. */
+  query?: string;
+}
+
+/** Build the kanban view from loadAll snapshot. Sort: urgency severity → due date asc → name.
+ *  Optional `filters` apply server-side so the rendered HTML reflects URL state immediately. */
+export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}): BoardSnapshot {
   const today = getBangkokToday();
   const ordersById = new Map<number, Order>();
   data.orders.forEach((o) => ordersById.set(Number(o.id), o));
+  const queryLower = (filters.query || '').trim().toLowerCase();
 
   // Index jobs by dept+staff
   const byKey = new Map<string, BoardJob[]>();
@@ -165,10 +176,20 @@ export function computeBoard(data: LoadAllResponse): BoardSnapshot {
       status: String(j.status || ''),
       dateInRaw: String(j.dateIn || ''),
     };
+    // Always count totals (KPI bar ignores filters — bar shows the whole board)
+    totals[urgency]++;
+
+    // Apply per-job filters before bucketing into columns
+    if (filters.dept && j.dept !== filters.dept) return;
+    if (filters.urgency && urgency !== filters.urgency) return;
+    if (queryLower) {
+      const haystack = `${job.name} ${job.customer || ''} ${job.orderId || ''}`.toLowerCase();
+      if (!haystack.includes(queryLower)) return;
+    }
+
     const key = `${j.dept}:${j.staff}`;
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key)!.push(job);
-    totals[urgency]++;
   });
 
   // Sort each bucket
@@ -183,7 +204,11 @@ export function computeBoard(data: LoadAllResponse): BoardSnapshot {
     });
   };
 
-  const depts: BoardDept[] = (['graphic', 'print', 'post'] as Dept[]).map((dept) => {
+  const visibleDepts: Dept[] = filters.dept
+    ? [filters.dept as Dept]
+    : (['graphic', 'print', 'post'] as Dept[]);
+
+  const depts: BoardDept[] = visibleDepts.map((dept) => {
     const columns: BoardColumn[] = STAFF[dept].map((staff) => {
       const jobs = byKey.get(`${dept}:${staff.id}`) || [];
       sortJobs(jobs);

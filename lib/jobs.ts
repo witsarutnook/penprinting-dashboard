@@ -24,6 +24,26 @@ export function dmyToISOInput(input: string | null | undefined): string {
   return toISODate(input);
 }
 
+/** Display-format date as D/M/YYYY (no leading zeros) — matches WP screenshot.
+ *  Accepts YYYY-MM-DD or DD/MM/YYYY input; returns "—" for empty/invalid. */
+export function displayDate(input: string | null | undefined): string {
+  if (!input) return '—';
+  const s = String(input).trim();
+  if (!s) return '—';
+  let d: number, m: number, y: number;
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (iso) {
+    y = +iso[1]; m = +iso[2]; d = +iso[3];
+  } else if (dmy) {
+    d = +dmy[1]; m = +dmy[2]; y = +dmy[3];
+  } else {
+    return s;
+  }
+  if (!d || !m || !y) return s;
+  return `${d}/${m}/${y}`;
+}
+
 /** Today as YYYY-MM-DD in Asia/Bangkok TZ — default for dateIn on new jobs. */
 export function bangkokTodayISO(): string {
   const fmt = new Intl.DateTimeFormat('en-CA', {

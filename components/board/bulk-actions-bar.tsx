@@ -1,0 +1,148 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useBulkMode, BULK_MAX_SELECT } from './bulk-context';
+import {
+  computeFromType,
+  getVisibleTargets,
+  type ForwardTarget,
+} from '@/lib/forward';
+import { broadcastWrite } from '@/lib/auto-sync';
+import { IconCornerUpRight, IconAlertCircle, IconX } from '@/lib/icons';
+import { DEPT_LABELS, type BoardJob } from '@/lib/board';
+
+interface Props {
+  jobs: BoardJob[];
+  isAdmin: boolean;
+}
+
+/** Floating action bar shown when bulk-mode is on AND ≥1 card selected.
+ *  Pinned bottom (above mobile bottom-nav). Picks common forward targets
+ *  across selected jobs and submits via /api/jobs/bulk-forward. */
+export function BulkActionsBar({ jobs, isAdmin }: Props) {
+  const { mode, selected, clearSelection } = useBulkMode();
+  const router = useRouter();
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedJobs = useMemo(
+    () => jobs.filter((j) => selected.has(j.id)),
+    [jobs, selected],
+  );
+
+  const commonTargets = useMemo<ForwardTarget[]>(() => {
+    if (selectedJobs.length === 0) return [];
+    let intersection: ForwardTarget[] | null = null;
+    for (const j of selectedJobs) {
+      const ft = computeFromType(String(j.dept), String(j.staff));
+      if (!ft) return [];
+      const ts = getVisibleTargets(ft, isAdmin);
+      if (intersection === null) {
+        intersection = ts.slice();
+        continue;
+      }
+      intersection = intersection.filter((it) =>
+        ts.some((t) => t.dept === it.dept && t.value === it.value),
+      );
+      if (intersection.length === 0) return [];
+    }
+    return intersection || [];
+  }, [selectedJobs, isAdmin]);
+
+  if (!mode || selected.size === 0) return null;
+
+  async function submit() {
+    if (!target) {
+      setError('กรุณาเลือกปลายทาง');
+      return;
+    }
+    const [tDept, tStaff] = target.split(':');
+    setError(null);
+    setBusy(true);
+    const items = Array.from(selected).map((id) => ({
+      id,
+      targetDept: tDept,
+      targetStaff: tStaff,
+    }));
+    try {
+      const res = await fetch('/api/jobs/bulk-forward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setBusy(false);
+      if (!res.ok) {
+        setError(data?.error || `HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/bulk-forward');
+      router.refresh();
+      clearSelection();
+      setTarget('');
+      const failed = data.failed?.length || 0;
+      if (failed > 0) {
+        setError(`ส่งสำเร็จ ${data.processed || 0} จาก ${selected.size} — ล้มเหลว ${failed}`);
+      }
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    }
+  }
+
+  return (
+    <div
+      className="fixed bottom-16 md:bottom-4 left-4 right-4 md:left-[calc(220px+1rem)] md:right-4 z-40 bg-white rounded-2xl border border-stone-200 shadow-xl px-4 py-3"
+      style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 0.75rem)' }}
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-medium text-stone-900">
+          เลือก {selected.size}/{BULK_MAX_SELECT} งาน
+        </span>
+        <select
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          disabled={busy || commonTargets.length === 0}
+          className="flex-grow min-w-[180px] px-3 py-1.5 border border-stone-200 rounded-lg text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50 disabled:bg-stone-50"
+        >
+          <option value="">
+            {commonTargets.length === 0
+              ? '— ไม่มีปลายทางที่ใช้ร่วมกันได้ —'
+              : `— เลือกปลายทาง (${commonTargets.length}) —`}
+          </option>
+          {commonTargets.map((t) => (
+            <option key={`${t.dept}:${t.value}`} value={`${t.dept}:${t.value}`}>
+              {DEPT_LABELS[t.dept]} · {t.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy || !target}
+          className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <IconCornerUpRight size={14} />
+          {busy ? 'กำลังส่ง...' : `ส่งต่อ ${selected.size}`}
+        </button>
+        <button
+          type="button"
+          onClick={clearSelection}
+          disabled={busy}
+          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm text-stone-600 hover:bg-stone-100 disabled:opacity-50"
+          aria-label="ล้างที่เลือก"
+        >
+          <IconX size={14} />
+        </button>
+      </div>
+      {error && (
+        <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+          <IconAlertCircle size={12} className="flex-shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+    </div>
+  );
+}

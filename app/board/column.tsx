@@ -1,12 +1,12 @@
-import {
-  type BoardColumn,
-  type Dept,
-} from '@/lib/board';
+import { type BoardColumn, type Dept } from '@/lib/board';
+import { getStaffTheme } from '@/lib/staff-icons';
 import { Card } from './card';
 
 const VENDOR_PURPLE = '#7c3aed';
 
-/** Column for one staff/machine. ~280px wide on desktop, swipe-scroll on mobile. */
+/** Per-staff column. WP-style icon-header card on top, then a vertical
+ *  list of jobs underneath. Vendor staff (outsource / diecut_out) get a
+ *  purple accent line + tinted bg. */
 export function Column({
   dept,
   column,
@@ -17,42 +17,53 @@ export function Column({
   sessionRole: string | null;
 }) {
   const isVendor = !!column.staff.isVendor;
-  const headerBg = isVendor ? `${VENDOR_PURPLE}10` : '#ffffff';
-  const borderColor = isVendor ? `${VENDOR_PURPLE}40` : '#e7e5e4';
+  const theme = getStaffTheme(dept, column.staff.id);
   return (
     <div
-      className="flex-shrink-0 w-[260px] sm:w-[280px] flex flex-col rounded-xl border bg-white"
-      style={{ borderColor }}
+      className="flex-shrink-0 w-[280px] sm:w-[300px] flex flex-col rounded-2xl border bg-white"
+      style={{
+        borderColor: isVendor ? `${VENDOR_PURPLE}30` : '#e7e5e4',
+        borderBottomColor: isVendor ? VENDOR_PURPLE : undefined,
+        borderBottomWidth: isVendor ? 2 : 1,
+      }}
     >
+      {/* Icon header */}
       <div
-        className="px-3 py-2 border-b rounded-t-xl"
-        style={{ background: headerBg, borderColor }}
+        className={`flex items-center gap-3 px-4 py-3 border-b border-stone-100 rounded-t-2xl ${
+          isVendor ? 'bg-violet-50/40' : ''
+        }`}
       >
-        <div className="flex items-center justify-between gap-2">
-          <span
+        <div
+          className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${theme.bgClass}`}
+        >
+          <theme.Icon size={22} className={theme.iconClass} />
+        </div>
+        <div className="min-w-0 flex-grow">
+          <div
             className="text-sm font-semibold truncate"
             style={{ color: isVendor ? VENDOR_PURPLE : '#1c1917' }}
           >
             {column.staff.name}
-          </span>
-          <span
-            className="text-[11px] tabular-nums px-1.5 py-0.5 rounded"
-            style={{
-              background: isVendor ? `${VENDOR_PURPLE}20` : '#f5f5f4',
-              color: isVendor ? VENDOR_PURPLE : '#78716c',
-            }}
-          >
-            {column.jobs.length}
-          </span>
+          </div>
+          <div className="text-[10px] uppercase tracking-wider text-stone-400 truncate">
+            {column.staff.role}
+          </div>
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-stone-400 mt-0.5">
-          {column.staff.role}
-        </div>
+        <span
+          className="text-sm font-semibold tabular-nums px-2 py-0.5 rounded-md flex-shrink-0"
+          style={{
+            background: isVendor ? `${VENDOR_PURPLE}15` : '#f5f5f4',
+            color: isVendor ? VENDOR_PURPLE : '#57534e',
+          }}
+        >
+          {column.jobs.length}
+        </span>
       </div>
 
-      <div className="flex-grow p-2 space-y-1.5 min-h-[60px] max-h-[600px] overflow-y-auto">
+      {/* Job list */}
+      <div className="flex-grow p-2.5 space-y-2 min-h-[80px] max-h-[600px] overflow-y-auto">
         {column.jobs.length === 0 ? (
-          <div className="text-center text-stone-300 text-xs py-4">—</div>
+          <div className="text-center text-stone-300 text-xs py-6">ไม่มีงานค้าง</div>
         ) : (
           column.jobs.map((job) => (
             <Card

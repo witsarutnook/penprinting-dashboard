@@ -3,27 +3,75 @@ import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
-import { computeBoard, URGENCY_COLORS, URGENCY_LABELS, type Urgency } from '@/lib/board';
+import {
+  computeBoard,
+  DEPT_LABELS,
+  type BoardFilters,
+  type Dept,
+} from '@/lib/board';
+import type { Urgency } from '@/lib/calendar';
 import { Column } from './column';
 import { BoardToolbar } from './toolbar';
 import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';
+import { KPIBar } from '@/components/board/kpi-bar';
+import { FilterChips } from '@/components/board/filter-chips';
+import { SearchBox } from '@/components/board/search-box';
+import { BulkModeProvider } from '@/components/board/bulk-context';
+import { BulkActionsBar } from '@/components/board/bulk-actions-bar';
 
 export const metadata: Metadata = {
   title: 'Kanban Board',
 };
 
-// Server Component — fetches loadAll, computes board server-side
-export default async function BoardPage() {
+const VALID_DEPTS: Dept[] = ['graphic', 'print', 'post'];
+const VALID_URGENCY: Urgency[] = ['overdue', 'dday', 'urgent', 'normal'];
+
+const DEPT_ENGLISH: Record<Dept, string> = {
+  graphic: 'GRAPHICS',
+  print: 'PRINTING',
+  post: 'POST-PRESS & SHIPPING',
+};
+
+interface SearchParams {
+  dept?: string;
+  u?: string;
+  q?: string;
+}
+
+function todayThaiLong(): string {
+  const fmt = new Intl.DateTimeFormat('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  return fmt.format(new Date());
+}
+
+export default async function BoardPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/board');
+
+  const filters: BoardFilters = {
+    dept: VALID_DEPTS.includes(searchParams.dept as Dept) ? (searchParams.dept as Dept) : '',
+    urgency: VALID_URGENCY.includes(searchParams.u as Urgency)
+      ? (searchParams.u as Urgency)
+      : '',
+    query: (searchParams.q || '').trim(),
+  };
 
   let board;
   let errorMessage: string | null = null;
   try {
     const data = await loadAll();
-    board = computeBoard(data);
+    board = computeBoard(data, filters);
   } catch (err) {
     errorMessage = err instanceof AppsScriptError
       ? err.message
@@ -32,86 +80,110 @@ export default async function BoardPage() {
         : String(err);
   }
 
+  // Flat list of currently-visible jobs — fed to bulk-actions bar so that
+  // selection-only ops (intersection of FW_TARGETS) work against the same
+  // view the user is filtering.
+  const visibleJobs = board
+    ? board.depts.flatMap((d) => d.columns.flatMap((c) => c.jobs))
+    : [];
+
   return (
     <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
-      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
-          <h1 className="text-lg sm:text-xl font-bold text-stone-900">Kanban Board</h1>
-          <div className="flex items-center gap-2 flex-wrap">
+      <BulkModeProvider>
+        {/* Top date row + search */}
+        <div className="bg-white border-b border-stone-100">
+          <div className="px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="text-sm text-stone-500">{todayThaiLong()}</div>
+            </div>
+            <SearchBox />
+          </div>
+        </div>
+
+        <div className="px-4 sm:px-6 py-4 space-y-4">
+          {board && <KPIBar totals={board.totalsByUrgency} />}
+
+          {/* Tool row: toolbar buttons (create order, etc) */}
+          <div className="flex flex-wrap items-center gap-2">
             <BoardToolbar
               canCreate={session.role === 'admin' || session.role === 'sales'}
               isAdmin={session.role === 'admin'}
-              jobs={board ? board.depts.flatMap((d) => d.columns.flatMap((c) => c.jobs)) : []}
+              jobs={visibleJobs}
               defaultOrderer={session.user}
             />
           </div>
-        </div>
-        {board && (
-          <div className="px-4 sm:px-6 py-2 border-t border-stone-100 flex flex-wrap gap-2 items-center text-xs">
-            <span className="text-stone-500">งาน active:</span>
-            <span className="font-semibold tabular-nums text-stone-900">{board.totalJobs} รายการ</span>
-            {(['overdue', 'dday', 'urgent', 'normal'] as Urgency[]).map((u) =>
-              board.totalsByUrgency[u] > 0 ? (
-                <span
-                  key={u}
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-medium tabular-nums"
-                  style={{
-                    background: URGENCY_COLORS[u] + '20',
-                    color: URGENCY_COLORS[u],
-                  }}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: URGENCY_COLORS[u] }} />
-                  {URGENCY_LABELS[u]} {board.totalsByUrgency[u]}
-                </span>
-              ) : null,
-            )}
-            <span className="ml-auto text-stone-400 hidden sm:inline tabular-nums">
-              auto-sync 15s
-            </span>
-          </div>
-        )}
-      </header>
 
-      <div className="px-4 sm:px-6 py-4">
-        {errorMessage ? (
-          <ErrorPanel message={errorMessage} />
-        ) : board ? (
-          <div className="space-y-6">
-            {board.depts.map((dept) => (
-              <section key={dept.dept}>
-                <h2 className="text-sm font-bold text-stone-700 mb-2 px-1 flex items-center gap-2">
-                  {dept.label}
-                  <span className="text-xs font-normal text-stone-400">
-                    ({dept.columns.reduce((sum, c) => sum + c.jobs.length, 0)} งาน)
-                  </span>
-                </h2>
-                <div className="overflow-x-auto -mx-4 px-4 pb-2 sm:mx-0 sm:px-0">
-                  <div className="flex gap-3" style={{ minWidth: 'min-content' }}>
-                    {dept.columns.map((col) => (
-                      <Column
-                        key={col.staff.id}
-                        dept={dept.dept}
-                        column={col}
-                        sessionRole={session.role}
-                      />
-                    ))}
+          {errorMessage ? (
+            <ErrorPanel message={errorMessage} />
+          ) : board ? (
+            <>
+              {/* Group section: dept heading + filter row */}
+              {board.depts.map((dept) => (
+                <section key={dept.dept} className="space-y-2">
+                  <DeptSectionHeader
+                    dept={dept.dept}
+                    label={dept.label}
+                    count={dept.columns.reduce((sum, c) => sum + c.jobs.length, 0)}
+                  />
+                  {/* Filter chips below first dept heading only */}
+                  {dept.dept === board.depts[0].dept && <FilterChips />}
+                  <div className="overflow-x-auto -mx-4 px-4 pb-2 sm:mx-0 sm:px-0">
+                    <div className="flex gap-3" style={{ minWidth: 'min-content' }}>
+                      {dept.columns.map((col) => (
+                        <Column
+                          key={col.staff.id}
+                          dept={dept.dept}
+                          column={col}
+                          sessionRole={session.role}
+                        />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              </section>
-            ))}
-          </div>
-        ) : null}
-      </div>
+                </section>
+              ))}
+            </>
+          ) : null}
+        </div>
+
+        <BulkActionsBar jobs={visibleJobs} isAdmin={session.role === 'admin'} />
+      </BulkModeProvider>
     </DashboardShell>
+  );
+}
+
+function DeptSectionHeader({
+  dept,
+  label,
+  count,
+}: {
+  dept: Dept;
+  label: string;
+  count: number;
+}) {
+  return (
+    <div className="flex items-baseline gap-3 px-1 pt-2">
+      <h2 className="text-sm font-semibold text-stone-700">
+        {label}
+      </h2>
+      <span className="text-[11px] uppercase tracking-wider text-stone-400">
+        — {DEPT_ENGLISH[dept]}
+      </span>
+      <span className="text-xs text-stone-400 tabular-nums ml-auto">
+        {count} งาน
+      </span>
+    </div>
   );
 }
 
 function ErrorPanel({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-6">
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
       <h2 className="text-amber-900 font-semibold">โหลด Kanban ไม่สำเร็จ</h2>
       <p className="text-sm text-amber-800 mt-2 font-mono">{message}</p>
     </div>
   );
 }
+
+// Suppress unused warning — DEPT_LABELS is re-exported through column.tsx
+void DEPT_LABELS;

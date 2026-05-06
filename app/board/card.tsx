@@ -12,6 +12,8 @@ import {
 } from '@/lib/board';
 import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { displayDate } from '@/lib/jobs';
+import { useBulkMode } from '@/components/board/bulk-context';
 import {
   IconCheck,
   IconX,
@@ -25,6 +27,8 @@ import {
   IconUser,
   IconUsers,
   IconPlus,
+  IconCheckSquare,
+  IconSquare,
 } from '@/lib/icons';
 import { JobForm } from './job-form';
 
@@ -43,9 +47,15 @@ export function Card({
 }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const { mode: bulkMode, selected, toggleJob } = useBulkMode();
+  const isSelected = selected.has(job.id);
   const urgencyColor = URGENCY_COLORS[job.urgency];
 
   function open() {
+    if (bulkMode) {
+      toggleJob(job.id);
+      return;
+    }
     dialogRef.current?.showModal();
   }
   function close() {
@@ -73,13 +83,29 @@ export function Card({
       <button
         type="button"
         onClick={open}
-        className="w-full text-left rounded-md border bg-white p-2 hover:shadow-sm transition-shadow"
+        className={`w-full text-left rounded-xl border bg-white p-2.5 transition-all relative ${
+          bulkMode && isSelected
+            ? 'ring-2 ring-sky-400 border-sky-300'
+            : bulkMode
+              ? 'hover:bg-sky-50/30'
+              : 'hover:shadow-sm'
+        }`}
         style={{
-          borderColor: isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
+          borderColor: bulkMode && isSelected
+            ? undefined
+            : isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
           borderLeft: `3px solid ${urgencyColor}`,
         }}
       >
         <div className="flex items-start justify-between gap-2">
+          {bulkMode && (
+            <span
+              className={`flex-shrink-0 mt-0.5 ${isSelected ? 'text-sky-600' : 'text-stone-300'}`}
+              aria-hidden="true"
+            >
+              {isSelected ? <IconCheckSquare size={14} /> : <IconSquare size={14} />}
+            </span>
+          )}
           <div className="text-[13px] font-medium text-stone-900 leading-snug flex-grow break-words">
             {job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}
           </div>
@@ -114,7 +140,15 @@ export function Card({
               <span className="ml-1">(D-{job.daysUntilDue})</span>
             )}
           </span>
-          <span className="text-stone-400 tabular-nums">{job.dateRaw}</span>
+          <span className="text-stone-400 tabular-nums">
+            {job.dateInRaw && (
+              <>
+                {displayDate(job.dateInRaw)}
+                <span className="mx-1 text-stone-300">→</span>
+              </>
+            )}
+            {displayDate(job.dateRaw)}
+          </span>
         </div>
         {job.orderId && (
           <div className="text-[10px] text-stone-400 mt-1 tabular-nums">
