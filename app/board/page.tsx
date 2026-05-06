@@ -104,7 +104,7 @@ export default async function BoardPage({
         </div>
 
         <div className="px-4 sm:px-6 py-4 space-y-4">
-          {board && <KPIBar totals={board.totalsByUrgency} jobs={visibleJobs} />}
+          {board && <KPIBar totals={board.totalsByUrgency} jobs={board.allJobs} />}
 
           {/* Tool row: toolbar buttons (create order, etc) */}
           <div className="flex flex-wrap items-center gap-2">

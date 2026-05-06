@@ -141,6 +141,10 @@ export interface BoardSnapshot {
   depts: BoardDept[];
   totalJobs: number;
   totalsByUrgency: Record<Urgency, number>;
+  /** Every BoardJob in the snapshot — pre-filter, no cowork fan-out duplicates.
+   *  KPI detail modal uses this so the list matches the totals badge even
+   *  when the board has a URL filter active (?u=, ?dept=, ?q=). */
+  allJobs: BoardJob[];
   generatedAt: string;
 }
 
@@ -166,6 +170,7 @@ export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}):
   // Index jobs by dept+staff
   const byKey = new Map<string, BoardJob[]>();
   const totals: Record<Urgency, number> = { overdue: 0, dday: 0, urgent: 0, normal: 0 };
+  const allJobs: BoardJob[] = [];
 
   data.jobs.forEach((j: Job) => {
     const due = parseDateDMY(j.date);
@@ -212,8 +217,9 @@ export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}):
       status: String(j.status || ''),
       dateInRaw: String(j.dateIn || ''),
     };
-    // Always count totals (KPI bar ignores filters — bar shows the whole board)
+    // Always count totals + collect for KPI list (both ignore URL filters)
     totals[urgency]++;
+    allJobs.push(job);
 
     // Apply per-job filters before bucketing into columns
     if (filters.dept && j.dept !== filters.dept) return;
@@ -271,6 +277,7 @@ export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}):
     depts,
     totalJobs,
     totalsByUrgency: totals,
+    allJobs,
     generatedAt: new Date().toISOString(),
   };
 }
