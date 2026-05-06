@@ -4,9 +4,12 @@
 
 ## ★ ก่อนแก้อะไร — อ่านไฟล์นี้ก่อน
 
-1. **[NEXT-SESSION.md](NEXT-SESSION.md)** ⭐ — pick-up-here doc สำหรับ session ใหม่ (เสร็จแล้วอะไร/เหลืออะไร/decisions ที่ผ่านมา)
-2. **[PATTERNS.md](PATTERNS.md)** — Reusable patterns ที่ค้นพบใน v2 (Apps Script, permissions, URL state, icons, forms, auto-sync, things-not-to-do)
-3. **[Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md)** ใน workspace root — สถานะ Phase 3.5 iterations + Phase 2.3 stages
+1. **[dashboard-v2.md](dashboard-v2.md)** 📚 — comprehensive source of truth (stack, routes, auth, features, version history, deploy, lessons learned). Mirror ของ `monitoring.md` แต่สำหรับฝั่ง v2
+2. **[NEXT-SESSION.md](NEXT-SESSION.md)** ⭐ — pick-up-here doc สำหรับ session ใหม่ (เสร็จแล้วอะไร/เหลืออะไร/decisions ที่ผ่านมา)
+3. **[PATTERNS.md](PATTERNS.md)** — Reusable patterns ที่ค้นพบใน v2 (Apps Script, permissions, URL state, icons, forms, auto-sync, things-not-to-do)
+4. **[AUDIT-BACKLOG.md](AUDIT-BACKLOG.md)** — running audit findings tracker (rounds + closed batches)
+5. **[Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md)** ใน workspace root — สถานะ migration phases ภาพรวม
+6. **[../production-monitoring/monitoring.md](../production-monitoring/monitoring.md)** — WP source of truth + **shared infrastructure** (Sheet schema, security model, recurring lessons)
 
 ## Stack
 - **Next.js 14** (App Router) + TypeScript + Tailwind 3
