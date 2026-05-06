@@ -62,7 +62,7 @@ function coworkTooltip(raw: unknown): string {
   return inline ? `Co-work: ${inline}` : 'มี co-work';
 }
 
-/** Card with built-in detail modal (native <dialog>). */
+/** Card with built-in detail modal + inline forward/cowork dialogs (native <dialog>). */
 export function Card({
   job,
   isVendorCol,
@@ -73,12 +73,43 @@ export function Card({
   isVendorCol: boolean;
   sessionRole: string | null;
 }) {
+  const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editOrderOpen, setEditOrderOpen] = useState(false);
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [coworkOpen, setCoworkOpen] = useState(false);
+  const [shipBusy, setShipBusy] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
   const { mode: bulkMode, selected, toggleJob } = useBulkMode();
   const isSelected = selected.has(job.id);
   const urgencyColor = URGENCY_COLORS[job.urgency];
+
+  // Compute primary action button per WP renderJobCard rules
+  const dept = String(job.dept);
+  const staff = job.staff;
+  const isAdmin = sessionRole === 'admin';
+  const canCreate = isAdmin || sessionRole === 'sales';
+  const fromType = computeFromType(dept, staff);
+  const forwardTargets = fromType ? getVisibleTargets(fromType, isAdmin) : [];
+
+  type CardAction = { kind: 'ship' } | { kind: 'forward'; label: string } | null;
+  let primaryAction: CardAction = null;
+  if (dept === 'post' && staff === 'ship') {
+    primaryAction = { kind: 'ship' };
+  } else if (dept === 'print' && staff === 'outsource') {
+    if (canCreate && forwardTargets.length > 0) {
+      primaryAction = { kind: 'forward', label: 'งานกลับ → รอจัดส่ง' };
+    }
+  } else if (dept === 'post' && staff === 'diecut_out') {
+    if (canCreate && forwardTargets.length > 0) {
+      primaryAction = { kind: 'forward', label: 'งานกลับ → รอจัดส่ง' };
+    }
+  } else if (forwardTargets.length > 0) {
+    primaryAction = { kind: 'forward', label: 'เสร็จ-ส่งต่อ' };
+  }
+  // Co-work: print dept only (excluding outsource), per WP behavior
+  const showCowork = dept === 'print' && staff !== 'outsource';
 
   function open() {
     if (bulkMode) {
@@ -99,6 +130,30 @@ export function Card({
     setEditOrderOpen(true);
   }
 
+  async function handleShipClick() {
+    if (bulkMode) {
+      toggleJob(job.id);
+      return;
+    }
+    if (shipBusy) return;
+    if (!confirm(`ยืนยัน "จัดส่งเสร็จ" สำหรับ "${job.name}" ?`)) return;
+    setShipError(null);
+    setShipBusy(true);
+    const res = await fetch('/api/jobs/move-to-shipped', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: job.id, name: job.name, orderId: job.orderId }),
+    });
+    setShipBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setShipError(data?.error || `HTTP ${res.status}`);
+      return;
+    }
+    broadcastWrite('/api/jobs/move-to-shipped');
+    router.refresh();
+  }
+
   // Click backdrop closes the dialog
   useEffect(() => {
     const dlg = dialogRef.current;
@@ -114,7 +169,7 @@ export function Card({
   return (
     <>
       <div
-        className={`w-full text-left rounded-xl border bg-white p-3 transition-all relative ${
+        className={`w-full text-left rounded-lg border bg-white px-2.5 py-1.5 transition-all relative ${
           bulkMode && isSelected
             ? 'ring-2 ring-sky-400 border-sky-300'
             : bulkMode
@@ -131,8 +186,8 @@ export function Card({
           borderLeft: `3px solid ${urgencyColor}`,
         }}
       >
-        {/* Top row: name + ร่วมพิมพ์ pill + รายละเอียด button + close X */}
-        <div className="flex items-start justify-between gap-2">
+        {/* Top row: name + ร่วมพิมพ์ pill + รายละเอียด button */}
+        <div className="flex items-start justify-between gap-1.5">
           {bulkMode && (
             <span
               className={`flex-shrink-0 mt-0.5 ${isSelected ? 'text-sky-600' : 'text-stone-300'}`}
@@ -141,14 +196,14 @@ export function Card({
               {isSelected ? <IconCheckSquare size={14} /> : <IconSquare size={14} />}
             </span>
           )}
-          <div className="text-[13px] font-medium text-stone-900 leading-snug flex-grow break-words flex items-center gap-1.5 flex-wrap">
+          <div className="text-[13px] font-semibold text-stone-900 leading-tight flex-grow break-words flex items-center gap-1 flex-wrap">
             <span>{job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}</span>
             {job.hasCowork && (
               <span
-                className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium"
+                className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium leading-tight"
                 title={coworkTooltip(job.cowork)}
               >
-                <IconUsers size={10} />
+                <IconUsers size={9} />
                 ร่วมพิมพ์
               </span>
             )}
@@ -160,90 +215,101 @@ export function Card({
               open();
             }}
             disabled={bulkMode}
-            className="text-[11px] text-stone-500 hover:text-stone-900 hover:bg-stone-100 px-2 py-0.5 rounded-md whitespace-nowrap flex-shrink-0 disabled:opacity-50"
+            className="text-[10px] text-stone-500 hover:text-stone-900 hover:bg-stone-100 px-1.5 py-0 rounded whitespace-nowrap flex-shrink-0 disabled:opacity-50 leading-snug"
           >
             รายละเอียด
           </button>
         </div>
 
-        {/* Middle row: customer + date range */}
-        <div className="flex items-center justify-between gap-2 mt-1.5 text-[11px] text-stone-500">
-          {job.customer ? (
-            <span className="inline-flex items-center gap-1 min-w-0">
-              <IconUser size={11} className="flex-shrink-0" />
-              <span className="truncate">{job.customer}</span>
-            </span>
-          ) : (
-            <span className="text-stone-300">—</span>
+        {/* Combined customer + dates line — single row to match WP density */}
+        <div className="flex items-center gap-1 mt-0.5 text-[11px] text-stone-500 leading-tight overflow-hidden">
+          {job.customer && (
+            <>
+              <IconUser size={10} className="flex-shrink-0 text-stone-400" />
+              <span className="truncate text-stone-600 font-medium min-w-0">{job.customer}</span>
+              <span className="text-stone-300 flex-shrink-0">·</span>
+            </>
           )}
           <span className="text-stone-400 tabular-nums whitespace-nowrap flex-shrink-0">
             {job.dateInRaw && (
               <>
                 {displayDate(job.dateInRaw)}
-                <span className="mx-1 text-stone-300">→</span>
+                <span className="mx-0.5 text-stone-300">→</span>
               </>
             )}
             {displayDate(job.dateRaw)}
           </span>
         </div>
 
-        {/* Cowork members — visible inline below dates when present */}
-        {job.hasCowork && (
-          <div className="mt-1.5 text-[11px] text-violet-700 flex items-center gap-1 truncate">
-            <IconUsers size={11} className="flex-shrink-0" />
-            <span className="truncate" title={coworkTooltip(job.cowork)}>
-              {coworkInline(job.cowork) || '—'}
-            </span>
-          </div>
-        )}
-
-        {/* Inline action row — primary action (เสร็จ+ส่ง / Co-work) + status badge */}
-        <div className="flex items-center justify-between gap-2 mt-2.5 text-xs flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                open();
-              }}
-              disabled={bulkMode}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-sky-50 text-sky-700 hover:bg-sky-100 font-medium disabled:opacity-50"
-            >
-              <IconCheck size={12} />
-              เสร็จ+ส่ง
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                open();
-              }}
-              disabled={bulkMode}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors ${
-                job.hasCowork
-                  ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
-                  : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
-              } disabled:opacity-50`}
-            >
-              <IconUsers size={12} />
-              {job.hasCowork ? 'แก้ไข Co-work' : 'Co-work'}
-            </button>
+        {/* Action row — primary action + Co-work + urgency badge */}
+        <div className="flex items-center justify-between gap-1.5 mt-1.5 text-xs flex-wrap">
+          <div className="flex items-center gap-1">
+            {primaryAction?.kind === 'ship' && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleShipClick();
+                }}
+                disabled={bulkMode || shipBusy}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 font-medium text-[11px] disabled:opacity-50"
+                title="จัดส่งเสร็จ — ปิดงาน"
+              >
+                <IconCheck size={11} />
+                {shipBusy ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
+              </button>
+            )}
+            {primaryAction?.kind === 'forward' && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (bulkMode) toggleJob(job.id);
+                  else setForwardOpen(true);
+                }}
+                disabled={bulkMode}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-50 text-sky-700 hover:bg-sky-100 font-medium text-[11px] disabled:opacity-50"
+              >
+                <IconCheck size={11} />
+                {primaryAction.label}
+              </button>
+            )}
+            {showCowork && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (bulkMode) toggleJob(job.id);
+                  else setCoworkOpen(true);
+                }}
+                disabled={bulkMode}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium text-[11px] transition-colors ${
+                  job.hasCowork
+                    ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                    : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                } disabled:opacity-50`}
+              >
+                <IconUsers size={11} />
+                {job.hasCowork ? 'แก้ Co-work' : 'Co-work'}
+              </button>
+            )}
           </div>
           <span
-            className="px-2 py-0.5 rounded-md font-medium tabular-nums whitespace-nowrap"
+            className="px-1.5 py-0 rounded font-medium tabular-nums whitespace-nowrap text-[10px] leading-snug"
             style={{ background: urgencyColor + '20', color: urgencyColor }}
           >
             {URGENCY_LABELS[job.urgency]}
             {job.daysUntilDue !== null && (
-              <span className="ml-1.5 text-stone-500">
+              <span className="ml-1 text-stone-500">
                 · {urgencyDaysLabel(job.urgency, job.daysUntilDue)}
               </span>
             )}
           </span>
         </div>
-        {job.orderId && (
-          <div className="text-[10px] text-stone-400 tabular-nums mt-1.5">
-            #{job.id} · order {job.orderId}
+        {shipError && (
+          <div className="mt-1 text-[10px] text-red-700 bg-red-50 border border-red-200 rounded px-1.5 py-0.5 flex items-start gap-1">
+            <IconAlertCircle size={10} className="flex-shrink-0 mt-px" />
+            <span>{shipError}</span>
           </div>
         )}
       </div>
@@ -260,6 +326,17 @@ export function Card({
           sessionRole={sessionRole}
         />
       </dialog>
+      <ForwardDialog
+        job={job}
+        open={forwardOpen}
+        onClose={() => setForwardOpen(false)}
+        sessionRole={sessionRole}
+      />
+      <CoworkDialog
+        job={job}
+        open={coworkOpen}
+        onClose={() => setCoworkOpen(false)}
+      />
       <JobForm initial={job} open={editOpen} onClose={() => setEditOpen(false)} />
       {job.order && (
         <OrderForm
@@ -270,6 +347,344 @@ export function Card({
         />
       )}
     </>
+  );
+}
+
+// ─── Inline Forward dialog (matches WP screenshot) ──────────
+
+function ForwardDialog({
+  job,
+  open,
+  onClose,
+  sessionRole,
+}: {
+  job: BoardJob;
+  open: boolean;
+  onClose: () => void;
+  sessionRole: string | null;
+}) {
+  const router = useRouter();
+  const { recordForward } = useUndo();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const [target, setTarget] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isAdmin = sessionRole === 'admin';
+  const fromType = computeFromType(String(job.dept), String(job.staff));
+  const forwardTargets = fromType ? getVisibleTargets(fromType, isAdmin) : [];
+
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (open && !dlg.open) {
+      setTarget('');
+      setNote('');
+      setError(null);
+      dlg.showModal();
+    } else if (!open && dlg.open) {
+      dlg.close();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    function onClick(e: MouseEvent) {
+      if ((e.target as HTMLElement)?.tagName === 'DIALOG') onClose();
+    }
+    function onCancel() { onClose(); }
+    dlg.addEventListener('click', onClick);
+    dlg.addEventListener('cancel', onCancel);
+    return () => {
+      dlg.removeEventListener('click', onClick);
+      dlg.removeEventListener('cancel', onCancel);
+    };
+  }, [onClose]);
+
+  async function submit() {
+    const tgt = forwardTargets.find((t) => t.value === target);
+    if (!target || !tgt) {
+      setError('กรุณาเลือกปลายทาง');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const preForwardSnapshot = {
+      name: job.name,
+      dept: String(job.dept),
+      staff: job.staff,
+      date: job.dateRaw,
+      dateIn: job.dateInRaw,
+      status: job.status,
+      orderId: job.orderId,
+      cowork: job.cowork,
+    };
+    const res = await fetch('/api/jobs/forward', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: job.id,
+        targetDept: tgt.dept,
+        targetStaff: tgt.value,
+        note: note.trim() || undefined,
+      }),
+    });
+    setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data?.error || `HTTP ${res.status}`);
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    broadcastWrite('/api/jobs/forward');
+    if (isAdmin && data?.newId) {
+      recordForward({
+        newJobId: Number(data.newId),
+        snapshot: preForwardSnapshot,
+        destinationLabel: tgt.label,
+        jobName: job.name,
+      });
+    }
+    router.refresh();
+    onClose();
+  }
+
+  const targetLabel = forwardTargets.find((t) => t.value === target)?.label;
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="rounded-xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-2xl w-[92vw]"
+    >
+      <div className="flex flex-col">
+        <div className="px-5 py-3 border-b border-stone-100 flex items-center justify-between gap-3">
+          <h2 className="text-base font-bold text-stone-900 truncate">
+            ส่งต่อ{targetLabel ? ` → ${targetLabel}` : ''}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="text-stone-400 hover:text-stone-700 w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 disabled:opacity-50"
+            aria-label="ปิด"
+          >
+            <IconX size={18} />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-stone-700 mb-1">ชื่องาน</label>
+              <input
+                type="text"
+                value={job.name}
+                readOnly
+                className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-stone-50/60 text-stone-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-stone-700 mb-1">ส่งต่อไป</label>
+              <select
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                disabled={busy}
+                autoFocus
+                className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm bg-white focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
+              >
+                <option value="">— เลือกปลายทาง —</option>
+                {forwardTargets.map((t) => (
+                  <option key={`${t.dept}:${t.value}`} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-stone-700 mb-1">หมายเหตุ</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              disabled={busy}
+              rows={4}
+              className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-stone-50/40 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50 resize-y"
+            />
+          </div>
+          {error && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/40 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+          >
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || !target}
+            className="px-5 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {busy ? 'กำลังส่งต่อ...' : 'ส่งต่อ'}
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+// ─── Inline Co-work dialog (matches WP screenshot — print staff checkboxes) ─
+
+function CoworkDialog({
+  job,
+  open,
+  onClose,
+}: {
+  job: BoardJob;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // WP behavior: show all print staff EXCEPT the current owner (sm74 etc.)
+  const printStaff = STAFF.print.filter((s) => s.id !== job.staff);
+
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (open && !dlg.open) {
+      // Pre-check existing cowork (only print-dept entries — drop legacy graphic/post)
+      const existing = parseCoworkArray(job.cowork)
+        .filter((c) => c.dept === 'print' || c.dept === '')
+        .map((c) => c.staff);
+      setSelected(new Set(existing));
+      setError(null);
+      dlg.showModal();
+    } else if (!open && dlg.open) {
+      dlg.close();
+    }
+  }, [open, job.cowork, job.staff]);
+
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    function onClick(e: MouseEvent) {
+      if ((e.target as HTMLElement)?.tagName === 'DIALOG') onClose();
+    }
+    function onCancel() { onClose(); }
+    dlg.addEventListener('click', onClick);
+    dlg.addEventListener('cancel', onCancel);
+    return () => {
+      dlg.removeEventListener('click', onClick);
+      dlg.removeEventListener('cancel', onCancel);
+    };
+  }, [onClose]);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function submit() {
+    setError(null);
+    setBusy(true);
+    const cowork = Array.from(selected).map((staff) => ({ dept: 'print', staff }));
+    const res = await fetch('/api/jobs/cowork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: job.id, cowork }),
+    });
+    setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data?.error || `HTTP ${res.status}`);
+      return;
+    }
+    broadcastWrite('/api/jobs/cowork');
+    router.refresh();
+    onClose();
+  }
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="rounded-xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-md w-[92vw]"
+    >
+      <div className="flex flex-col">
+        <div className="px-5 py-3 border-b border-stone-100 flex items-center justify-between gap-3">
+          <h2 className="text-base font-bold text-stone-900 truncate flex items-center gap-2">
+            <IconUsers size={16} className="text-violet-600 flex-shrink-0" />
+            <span className="truncate">Co-work: {job.name || '(ไม่มีชื่อ)'}</span>
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="text-stone-400 hover:text-stone-700 w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 disabled:opacity-50"
+            aria-label="ปิด"
+          >
+            <IconX size={18} />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-sm text-stone-600">เลือกเครื่องที่ต้องการร่วมพิมพ์งานนี้</p>
+          <div className="space-y-2">
+            {printStaff.map((s) => {
+              const isSelected = selected.has(s.id);
+              return (
+                <label
+                  key={s.id}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'border-violet-300 bg-violet-50/60'
+                      : 'border-stone-200 hover:border-stone-300 hover:bg-stone-50/60'
+                  } ${busy ? 'opacity-50 pointer-events-none' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggle(s.id)}
+                    disabled={busy}
+                    className="w-4 h-4 accent-violet-600"
+                  />
+                  <span className="text-sm text-stone-800">{s.name}</span>
+                </label>
+              );
+            })}
+          </div>
+          {error && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy}
+            className="w-full mt-2 px-4 py-3 rounded-lg bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {busy ? 'กำลังบันทึก...' : 'บันทึก Co-work'}
+          </button>
+        </div>
+      </div>
+    </dialog>
   );
 }
 

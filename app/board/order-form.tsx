@@ -10,7 +10,7 @@ import {
   type OrderFormData, emptyOrderForm, orderFormFromRaw, emptyPhotobookItem,
 } from '@/lib/photobook';
 import {
-  IconX, IconCheck, IconAlertTriangle, IconAlertCircle, IconFileText, IconPlus,
+  IconX, IconCheck, IconAlertTriangle, IconAlertCircle, IconFileText, IconPlus, IconPrinter,
 } from '@/lib/icons';
 import type { OrderSummary } from '@/lib/board';
 
@@ -19,6 +19,9 @@ interface OrderFormProps {
   onClose: () => void;
   defaultOrderer: string;
   initial?: OrderSummary | null;
+  /** When true, render the form as an inline page section instead of a modal dialog.
+   *  Used by /orders/new (dedicated page) — no <dialog>, no overlay, scrolls with the page. */
+  inline?: boolean;
 }
 
 interface SuccessInfo {
@@ -42,7 +45,7 @@ const QTY_UNITS = ['แผ่น', 'ชุด', 'เล่ม'];
 const PLATE_SIZES = ['ตัด 5', 'ตัด 4', 'ตัด 3'];
 const COVER_COLORS = ['1สี', '2สี', '3สี', '4สี'];
 
-export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormProps) {
+export function OrderForm({ open, onClose, defaultOrderer, initial, inline = false }: OrderFormProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const router = useRouter();
   const isEdit = !!initial;
@@ -56,9 +59,9 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
   const [success, setSuccess] = useState<SuccessInfo | null>(null);
   const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
 
-  // Initialize on open
+  // Initialize on open (inline mode is always considered "open")
   useEffect(() => {
-    if (!open) return;
+    if (!open && !inline) return;
     if (initial) {
       const raw = initial.rawData || {};
       const next = orderFormFromRaw(raw, initial.orderer || defaultOrderer);
@@ -88,17 +91,19 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
     setError(null);
     setSuccess(null);
     setDuplicate(null);
-  }, [open, initial, defaultOrderer]);
+  }, [open, initial, defaultOrderer, inline]);
 
-  // Sync native dialog
+  // Sync native dialog (modal mode only)
   useEffect(() => {
+    if (inline) return;
     const dlg = dialogRef.current;
     if (!dlg) return;
     if (open && !dlg.open) dlg.showModal();
     if (!open && dlg.open) dlg.close();
-  }, [open]);
+  }, [open, inline]);
 
   useEffect(() => {
+    if (inline) return;
     const dlg = dialogRef.current;
     if (!dlg) return;
     function onClick(e: MouseEvent) {
@@ -111,7 +116,7 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
       dlg.removeEventListener('click', onClick);
       dlg.removeEventListener('cancel', onCancel);
     };
-  }, [onClose]);
+  }, [onClose, inline]);
 
   // Patch helper
   function patch(p: Partial<OrderFormData>) {
@@ -184,7 +189,7 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
       }
       broadcastWrite(path);
       router.refresh();
-      setSuccess({
+      const successInfo: SuccessInfo = {
         orderId: Number(respJson.orderId || initial?.id || 0),
         jobId: respJson.jobId == null ? null : Number(respJson.jobId),
         pin: String(respJson.pin || ''),
@@ -192,9 +197,12 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
         warning: respJson.warning,
         isEdit,
         cascaded: respJson.cascaded,
-      });
+      };
+      setSuccess(successInfo);
       if (mode === 'print') {
-        // TODO: open print template after save (Phase 3.5.10)
+        // Trigger native print of the success summary after the view renders.
+        // For full WP-style invoice template, see Phase 3.5.10 backlog.
+        setTimeout(() => window.print(), 200);
       }
     } catch (err) {
       setBusy(false);
@@ -207,27 +215,26 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
     setData(emptyOrderForm(defaultOrderer));
   }
 
-  return (
-    <dialog
-      ref={dialogRef}
-      className="rounded-2xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-4xl w-[96vw]"
-    >
+  const body = (
+    <>
       {success ? (
         <SuccessView success={success} onClose={onClose} onCreateAnother={() => setSuccess(null)} isEdit={isEdit} />
       ) : duplicate ? (
         <DuplicateView duplicates={duplicate.duplicates} onCancel={() => setDuplicate(null)} onForce={() => { setDuplicate(null); submit(true); }} />
       ) : (
-        <div className="flex flex-col max-h-[92vh]">
+        <div className={`flex flex-col ${inline ? '' : 'max-h-[92vh]'}`}>
           {/* Header */}
           <header className="px-5 py-3 border-b border-stone-100 flex items-center justify-between flex-shrink-0">
             <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
               <IconFileText size={18} />
               {isEdit ? `แก้ไขใบสั่งงาน #${initial?.id}` : 'สั่งงาน (รับใบสั่งงาน)'}
             </h2>
-            <button type="button" onClick={onClose} aria-label="ปิด"
-              className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100">
-              <IconX size={20} />
-            </button>
+            {!inline && (
+              <button type="button" onClick={onClose} aria-label="ปิด"
+                className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100">
+                <IconX size={20} />
+              </button>
+            )}
           </header>
 
           {/* Order type segment */}
@@ -318,15 +325,43 @@ export function OrderForm({ open, onClose, defaultOrderer, initial }: OrderFormP
                 className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50">
                 รีเซ็ต
               </button>
+              {!isEdit && (
+                <button type="button" onClick={() => submit(false, 'draft')} disabled={busy || !data.name.trim()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+                  title="บันทึกแบบร่าง — แก้ต่อภายหลังได้, ไม่สร้าง Job">
+                  <IconFileText size={13} />
+                  {busy ? '...' : 'บันทึกร่าง'}
+                </button>
+              )}
               <button type="button" onClick={() => submit(false, 'submit')} disabled={busy}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-dark disabled:opacity-50">
                 <IconCheck size={14} />
                 {busy ? 'กำลังบันทึก...' : isEdit ? 'บันทึกการแก้ไข' : 'ส่งใบสั่งงาน'}
               </button>
+              {!isEdit && (
+                <button type="button" onClick={() => submit(false, 'print')} disabled={busy}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50"
+                  title="ส่งใบสั่งงาน + เปิดหน้าพิมพ์ทันที">
+                  <IconPrinter size={14} />
+                  {busy ? 'กำลังบันทึก...' : 'พิมพ์+สั่ง'}
+                </button>
+              )}
             </div>
           </footer>
         </div>
       )}
+    </>
+  );
+
+  if (inline) {
+    return <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">{body}</div>;
+  }
+  return (
+    <dialog
+      ref={dialogRef}
+      className="rounded-2xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-4xl w-[96vw]"
+    >
+      {body}
     </dialog>
   );
 }

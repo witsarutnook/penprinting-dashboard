@@ -22,12 +22,15 @@ export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);
   if (session instanceof NextResponse) return session;
 
-  let body: Partial<OrderFormData> & { force?: boolean; price?: string | number };
+  let body: Partial<OrderFormData> & { force?: boolean; price?: string | number; status?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
+
+  // Draft mode: status='draft' is allowed; only validates ชื่องาน + dateIn (mirrors WP saveDraft).
+  const isDraft = body.status === 'draft';
 
   // ── Header validation ────────────────────────────────────
   const name = String(body.name || '').trim();
@@ -42,17 +45,20 @@ export async function POST(req: Request) {
 
   const errors: string[] = [];
   if (!name) errors.push('กรุณาระบุชื่องาน');
-  if (!customer) errors.push('กรุณาระบุชื่อลูกค้า');
-  if (!dateDue) errors.push('กรุณาระบุกำหนดส่ง');
-  if (!orderer) errors.push('กรุณาระบุผู้สั่งงาน');
-  if (!assignStaffInput && !forwardPrintInput) {
-    errors.push('กรุณาเลือก มอบหมายกราฟฟิก หรือ ส่งต่อพิมพ์ อย่างน้อย 1 อย่าง');
+  if (!isDraft) {
+    if (!customer) errors.push('กรุณาระบุชื่อลูกค้า');
+    if (!dateDue) errors.push('กรุณาระบุกำหนดส่ง');
+    if (!orderer) errors.push('กรุณาระบุผู้สั่งงาน');
+    if (!assignStaffInput && !forwardPrintInput) {
+      errors.push('กรุณาเลือก มอบหมายกราฟฟิก หรือ ส่งต่อพิมพ์ อย่างน้อย 1 อย่าง');
+    }
   }
   if (errors.length) return NextResponse.json({ error: errors.join(' • ') }, { status: 400 });
 
-  // Determine actual assignment: graphic if assignStaff set, else print
-  let assignDept: Dept;
-  let assignStaff: string;
+  // Determine actual assignment: graphic if assignStaff set, else print.
+  // Draft mode allows empty assignment.
+  let assignDept: Dept | '' = '';
+  let assignStaff = '';
   if (assignStaffInput) {
     assignDept = 'graphic';
     assignStaff = assignStaffInput;
@@ -60,13 +66,15 @@ export async function POST(req: Request) {
     if (!valid) {
       return NextResponse.json({ error: `กราฟฟิก "${assignStaff}" ไม่ถูกต้อง` }, { status: 400 });
     }
-  } else {
+  } else if (forwardPrintInput) {
     assignDept = 'print';
     assignStaff = forwardPrintInput;
     const valid = STAFF.print.some((s) => s.id === assignStaff);
     if (!valid) {
       return NextResponse.json({ error: `ส่งต่อพิมพ์ "${assignStaff}" ไม่ถูกต้อง` }, { status: 400 });
     }
+  } else if (!isDraft) {
+    return NextResponse.json({ error: 'กรุณาเลือก มอบหมายกราฟฟิก หรือ ส่งต่อพิมพ์ อย่างน้อย 1 อย่าง' }, { status: 400 });
   }
 
   // ── Photobook validation ────────────────────────────────
@@ -86,7 +94,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
-  if (!body.force) {
+  // Drafts skip duplicate detection — user is still drafting, may revisit
+  if (!body.force && !isDraft) {
     const nLower = name.toLowerCase();
     const cLower = customer.toLowerCase();
     const dups = snap.orders
@@ -116,8 +125,9 @@ export async function POST(req: Request) {
   }
 
   // ── Allocate IDs ─────────────────────────────────────────
+  // Drafts only allocate orderId; no Job is created until promoted to "sent".
   let orderId: number;
-  let jobId: number;
+  let jobId: number | null = null;
   try {
     const orderRes = await post<{ id?: number; error?: string }>('getNextOrderId', {});
     if (orderRes.error || !orderRes.id) {
@@ -125,11 +135,13 @@ export async function POST(req: Request) {
     }
     orderId = Number(orderRes.id);
 
-    const jobRes = await post<{ nextId?: number; error?: string }>('getNextId', {});
-    if (jobRes.error || !jobRes.nextId) {
-      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${jobRes.error || 'unknown'}` }, { status: 502 });
+    if (!isDraft) {
+      const jobRes = await post<{ nextId?: number; error?: string }>('getNextId', {});
+      if (jobRes.error || !jobRes.nextId) {
+        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${jobRes.error || 'unknown'}` }, { status: 502 });
+      }
+      jobId = Number(jobRes.nextId);
     }
-    jobId = Number(jobRes.nextId);
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });
@@ -142,31 +154,21 @@ export async function POST(req: Request) {
   if (isPB) formSnapshot.photobook = photobookItems;
   // Drop non-storage fields
   delete formSnapshot.force;
+  delete formSnapshot.status;
 
   const orderPayload = {
     id: orderId,
     name,
-    customer,
+    customer: customer || '-',
     dateIn,
-    dateDue,
+    dateDue: dateDue || '',
     price: body.price ?? '',
     assignDept,
     assignStaff,
     orderer,
-    status: 'sent',
+    status: isDraft ? 'draft' : 'sent',
     details: formSnapshot,
     rawData: formSnapshot,
-  };
-
-  const jobPayload = {
-    id: jobId,
-    name,
-    date: dateDue,
-    dateIn,
-    staff: assignStaff,
-    dept: assignDept,
-    status: 'pending',
-    orderId,
   };
 
   // ── Sequenced writes ─────────────────────────────────────
@@ -177,6 +179,22 @@ export async function POST(req: Request) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `addOrder failed — ${msg}` }, { status: 502 });
   }
+
+  // Drafts stop here — no Job, just the order record
+  if (isDraft) {
+    return NextResponse.json({ ok: true, orderId, jobId: null, pin, orderType, draft: true });
+  }
+
+  const jobPayload = {
+    id: jobId!,
+    name,
+    date: dateDue,
+    dateIn,
+    staff: assignStaff,
+    dept: assignDept,
+    status: 'pending',
+    orderId,
+  };
 
   try {
     const jobResp = await post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: jobPayload });
