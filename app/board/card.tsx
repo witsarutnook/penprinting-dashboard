@@ -201,11 +201,11 @@ export function Card({
               {isSelected ? <IconCheckSquare size={14} /> : <IconSquare size={14} />}
             </span>
           )}
-          <div className="text-[13px] font-semibold text-stone-900 leading-tight flex-grow break-words flex items-center gap-1 flex-wrap">
+          <div className="text-[13px] font-semibold text-stone-900 leading-tight flex-grow break-words flex items-baseline gap-1 flex-wrap">
             <span>{job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}</span>
             {isGuest ? (
               <span
-                className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0 rounded bg-violet-200 text-violet-800 whitespace-nowrap font-medium leading-tight"
+                className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0 rounded bg-violet-200 text-violet-800 whitespace-nowrap font-medium leading-tight self-center"
                 title="Co-work — ย้ายได้จากเครื่องหลักเท่านั้น"
               >
                 <IconLock size={9} />
@@ -213,11 +213,10 @@ export function Card({
               </span>
             ) : job.hasCowork ? (
               <span
-                className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium leading-tight"
+                className="text-[11px] font-medium text-violet-700 whitespace-nowrap"
                 title={coworkTooltip(job.cowork)}
               >
-                <IconUsers size={9} />
-                + {coworkPrintStaffIds(job.cowork).length}
+                · + {coworkInline(job.cowork)}
               </span>
             ) : null}
           </div>
