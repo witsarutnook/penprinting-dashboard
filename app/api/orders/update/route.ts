@@ -83,7 +83,9 @@ export async function POST(req: Request) {
   const pin = String(existingRaw.pin || existingDetails.pin || '');
 
   const formSnapshot: Record<string, unknown> = { ...body, pin, orderType };
+  // Same dedupe as add — keep only `photobook` field (auditor M14)
   if (isPB) formSnapshot.photobook = photobookItems;
+  delete formSnapshot.photobookItems;
   delete formSnapshot.id;
 
   const orderPayload = {

@@ -16,6 +16,7 @@ import { broadcastWrite } from '@/lib/auto-sync';
 import { displayDate } from '@/lib/jobs';
 import { useBulkMode } from '@/components/board/bulk-context';
 import { useUndo } from '@/components/board/undo-context';
+import { useConfirm } from '@/components/confirm-provider';
 import { OrderForm } from './order-form';
 import {
   IconCheck,
@@ -69,6 +70,7 @@ export function Card({
   sessionRole: string | null;
 }) {
   const router = useRouter();
+  const confirmDlg = useConfirm();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editOrderOpen, setEditOrderOpen] = useState(false);
@@ -135,7 +137,13 @@ export function Card({
       return;
     }
     if (shipBusy) return;
-    if (!confirm(`ยืนยัน "จัดส่งเสร็จ" สำหรับ "${job.name}" ?`)) return;
+    const ok = await confirmDlg.confirm({
+      title: 'จัดส่งเสร็จ?',
+      message: `ปิดงาน "${job.name}" และย้ายไป /shipped`,
+      okLabel: 'จัดส่งเสร็จ',
+      variant: 'default',
+    });
+    if (!ok) return;
     setShipError(null);
     setShipBusy(true);
     const res = await fetch('/api/jobs/move-to-shipped', {
@@ -999,6 +1007,7 @@ function ActionButtons({
   onSuccess: () => void;
 }) {
   const router = useRouter();
+  const confirmDlg = useConfirm();
   const { recordForward } = useUndo();
   const [busy, setBusy] = useState<null | 'ship' | 'cancel' | 'forward' | 'reassign'>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1049,8 +1058,14 @@ function ActionButtons({
   }
 
   async function cancelJob() {
-    const reason = prompt(`ยกเลิกงาน "${job.name}" — ใส่เหตุผล:`);
-    if (!reason || reason.trim() === '') return;
+    const reason = await confirmDlg.prompt({
+      title: `ยกเลิกงาน "${job.name}"`,
+      message: 'ระบุเหตุผลการยกเลิก — งานจะถูกย้ายไปรายการยกเลิกพร้อมเหตุผลนี้',
+      placeholder: 'เช่น ลูกค้าขอยกเลิก / ส่งซ้ำใหม่ / สเปคเปลี่ยน',
+      okLabel: 'ยกเลิกงาน',
+      variant: 'warn',
+    });
+    if (!reason || !reason.trim()) return;
     setError(null);
     setBusy('cancel');
     const ok = await callApi('/api/jobs/cancel', {

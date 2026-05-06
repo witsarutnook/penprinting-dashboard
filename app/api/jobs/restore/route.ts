@@ -42,7 +42,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `ไม่พบรายการยกเลิก id=${id}` }, { status: 404 });
   }
 
-  // Reattach to parent order (if any) to recover due/in dates
+  // Reattach to parent order (if any) to recover due/in dates.
+  // Note (auditor L7): cowork list is lost through the cancel→restore
+  // cycle — the cancelled sheet schema doesn't include a cowork column.
+  // To preserve it would require an Apps Script CANCELLED_HEADERS change.
+  // Acceptable for now since cowork on a cancelled job rarely stays valid.
   const order = cj.orderId ? snap.orders.find((o) => Number(o.id) === Number(cj.orderId)) : null;
   const restored = {
     id: cj.id,

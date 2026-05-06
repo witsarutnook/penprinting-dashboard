@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { useConfirm } from '@/components/confirm-provider';
 import { buildCsv, downloadCsv } from '@/lib/list-helpers';
 import { displayDateTime } from '@/lib/jobs';
 import { DEPT_LABELS, type Dept } from '@/lib/board';
@@ -47,11 +48,18 @@ export function CancelledClient({ rows }: { rows: Cancelled[] }) {
 /** Per-row restore button — admin only, posts to /api/jobs/restore. */
 export function RestoreButton({ id, name }: { id: number; name: string }) {
   const router = useRouter();
+  const confirmDlg = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function restore() {
-    if (!confirm(`กู้คืนงาน "${name}" ?\n\nงานจะกลับเข้า Kanban ในแผนกเดิม สถานะ "รอดำเนินการ"`)) return;
+    const ok = await confirmDlg.confirm({
+      title: `กู้คืนงาน "${name}"?`,
+      message: 'งานจะกลับเข้า Kanban ในแผนกเดิม สถานะ "รอดำเนินการ"',
+      okLabel: 'กู้คืน',
+      variant: 'default',
+    });
+    if (!ok) return;
     setError(null);
     setBusy(true);
     const res = await fetch('/api/jobs/restore', {

@@ -151,7 +151,12 @@ export async function POST(req: Request) {
   const pin = String(Math.floor(1000 + Math.random() * 9000));
   // Full form snapshot stored under both `details` and `rawData` (matches WP).
   const formSnapshot: Record<string, unknown> = { ...body, pin, orderType };
+  // Photobook items: store under SINGLE field name `photobook` (auditor M14
+  // — was being saved twice, both as `photobook` AND `photobookItems` from
+  // the body spread, risking divergence on edit). Print template reads
+  // `raw.photobook`; orderFormFromRaw already accepts both shapes.
   if (isPB) formSnapshot.photobook = photobookItems;
+  delete formSnapshot.photobookItems;
   // Drop non-storage fields
   delete formSnapshot.force;
   delete formSnapshot.status;

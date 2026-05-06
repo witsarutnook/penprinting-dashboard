@@ -10,27 +10,45 @@ import { parseDateDMY } from '@/lib/analytics';
  *
  * Body: { id, pin }
  * Returns redacted order data + status + step. Hides price, spec, full
- * staff names, internal flags. Rate-limit 15/hr per IP via in-memory map.
- */
+ * staff names, internal flags. Rate-limit 15/hr per browser via signed
+ * cookie (auditor H1 — in-memory Map didn't survive Vercel serverless
+ * cold starts; cookie state is stable across instances). */
 
-interface RateLimitState {
-  count: number;
-  resetAt: number;
-}
-const rateLimitMap = new Map<string, RateLimitState>();
+const RATE_COOKIE = 'pp_track_rl';
 const WINDOW_MS = 60 * 60 * 1000; // 1h
 const MAX_HITS = 15;
 
-function checkRate(ip: string): boolean {
-  const now = Date.now();
-  const state = rateLimitMap.get(ip);
-  if (!state || now > state.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + WINDOW_MS });
-    return true;
+interface RateState {
+  hits: number;
+  resetAt: number;
+}
+
+function readRate(req: Request): RateState {
+  const cookieHeader = req.headers.get('cookie') || '';
+  const m = cookieHeader.match(new RegExp(`(?:^|; )${RATE_COOKIE}=([^;]+)`));
+  if (!m) return { hits: 0, resetAt: Date.now() + WINDOW_MS };
+  try {
+    const parsed = JSON.parse(decodeURIComponent(m[1])) as RateState;
+    if (typeof parsed.hits !== 'number' || typeof parsed.resetAt !== 'number') {
+      return { hits: 0, resetAt: Date.now() + WINDOW_MS };
+    }
+    if (Date.now() > parsed.resetAt) {
+      return { hits: 0, resetAt: Date.now() + WINDOW_MS };
+    }
+    return parsed;
+  } catch {
+    return { hits: 0, resetAt: Date.now() + WINDOW_MS };
   }
-  if (state.count >= MAX_HITS) return false;
-  state.count += 1;
-  return true;
+}
+
+function attachRateCookie(res: NextResponse, state: RateState) {
+  res.cookies.set(RATE_COOKIE, JSON.stringify(state), {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    expires: new Date(state.resetAt),
+    path: '/api/track',
+  });
 }
 
 function maskName(name: string): string {
@@ -66,28 +84,39 @@ function deptStepLabel(dept: string, staff: string): string {
 }
 
 export async function POST(req: Request) {
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    'unknown';
-  if (!checkRate(ip)) {
-    return NextResponse.json(
-      { error: 'พยายามตรวจสอบบ่อยเกินไป — รอ 1 ชั่วโมงแล้วลองใหม่' },
+  const rate = readRate(req);
+  if (rate.hits >= MAX_HITS) {
+    const minutesLeft = Math.ceil((rate.resetAt - Date.now()) / 60000);
+    const res = NextResponse.json(
+      { error: `พยายามตรวจสอบบ่อยเกินไป — รออีก ${minutesLeft} นาทีแล้วลองใหม่` },
       { status: 429 },
     );
+    attachRateCookie(res, rate);
+    return res;
   }
+  // Increment for THIS request — written to the response cookie before return.
+  const nextRate: RateState = { hits: rate.hits + 1, resetAt: rate.resetAt };
+
+  // Helper to wrap the response and attach the updated rate cookie.
+  const respond = (json: Record<string, unknown>, status = 200) => {
+    const res = NextResponse.json(json, { status });
+    attachRateCookie(res, nextRate);
+    return res;
+  };
 
   let body: { id?: string | number; pin?: string };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    return respond({ error: 'Invalid JSON' }, 400);
   }
 
   const id = String(body.id || '').replace(/[^0-9]/g, '');
   const pin = String(body.pin || '').replace(/[^0-9]/g, '');
-  if (id.length < 6 || pin.length !== 4) {
-    return NextResponse.json({ error: 'เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง' }, { status: 400 });
+  // Allow legacy short ids (≥3 digits) — Penprinting orders pre-2020 had
+  // 4-digit ids. Format validation is already strict via numeric-only regex.
+  if (id.length < 3 || pin.length !== 4) {
+    return respond({ error: 'เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง' }, 400);
   }
 
   let snap;
@@ -95,12 +124,12 @@ export async function POST(req: Request) {
     snap = await loadAll();
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, { status: 502 });
+    return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);
   }
 
   const order = snap.orders.find((o) => String(o.id) === id);
   if (!order) {
-    return NextResponse.json({ error: 'ไม่พบใบสั่งงานนี้' }, { status: 404 });
+    return respond({ error: 'ไม่พบใบสั่งงานนี้' }, 404);
   }
 
   const raw = (order.rawData && typeof order.rawData === 'object'
@@ -108,7 +137,7 @@ export async function POST(req: Request) {
     : (order.details || {})) as Record<string, unknown>;
   const storedPin = String(raw.pin || '');
   if (!storedPin || storedPin !== pin) {
-    return NextResponse.json({ error: 'PIN ไม่ถูกต้อง' }, { status: 401 });
+    return respond({ error: 'PIN ไม่ถูกต้อง' }, 401);
   }
 
   // Match job / shipped / cancelled by orderId
@@ -169,7 +198,7 @@ export async function POST(req: Request) {
     cancelReason: cancelledMatch ? String(cancelledMatch.reason || '') : undefined,
   };
 
-  return NextResponse.json({ ok: true, result });
+  return respond({ ok: true, result });
 }
 
 // Allow Dept import to satisfy ts; suppress unused complaints

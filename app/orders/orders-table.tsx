@@ -11,6 +11,7 @@ import {
   IconCheck, IconCornerUpRight,
 } from '@/lib/icons';
 import { useToast } from '@/components/toast-provider';
+import { useConfirm } from '@/components/confirm-provider';
 import { PageSizeBar } from '@/components/page-size-bar';
 
 export interface OrderRow {
@@ -172,6 +173,7 @@ function OrderDetailModal({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const confirmDlg = useConfirm();
   const [, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [busy, setBusy] = useState<null | 'delete'>(null);
@@ -205,11 +207,13 @@ function OrderDetailModal({
 
   async function deleteOrder() {
     if (!order) return;
-    if (!confirm(
-      `ลบใบสั่งงาน #${order.id} "${order.name}" ?\n\n` +
-      `⚠ ลบถาวร — กู้คืนไม่ได้!\n` +
-      `Job ที่ผูกอยู่ (ถ้ามี) จะถูก "ยกเลิก" อัตโนมัติพร้อมเหตุผล "ใบสั่งงานถูกลบ"`,
-    )) return;
+    const ok = await confirmDlg.confirm({
+      title: `ลบใบสั่งงาน #${order.id}?`,
+      message: `"${order.name}"\n\n⚠ ลบถาวร — กู้คืนไม่ได้!\nJob ที่ผูกอยู่ (ถ้ามี) จะถูก "ยกเลิก" อัตโนมัติพร้อมเหตุผล "ใบสั่งงานถูกลบ"`,
+      okLabel: 'ลบใบสั่ง',
+      variant: 'danger',
+    });
+    if (!ok) return;
     const id = order.id;
     const name = order.name;
     setError(null);

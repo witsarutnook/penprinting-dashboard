@@ -7,6 +7,7 @@ import { getStaffTheme } from '@/lib/staff-icons';
 import { broadcastWrite } from '@/lib/auto-sync';
 import { computeFromType, getVisibleTargets } from '@/lib/forward';
 import { useToast } from '@/components/toast-provider';
+import { useConfirm } from '@/components/confirm-provider';
 import { Card } from './card';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -36,6 +37,7 @@ export function Column({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const confirmDlg = useConfirm();
   const [, startTransition] = useTransition();
   const isAdmin = sessionRole === 'admin';
   const isVendor = !!column.staff.isVendor;
@@ -139,12 +141,13 @@ export function Column({
           setTimeout(() => setError(null), 3000);
           return;
         }
-        if (!confirm(
-          `ส่งต่องาน #${id} → ${match.label} ?\n\n` +
-          `(การส่งต่อข้ามแผนกจะสร้าง Job ใหม่ในปลายทาง — งานเก่าจะถูกลบ)`,
-        )) {
-          return;
-        }
+        const ok = await confirmDlg.confirm({
+          title: `ส่งต่องาน #${id} → ${match.label}?`,
+          message: 'การส่งต่อข้ามแผนกจะสร้าง Job ใหม่ในปลายทาง — งานเก่าจะถูกลบ',
+          okLabel: 'ส่งต่อ',
+          variant: 'default',
+        });
+        if (!ok) return;
         toast.show(`กำลังส่งต่อ #${id} → ${match.label}...`);
         const res = await fetch('/api/jobs/forward', {
           method: 'POST',
