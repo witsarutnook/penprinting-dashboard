@@ -10,9 +10,9 @@ import {
   TopCustomersChart,
   DeptWorkloadChart,
 } from './charts';
-import { LogoutButton } from './logout-button';
 import { AutoSync } from '@/lib/auto-sync';
-import { IconArrowLeft } from '@/lib/icons';
+import { DashboardShell } from '@/components/dashboard-shell';
+import { redirect } from 'next/navigation';
 
 export const metadata: Metadata = {
   title: 'Analytics',
@@ -37,9 +37,9 @@ export default async function AnalyticsPage({
   searchParams: SearchParams;
 }) {
   const months = parseRange(searchParams.months);
-  // Middleware guarantees a valid session here, but read it for the header UI
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) redirect('/login?next=/analytics');
 
   let result;
   let errorMessage: string | null = null;
@@ -56,35 +56,16 @@ export default async function AnalyticsPage({
   }
 
   return (
-    <main className="min-h-screen bg-stone-50">
+    <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
-      <header className="border-b border-stone-200 bg-white">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="text-stone-500 hover:text-stone-700 inline-flex items-center"
-              aria-label="กลับหน้าหลัก"
-            >
-              <IconArrowLeft size={18} />
-            </Link>
-            <h1 className="text-xl font-bold text-stone-900">Analytics</h1>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <RangeSelector current={months} />
-            {session && (
-              <div className="flex items-center gap-2 text-xs text-stone-500 border-l border-stone-200 pl-3">
-                <span>
-                  {session.user} <span className="text-stone-400">({session.role})</span>
-                </span>
-                <LogoutButton />
-              </div>
-            )}
-          </div>
+      <header className="border-b border-stone-100 bg-white">
+        <div className="px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+          <h1 className="text-xl font-bold text-stone-900">รายงาน</h1>
+          <RangeSelector current={months} />
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
         {errorMessage ? (
           <ErrorPanel message={errorMessage} />
         ) : result ? (
@@ -111,7 +92,7 @@ export default async function AnalyticsPage({
           </>
         ) : null}
       </div>
-    </main>
+    </DashboardShell>
   );
 }
 

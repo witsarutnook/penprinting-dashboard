@@ -1,11 +1,10 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { searchArchive, AppsScriptError, type ArchiveSearchResult } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
-import { LogoutButton } from '../analytics/logout-button';
-import { IconArrowLeft, IconCheck, IconFolderOpen } from '@/lib/icons';
+import { IconCheck, IconFolderOpen } from '@/lib/icons';
+import { DashboardShell } from '@/components/dashboard-shell';
 
 export const metadata: Metadata = {
   title: 'Search Archive',
@@ -40,34 +39,17 @@ export default async function ArchivePage({ searchParams }: { searchParams: Sear
   }
 
   return (
-    <main className="min-h-screen bg-stone-50">
-      <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="text-stone-500 hover:text-stone-700 inline-flex items-center"
-              aria-label="กลับหน้าหลัก"
-            >
-              <IconArrowLeft size={18} />
-            </Link>
-            <h1 className="text-lg sm:text-xl font-bold text-stone-900">Search Archive</h1>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 hidden sm:inline">
-              admin only
-            </span>
-          </div>
-          {session && (
-            <div className="flex items-center gap-2 text-xs text-stone-500">
-              <span>
-                {session.user} <span className="text-stone-400">({session.role})</span>
-              </span>
-              <LogoutButton />
-            </div>
-          )}
+    <DashboardShell user={session.user} role={session.role}>
+      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+        <div className="px-4 sm:px-6 py-3 flex items-center gap-3">
+          <h1 className="text-lg sm:text-xl font-bold text-stone-900">ค้นข้อมูลเก่า</h1>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 hidden sm:inline">
+            admin only
+          </span>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
+      <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto">
         <SearchBox initial={query} />
 
         {errorMessage ? (
@@ -87,7 +69,7 @@ export default async function ArchivePage({ searchParams }: { searchParams: Sear
           shipped/cancelled (≥ 365 วัน) · audit_log (≥ 180 วัน)
         </p>
       </div>
-    </main>
+    </DashboardShell>
   );
 }
 
