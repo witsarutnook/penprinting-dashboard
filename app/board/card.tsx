@@ -43,6 +43,25 @@ function urgencyDaysLabel(urgency: string, days: number): string {
   return `รับ ${days}ว`;
 }
 
+/** "[กราฟิก] ปุ๊ก, [พิมพ์] SM74" — friendly inline list for card display. */
+function coworkInline(raw: unknown): string {
+  const items = parseCoworkArray(raw);
+  if (items.length === 0) return '';
+  return items
+    .map((it) => {
+      const dept = it.dept;
+      const staff = STAFF[dept as Dept]?.find((s) => s.id === it.staff)?.name || it.staff;
+      const deptLabel = DEPT_LABELS[dept as Dept] || dept;
+      return `[${deptLabel}] ${staff}`;
+    })
+    .join(', ');
+}
+
+function coworkTooltip(raw: unknown): string {
+  const inline = coworkInline(raw);
+  return inline ? `Co-work: ${inline}` : 'มี co-work';
+}
+
 /** Card with built-in detail modal (native <dialog>). */
 export function Card({
   job,
@@ -95,22 +114,14 @@ export function Card({
   return (
     <>
       <div
-        className={`w-full text-left rounded-xl border bg-white p-2.5 transition-all relative ${
+        className={`w-full text-left rounded-xl border bg-white p-3 transition-all relative ${
           bulkMode && isSelected
             ? 'ring-2 ring-sky-400 border-sky-300'
             : bulkMode
-              ? 'hover:bg-sky-50/30'
-              : 'hover:shadow-sm'
+              ? 'hover:bg-sky-50/30 cursor-pointer'
+              : ''
         } ${job.hasCowork ? 'border-dashed bg-violet-50/30' : ''}`}
-        onClick={open}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            open();
-          }
-        }}
+        onClick={bulkMode ? open : undefined}
         style={{
           borderColor: bulkMode && isSelected
             ? undefined
@@ -118,10 +129,9 @@ export function Card({
               ? `${VENDOR_PURPLE}50`
               : isVendorCol ? `${VENDOR_PURPLE}30` : '#e7e5e4',
           borderLeft: `3px solid ${urgencyColor}`,
-          cursor: 'pointer',
         }}
       >
-        {/* Top row: name + รายละเอียด link + close hint */}
+        {/* Top row: name + ร่วมพิมพ์ pill + รายละเอียด button + close X */}
         <div className="flex items-start justify-between gap-2">
           {bulkMode && (
             <span
@@ -131,25 +141,33 @@ export function Card({
               {isSelected ? <IconCheckSquare size={14} /> : <IconSquare size={14} />}
             </span>
           )}
-          <div className="text-[13px] font-medium text-stone-900 leading-snug flex-grow break-words">
-            {job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}
+          <div className="text-[13px] font-medium text-stone-900 leading-snug flex-grow break-words flex items-center gap-1.5 flex-wrap">
+            <span>{job.name || <span className="text-stone-400">(ไม่มีชื่อ)</span>}</span>
+            {job.hasCowork && (
+              <span
+                className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium"
+                title={coworkTooltip(job.cowork)}
+              >
+                <IconUsers size={10} />
+                ร่วมพิมพ์
+              </span>
+            )}
           </div>
-          <span className="text-[10px] text-stone-400 hover:text-stone-700 whitespace-nowrap mt-0.5 flex-shrink-0">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+            disabled={bulkMode}
+            className="text-[11px] text-stone-500 hover:text-stone-900 hover:bg-stone-100 px-2 py-0.5 rounded-md whitespace-nowrap flex-shrink-0 disabled:opacity-50"
+          >
             รายละเอียด
-          </span>
-          {job.hasCowork && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 whitespace-nowrap font-medium"
-              title="มี co-work"
-            >
-              <IconUsers size={10} />
-              ร่วมพิมพ์
-            </span>
-          )}
+          </button>
         </div>
 
         {/* Middle row: customer + date range */}
-        <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-stone-500">
+        <div className="flex items-center justify-between gap-2 mt-1.5 text-[11px] text-stone-500">
           {job.customer ? (
             <span className="inline-flex items-center gap-1 min-w-0">
               <IconUser size={11} className="flex-shrink-0" />
@@ -169,26 +187,50 @@ export function Card({
           </span>
         </div>
 
-        {/* Inline action row — co-work shortcut + status badge */}
-        <div className="flex items-center justify-between gap-2 mt-2 text-[11px]">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              open();
-            }}
-            disabled={bulkMode}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-              job.hasCowork
-                ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
-                : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
-            } disabled:opacity-50`}
-          >
-            <IconUsers size={11} />
-            {job.hasCowork ? 'แก้ไข Co-work' : 'Co-work'}
-          </button>
+        {/* Cowork members — visible inline below dates when present */}
+        {job.hasCowork && (
+          <div className="mt-1.5 text-[11px] text-violet-700 flex items-center gap-1 truncate">
+            <IconUsers size={11} className="flex-shrink-0" />
+            <span className="truncate" title={coworkTooltip(job.cowork)}>
+              {coworkInline(job.cowork) || '—'}
+            </span>
+          </div>
+        )}
+
+        {/* Inline action row — primary action (เสร็จ+ส่ง / Co-work) + status badge */}
+        <div className="flex items-center justify-between gap-2 mt-2.5 text-xs flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                open();
+              }}
+              disabled={bulkMode}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-sky-50 text-sky-700 hover:bg-sky-100 font-medium disabled:opacity-50"
+            >
+              <IconCheck size={12} />
+              เสร็จ+ส่ง
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                open();
+              }}
+              disabled={bulkMode}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors ${
+                job.hasCowork
+                  ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                  : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+              } disabled:opacity-50`}
+            >
+              <IconUsers size={12} />
+              {job.hasCowork ? 'แก้ไข Co-work' : 'Co-work'}
+            </button>
+          </div>
           <span
-            className="px-2 py-0.5 rounded-md font-medium tabular-nums"
+            className="px-2 py-0.5 rounded-md font-medium tabular-nums whitespace-nowrap"
             style={{ background: urgencyColor + '20', color: urgencyColor }}
           >
             {URGENCY_LABELS[job.urgency]}
@@ -333,6 +375,28 @@ function DetailContent({
               )}
               {job.order?.orderer && <KVTile label="ผู้สั่งงาน" value={job.order.orderer} />}
             </div>
+            {cowork.length > 0 && (
+              <div className="rounded-xl border border-violet-200 bg-violet-50/40 px-3 py-2.5">
+                <div className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1.5">
+                  <IconUsers size={12} />
+                  Co-work — ผู้ร่วมพิมพ์ ({cowork.length})
+                </div>
+                <ul className="space-y-0.5 text-sm text-stone-700">
+                  {cowork.map((cw, i) => {
+                    const dept = cw.dept as Dept;
+                    const staffName =
+                      STAFF[dept]?.find((s) => s.id === cw.staff)?.name || cw.staff;
+                    const deptLabel = DEPT_LABELS[dept] || cw.dept;
+                    return (
+                      <li key={i}>
+                        <span className="text-stone-500 text-xs">[{deptLabel}]</span>{' '}
+                        <span className="font-medium">{staffName}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             {job.order && canEditOrder && (
               <button
                 type="button"
@@ -357,14 +421,21 @@ function DetailContent({
             )}
 
             {cowork.length > 0 && (
-              <Section title="Co-work">
+              <Section title="Co-work — ผู้ร่วมพิมพ์">
                 <ul className="text-sm text-stone-700 space-y-1 px-3 py-2">
-                  {cowork.map((cw, i) => (
-                    <li key={i}>
-                      • <span className="text-stone-500">{cw.dept}</span> /{' '}
-                      <span className="font-medium">{cw.staff}</span>
-                    </li>
-                  ))}
+                  {cowork.map((cw, i) => {
+                    const dept = cw.dept as Dept;
+                    const staffName =
+                      STAFF[dept]?.find((s) => s.id === cw.staff)?.name || cw.staff;
+                    const deptLabel = DEPT_LABELS[dept] || cw.dept;
+                    return (
+                      <li key={i} className="flex items-center gap-2">
+                        <IconUsers size={12} className="text-violet-600 flex-shrink-0" />
+                        <span className="text-stone-500 text-xs">[{deptLabel}]</span>
+                        <span className="font-medium">{staffName}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </Section>
             )}
