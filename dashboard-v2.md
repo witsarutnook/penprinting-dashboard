@@ -83,7 +83,7 @@
 ### Public
 | Route | Purpose |
 |---|---|
-| `/` | Home with feature links |
+| `/` | Server-side redirect — `/login` if logged out, `/board` if logged in |
 | `/login` | HMAC cookie auth |
 | `/track` | Public order lookup (no auth, PIN gate, masked customer name) |
 | `/orders/[id]/print` | A4 invoice (auth required, has QR linking to /track) |
