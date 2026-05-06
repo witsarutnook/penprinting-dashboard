@@ -2,10 +2,11 @@
 
 import { useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { type BoardColumn, type Dept } from '@/lib/board';
+import { type BoardColumn, type Dept, DEPT_LABELS, STAFF } from '@/lib/board';
 import { getStaffTheme } from '@/lib/staff-icons';
 import { broadcastWrite } from '@/lib/auto-sync';
 import { computeFromType, getVisibleTargets } from '@/lib/forward';
+import { useToast } from '@/components/toast-provider';
 import { Card } from './card';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -34,6 +35,7 @@ export function Column({
   sessionRole: string | null;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const isAdmin = sessionRole === 'admin';
   const isVendor = !!column.staff.isVendor;
   const theme = getStaffTheme(dept, column.staff.id);
@@ -76,6 +78,17 @@ export function Column({
     if (!id || !Number.isFinite(id)) return;
     const targetStaff = column.staff.id;
 
+    // Find the source-staff label for the toast (best-effort lookup using
+    // sourceDept's STAFF — falls back to id string).
+    const sourceStaffLabel = (() => {
+      const list = STAFF[sourceDept as Dept];
+      // Find which staff currently owns this job — we don't know without fetching,
+      // so just use the dept label.
+      return DEPT_LABELS[sourceDept as Dept] || sourceDept;
+      void list;
+    })();
+    const targetStaffLabel = column.staff.name;
+
     setError(null);
     setBusy(true);
     try {
@@ -88,11 +101,14 @@ export function Column({
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          setError(data?.error || `HTTP ${res.status}`);
+          const msg = data?.error || `HTTP ${res.status}`;
+          setError(msg);
+          toast.error(msg);
           setTimeout(() => setError(null), 3000);
           return;
         }
         broadcastWrite('/api/jobs/reassign');
+        toast.show(`ย้ายงาน #${id}: ${sourceStaffLabel} → ${targetStaffLabel}`);
         router.refresh();
         return;
       }
@@ -101,7 +117,9 @@ export function Column({
       if (dropType === 'forward') {
         const fromType = computeFromType(sourceDept, '');
         if (!fromType) {
-          setError(`ส่งต่อจาก ${sourceDept} ไม่ได้`);
+          const msg = `ส่งต่อจาก ${sourceDept} ไม่ได้`;
+          setError(msg);
+          toast.error(msg);
           setTimeout(() => setError(null), 3000);
           return;
         }
@@ -110,7 +128,9 @@ export function Column({
           (t) => t.value === targetStaff && t.dept === dept,
         );
         if (!match) {
-          setError(`ไม่สามารถส่งต่อ ${sourceDept} → ${dept}/${targetStaff}`);
+          const msg = `ไม่สามารถส่งต่อ ${sourceDept} → ${dept}/${targetStaff}`;
+          setError(msg);
+          toast.error(msg);
           setTimeout(() => setError(null), 3000);
           return;
         }
@@ -127,11 +147,14 @@ export function Column({
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          setError(data?.error || `HTTP ${res.status}`);
+          const msg = data?.error || `HTTP ${res.status}`;
+          setError(msg);
+          toast.error(msg);
           setTimeout(() => setError(null), 3000);
           return;
         }
         broadcastWrite('/api/jobs/forward');
+        toast.show(`ส่งต่องาน #${id} → ${match.label}`);
         router.refresh();
       }
     } finally {

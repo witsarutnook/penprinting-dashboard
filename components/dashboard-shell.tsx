@@ -1,5 +1,6 @@
 import { Sidebar } from './sidebar';
 import { BottomNav } from './bottom-nav';
+import { ToastProvider } from './toast-provider';
 
 interface ShellProps {
   user: string;
@@ -15,11 +16,13 @@ interface ShellProps {
  *  /login don't use this shell. */
 export function DashboardShell({ user, role, children }: ShellProps) {
   return (
-    <div className="min-h-screen bg-stone-50">
-      <Sidebar user={user} role={role} />
-      <BottomNav role={role} />
-      {/* Offsets: 220px sidebar on desktop; 64px bottom-nav on mobile */}
-      <div className="md:pl-[220px] pb-20 md:pb-0">{children}</div>
-    </div>
+    <ToastProvider>
+      <div className="min-h-screen bg-stone-50">
+        <Sidebar user={user} role={role} />
+        <BottomNav role={role} />
+        {/* Offsets: 220px sidebar on desktop; 64px bottom-nav on mobile */}
+        <div className="md:pl-[220px] pb-20 md:pb-0">{children}</div>
+      </div>
+    </ToastProvider>
   );
 }

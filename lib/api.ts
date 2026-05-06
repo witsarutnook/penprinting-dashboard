@@ -28,6 +28,11 @@ function getApiBase(): { url: string; token: string } {
   return { url, token };
 }
 
+/** Cache tag used by every `loadAll()` GET — write routes call
+ *  `revalidateTag(LOAD_ALL_TAG)` so the next page render returns fresh data
+ *  instead of stale 60s ISR cache. */
+export const LOAD_ALL_TAG = 'load-all';
+
 /** GET ?action=<name> with token. Caller decides what shape to expect.
  *  Default revalidate=60s (read-side caching) — pass `revalidate: 0` for write-path lookups
  *  (e.g. allocating nextId before addJob — must see latest counter). */
@@ -43,7 +48,8 @@ async function get<T>(
     method: 'GET',
     // Apps Script web apps redirect via 302 to googleusercontent.com — must follow
     redirect: 'follow',
-    next: { revalidate },
+    // Tag the loadAll cache so write routes can bust it instantly via revalidateTag.
+    next: action === 'loadAll' ? { revalidate, tags: [LOAD_ALL_TAG] } : { revalidate },
   });
   if (!res.ok) {
     throw new AppsScriptError(action, `HTTP ${res.status}`, res.status);
@@ -65,11 +71,21 @@ export async function loadAllFresh(): Promise<LoadAllResponse> {
   return get<LoadAllResponse>('loadAll', {}, { revalidate: 0 });
 }
 
+/** Apps Script actions that mutate Sheet state — used to auto-bust the
+ *  loadAll fetch-cache so subsequent page renders show fresh data. */
+const WRITE_ACTIONS: ReadonlySet<string> = new Set([
+  'addJob', 'updateJob', 'deleteJob', 'moveToShipped', 'cancelJob',
+  'restoreJob', 'setCowork', 'addOrder', 'updateOrder', 'deleteOrder',
+  'bulkForward', 'addTemplate', 'deleteTemplate', 'getNextId', 'getNextOrderId',
+]);
+
 /** POST {action, token, ...body} — mirrors WP `apiPost`. Used for actions that
  *  take complex bodies (searchArchive, bulkForward, mutations) — token goes in body.
  *
  *  ⚠️ For mutations: always pass `revalidate: 0` (default) to bypass fetch cache —
- *  we never want to cache write operations. */
+ *  we never want to cache write operations. After a successful write, also
+ *  invalidates the loadAll tag so the next router.refresh() returns fresh data
+ *  instead of the (up to 60s) ISR cache. */
 export async function post<T>(action: string, body: Record<string, unknown> = {}, opts: { revalidate?: number } = {}): Promise<T> {
   const { url, token } = getApiBase();
   const payload = JSON.stringify({ action, token, ...body });
@@ -84,6 +100,19 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
   const data = (await res.json()) as T | { error: string };
   if (data && typeof data === 'object' && 'error' in data) {
     throw new AppsScriptError(action, (data as { error: string }).error);
+  }
+  // Successful write — bust the loadAll cache so /board, /orders etc. see
+  // the change on the very next render. Done lazily so non-write actions
+  // (searchArchive, etc.) skip the call.
+  if (WRITE_ACTIONS.has(action)) {
+    try {
+      // dynamic import to avoid pulling next/cache into edge contexts
+      // that don't support it (middleware uses lib/api too via auth).
+      const { revalidateTag } = await import('next/cache');
+      revalidateTag(LOAD_ALL_TAG);
+    } catch {
+      // ignore — non-fatal
+    }
   }
   return data as T;
 }

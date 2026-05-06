@@ -191,9 +191,12 @@ export function Card({
     e.dataTransfer.setData('text/plain', String(job.id));
     e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true);
+    // Tell auto-sync to back off while a card is being dragged
+    document.body.dataset.dragging = '1';
   }
   function handleDragEnd() {
     setIsDragging(false);
+    delete document.body.dataset.dragging;
   }
 
   return (

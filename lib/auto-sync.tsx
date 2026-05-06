@@ -12,14 +12,37 @@ interface SyncMessage {
   ts: number;
 }
 
+/** True when refreshing now would disrupt the user — port of WP
+ *  autoRefreshTick guards (production-monitoring.js:5666). Returns the
+ *  reason for the skip (used for a debug log) or null when safe. */
+function refreshGuard(): string | null {
+  if (document.visibilityState !== 'visible') return 'tab-hidden';
+  // 1. Any open native <dialog open>? (forward / cowork / detail / order-form)
+  if (document.querySelector('dialog[open]')) return 'dialog-open';
+  // 2. User typing into an input?
+  const ae = document.activeElement;
+  if (ae) {
+    const tag = ae.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return 'input-focused';
+    if ((ae as HTMLElement).isContentEditable) return 'contenteditable';
+  }
+  // 3. User mid-drag — set on the body during card drag (see card.tsx).
+  if (document.body.dataset.dragging === '1') return 'dragging';
+  return null;
+}
+
 /**
- * Auto-refresh hook for read pages (board / analytics / calendar / archive).
+ * Auto-refresh hook for read pages (board / orders / shipped / cancelled /
+ * analytics / calendar). Mirrors WP autoRefreshTick + cross-tab broadcast.
  *
- *   1. Polls every 15s while the tab is visible — picks up writes from other
- *      users / WP without a manual reload.
- *   2. Listens to BroadcastChannel `pp_dashboard_sync` — when ANY tab on this
- *      device commits a mutation, every other tab refreshes immediately
- *      (matches WP's `_ppChannel` cross-tab sync).
+ *   1. Polls every 15s, but **skips** when:
+ *      - tab is hidden (saves quota)
+ *      - any <dialog> is open (forward / cowork / detail modal mid-edit)
+ *      - an input / textarea / select is focused (user typing)
+ *      - a card is mid-drag (`document.body.dataset.dragging === '1'`)
+ *   2. Listens to BroadcastChannel `pp_dashboard_sync` — when ANY tab on
+ *      this device commits a mutation, every other tab refreshes
+ *      immediately (matches WP's `_ppChannel`).
  *
  * Use `broadcastWrite()` after a successful POST to notify sibling tabs.
  */
@@ -32,30 +55,38 @@ export function useAutoSync(): void {
       lastRefresh = Date.now();
       router.refresh();
     }
+    function maybeRefresh() {
+      const reason = refreshGuard();
+      if (reason) {
+        // Useful when debugging: console.debug(`[auto-sync] skip — ${reason}`);
+        return;
+      }
+      refresh();
+    }
 
-    // Visibility-aware interval — pause when tab hidden so we don't burn quota.
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') refresh();
-    }, POLL_MS);
+    const interval = setInterval(maybeRefresh, POLL_MS);
 
     // When the user comes back to the tab, refresh if it's been ≥ POLL_MS.
     function onVisible() {
       if (document.visibilityState === 'visible' && Date.now() - lastRefresh >= POLL_MS) {
-        refresh();
+        maybeRefresh();
       }
     }
     document.addEventListener('visibilitychange', onVisible);
 
-    // Cross-tab sync via BroadcastChannel (same channel name as WP, so v2 + WP
-    // tabs cross-pollinate when running side-by-side during the migration).
+    // Cross-tab sync via BroadcastChannel.
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel(CHANNEL_NAME);
       channel.addEventListener('message', (e: MessageEvent<SyncMessage>) => {
-        if (e?.data?.type === 'write') refresh();
+        if (e?.data?.type === 'write') {
+          // Cross-tab sync should still respect the user-typing guard so we
+          // don't blow away an open form just because another tab saved.
+          if (!refreshGuard()) refresh();
+        }
       });
     } catch {
-      // BroadcastChannel unsupported (very old Safari) — polling alone covers it.
+      // BroadcastChannel unsupported — polling alone covers it.
     }
 
     return () => {
