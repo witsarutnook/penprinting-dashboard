@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
-import { COOKIE_NAME, verifySession } from '@/lib/auth';
+import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import {
   computeBoard,
   DEPT_LABELS,
@@ -51,6 +52,12 @@ function todayThaiLong(): string {
   return fmt.format(new Date());
 }
 
+/** Top-level Server Component. Returns the page shell (sidebar, header,
+ *  search) immediately — Apps Script `loadAll()` is awaited inside the
+ *  `<BoardData>` Suspense boundary so the user sees the layout skeleton
+ *  in ~50ms instead of staring at a blank page for 300-1500ms while the
+ *  server holds. (Compared to the previous shape that awaited loadAll
+ *  at the top of the page function.) */
 export default async function BoardPage({
   searchParams,
 }: {
@@ -68,7 +75,49 @@ export default async function BoardPage({
     query: (searchParams.q || '').trim(),
   };
 
-  let board;
+  // Suspense key derived from filters — different filter sets bust the
+  // cached resolved component and force a fresh skeleton frame, so the
+  // user gets immediate feedback instead of seeing the previous board
+  // hang while the new one renders.
+  const dataKey = `${filters.dept}|${filters.urgency}|${filters.query}`;
+
+  return (
+    <DashboardShell user={session.user} role={session.role}>
+      <AutoSync />
+      <UndoProvider>
+      <BulkModeProvider>
+        {/* Top date row + search — no data dep, render in the first chunk */}
+        <div className="bg-white border-b border-stone-100">
+          <div className="px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="text-sm text-stone-500">{todayThaiLong()}</div>
+            </div>
+            <SearchBox />
+          </div>
+        </div>
+
+        <div className="px-4 sm:px-6 py-4 space-y-4">
+          <Suspense key={dataKey} fallback={<BoardSkeleton />}>
+            <BoardData filters={filters} session={session} />
+          </Suspense>
+        </div>
+      </BulkModeProvider>
+      </UndoProvider>
+    </DashboardShell>
+  );
+}
+
+/** Async data section — awaits loadAll() and renders KPI + toolbar +
+ *  dept sections + bulk bar. Lives behind a Suspense boundary so the
+ *  page shell streams to the client first. */
+async function BoardData({
+  filters,
+  session,
+}: {
+  filters: BoardFilters;
+  session: Session;
+}) {
+  let board: ReturnType<typeof computeBoard> | undefined;
   let errorMessage: string | null = null;
   try {
     const data = await loadAll();
@@ -89,67 +138,95 @@ export default async function BoardPage({
     : [];
 
   return (
-    <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
-      <UndoProvider>
-      <BulkModeProvider>
-        {/* Top date row + search */}
-        <div className="bg-white border-b border-stone-100">
-          <div className="px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <div className="text-sm text-stone-500">{todayThaiLong()}</div>
-            </div>
-            <SearchBox />
-          </div>
-        </div>
+    <>
+      {board && <KPIBar totals={board.totalsByUrgency} jobs={board.allJobs} />}
 
-        <div className="px-4 sm:px-6 py-4 space-y-4">
-          {board && <KPIBar totals={board.totalsByUrgency} jobs={board.allJobs} />}
+      {/* Tool row: toolbar buttons (create order, etc) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <BoardToolbar
+          canCreate={session.role === 'admin' || session.role === 'sales'}
+          isAdmin={session.role === 'admin'}
+          jobs={visibleJobs}
+          defaultOrderer={session.user}
+        />
+      </div>
 
-          {/* Tool row: toolbar buttons (create order, etc) */}
-          <div className="flex flex-wrap items-center gap-2">
-            <BoardToolbar
-              canCreate={session.role === 'admin' || session.role === 'sales'}
-              isAdmin={session.role === 'admin'}
-              jobs={visibleJobs}
-              defaultOrderer={session.user}
-            />
-          </div>
-
-          {errorMessage ? (
-            <ErrorPanel message={errorMessage} />
-          ) : board ? (
-            <>
-              {/* Group section: dept heading + filter row */}
-              {board.depts.map((dept) => (
-                <section key={dept.dept} className="space-y-2">
-                  <DeptSectionHeader
+      {errorMessage ? (
+        <ErrorPanel message={errorMessage} />
+      ) : board ? (
+        <>
+          {board.depts.map((dept) => (
+            <section key={dept.dept} className="space-y-2">
+              <DeptSectionHeader
+                dept={dept.dept}
+                label={dept.label}
+                count={dept.columns.reduce((sum, c) => sum + c.jobs.length, 0)}
+              />
+              {/* Filter chips below first dept heading only */}
+              {dept.dept === board.depts[0].dept && <FilterChips />}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {dept.columns.map((col) => (
+                  <Column
+                    key={col.staff.id}
                     dept={dept.dept}
-                    label={dept.label}
-                    count={dept.columns.reduce((sum, c) => sum + c.jobs.length, 0)}
+                    column={col}
+                    sessionRole={session.role}
                   />
-                  {/* Filter chips below first dept heading only */}
-                  {dept.dept === board.depts[0].dept && <FilterChips />}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {dept.columns.map((col) => (
-                      <Column
-                        key={col.staff.id}
-                        dept={dept.dept}
-                        column={col}
-                        sessionRole={session.role}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </>
-          ) : null}
-        </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </>
+      ) : null}
 
-        <BulkActionsBar jobs={visibleJobs} isAdmin={session.role === 'admin'} />
-      </BulkModeProvider>
-      </UndoProvider>
-    </DashboardShell>
+      <BulkActionsBar jobs={visibleJobs} isAdmin={session.role === 'admin'} />
+    </>
+  );
+}
+
+/** Layout-matched skeleton shown while BoardData awaits loadAll. Geometry
+ *  is tuned to /board: 4 KPI chips + toolbar row + 3 dept sections × 3
+ *  staff columns × 4 card stubs. Animates with `animate-pulse`. */
+function BoardSkeleton() {
+  return (
+    <div className="space-y-4" aria-hidden="true">
+      {/* KPI bar — 4 urgency chips */}
+      <div className="flex flex-wrap gap-2">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-11 w-32 bg-stone-100 rounded-lg animate-pulse" />
+        ))}
+      </div>
+      {/* Toolbar — create-order + admin buttons */}
+      <div className="flex gap-2">
+        <div className="h-9 w-36 bg-stone-100 rounded-lg animate-pulse" />
+        <div className="h-9 w-24 bg-stone-100 rounded-lg animate-pulse" />
+        <div className="h-9 w-24 bg-stone-100 rounded-lg animate-pulse" />
+      </div>
+      {/* 3 dept sections */}
+      {[0, 1, 2].map((s) => (
+        <div key={s} className="space-y-2">
+          <div className="flex items-baseline gap-3 px-1 pt-2">
+            <div className="h-4 w-28 bg-stone-200 rounded animate-pulse" />
+            <div className="h-3 w-20 bg-stone-100 rounded animate-pulse" />
+            <div className="h-3 w-12 bg-stone-100 rounded animate-pulse ml-auto" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[0, 1, 2].map((c) => (
+              <div key={c} className="space-y-2 bg-white border border-stone-100 rounded-lg p-2">
+                <div className="h-12 bg-stone-100 rounded animate-pulse" />
+                {[0, 1, 2, 3].map((j) => (
+                  <div
+                    key={j}
+                    className="h-20 bg-stone-50 border border-stone-100 rounded animate-pulse"
+                    style={{ animationDelay: `${(s + c + j) * 80}ms` }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
