@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
@@ -30,7 +31,6 @@ function parseRange(input: string | undefined): Range {
   return (VALID_RANGES as readonly number[]).includes(n) ? (n as Range) : 12;
 }
 
-// Server Component — fetches Apps Script + computes everything server-side
 export default async function AnalyticsPage({
   searchParams,
 }: {
@@ -41,6 +41,26 @@ export default async function AnalyticsPage({
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/analytics');
 
+  return (
+    <DashboardShell user={session.user} role={session.role}>
+      <AutoSync />
+      <header className="border-b border-stone-100 bg-white">
+        <div className="px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+          <h1 className="text-xl font-bold text-stone-900">รายงาน</h1>
+          <RangeSelector current={months} />
+        </div>
+      </header>
+
+      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
+        <Suspense key={String(months)} fallback={<AnalyticsSkeleton />}>
+          <AnalyticsData months={months} />
+        </Suspense>
+      </div>
+    </DashboardShell>
+  );
+}
+
+async function AnalyticsData({ months }: { months: Range }) {
   let result;
   let errorMessage: string | null = null;
 
@@ -55,44 +75,81 @@ export default async function AnalyticsPage({
         : String(err);
   }
 
+  if (errorMessage) return <ErrorPanel message={errorMessage} />;
+  if (!result) return null;
+
   return (
-    <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
-      <header className="border-b border-stone-100 bg-white">
-        <div className="px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
-          <h1 className="text-xl font-bold text-stone-900">รายงาน</h1>
-          <RangeSelector current={months} />
-        </div>
-      </header>
+    <>
+      <KPIGrid kpis={result.kpis} />
+      <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <OrdersTrendChart trend={result.trend} />
+        <TurnaroundChart trend={result.trend} />
+        <TopCustomersChart data={result.topCustomers} />
+        <DeptWorkloadChart data={result.deptWorkload} />
+      </section>
+      <section className="mt-8">
+        <h2 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-3">
+          Trend รายเดือน — ตัวเลขละเอียด
+        </h2>
+        <TrendTable trend={result.trend} />
+      </section>
+      <p className="text-xs text-stone-400 mt-6 text-right">
+        cache 60s · server-rendered · {months} เดือนล่าสุด
+      </p>
+    </>
+  );
+}
 
-      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
-        {errorMessage ? (
-          <ErrorPanel message={errorMessage} />
-        ) : result ? (
-          <>
-            <KPIGrid kpis={result.kpis} />
-
-            <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <OrdersTrendChart trend={result.trend} />
-              <TurnaroundChart trend={result.trend} />
-              <TopCustomersChart data={result.topCustomers} />
-              <DeptWorkloadChart data={result.deptWorkload} />
-            </section>
-
-            <section className="mt-8">
-              <h2 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-3">
-                Trend รายเดือน — ตัวเลขละเอียด
-              </h2>
-              <TrendTable trend={result.trend} />
-            </section>
-
-            <p className="text-xs text-stone-400 mt-6 text-right">
-              cache 60s · server-rendered · {months} เดือนล่าสุด
-            </p>
-          </>
-        ) : null}
+function AnalyticsSkeleton() {
+  return (
+    <div aria-hidden="true">
+      {/* 5-card KPI grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="bg-white rounded-xl border border-stone-200 p-5 space-y-3"
+            style={{ animationDelay: `${i * 80}ms` }}
+          >
+            <div className="h-3 w-20 bg-stone-100 rounded animate-pulse" />
+            <div className="h-8 w-24 bg-stone-200 rounded animate-pulse" />
+            <div className="h-2 w-16 bg-stone-100 rounded animate-pulse" />
+          </div>
+        ))}
       </div>
-    </DashboardShell>
+      {/* 4 chart cards */}
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="bg-white rounded-xl border border-stone-200 p-5 h-72 animate-pulse"
+            style={{ animationDelay: `${i * 100}ms` }}
+          />
+        ))}
+      </div>
+      {/* trend table */}
+      <div className="mt-8 space-y-2">
+        <div className="h-3 w-40 bg-stone-100 rounded animate-pulse" />
+        <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+          <div className="bg-stone-50 p-3 flex gap-3">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-3 flex-1 bg-stone-200 rounded animate-pulse" />
+            ))}
+          </div>
+          {[0, 1, 2, 3, 4].map((row) => (
+            <div key={row} className="border-t border-stone-100 p-2.5 flex gap-3">
+              {[0, 1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="h-3 flex-1 bg-stone-100 rounded animate-pulse"
+                  style={{ animationDelay: `${(row + i) * 60}ms` }}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
-import { COOKIE_NAME, verifySession } from '@/lib/auth';
+import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { AutoSync } from '@/lib/auto-sync';
 import { IconSearch, IconFileText, IconPlus, IconAlertCircle } from '@/lib/icons';
@@ -34,7 +35,13 @@ const STATUS_FILTERS = [
   { key: 'cancelled', label: 'ยกเลิก' },
 ];
 
-
+interface ResolvedFilters {
+  query: string;
+  statusFilter: string;
+  fromIso: string;
+  toIso: string;
+  perPage: number;
+}
 
 export default async function OrdersListPage({
   searchParams,
@@ -45,14 +52,47 @@ export default async function OrdersListPage({
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/orders');
 
-  const query = (searchParams.q || '').trim().toLowerCase();
-  const statusFilter = searchParams.status || '';
-  const fromIso = (searchParams.from || '').trim();
-  const toIso = (searchParams.to || '').trim();
-  const fromDate = fromIso ? new Date(`${fromIso}T00:00:00`) : null;
-  const toDate = toIso ? new Date(`${toIso}T23:59:59`) : null;
-  const perPage = resolvePerPage(searchParams.per);
+  const filters: ResolvedFilters = {
+    query: (searchParams.q || '').trim().toLowerCase(),
+    statusFilter: searchParams.status || '',
+    fromIso: (searchParams.from || '').trim(),
+    toIso: (searchParams.to || '').trim(),
+    perPage: resolvePerPage(searchParams.per),
+  };
 
+  // Suspense key — re-renders body when filters change without holding the
+  // prior result on screen.
+  const dataKey = `${filters.query}|${filters.statusFilter}|${filters.fromIso}|${filters.toIso}|${filters.perPage}`;
+
+  return (
+    <DashboardShell user={session.user} role={session.role}>
+      <AutoSync />
+      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-stone-900">รายการใบสั่งงาน</h1>
+        </div>
+      </header>
+
+      <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto space-y-4">
+        {/* Filter form — no data dependency, render in the first chunk */}
+        <FilterForm filters={filters} />
+        <StatusPills filters={filters} />
+
+        <Suspense key={dataKey} fallback={<OrdersSkeleton />}>
+          <OrdersData filters={filters} session={session} />
+        </Suspense>
+      </div>
+    </DashboardShell>
+  );
+}
+
+async function OrdersData({
+  filters,
+  session,
+}: {
+  filters: ResolvedFilters;
+  session: Session;
+}) {
   let snap;
   let errorMessage: string | null = null;
   try {
@@ -152,17 +192,20 @@ export default async function OrdersListPage({
     };
   });
 
+  const fromDate = filters.fromIso ? new Date(`${filters.fromIso}T00:00:00`) : null;
+  const toDate = filters.toIso ? new Date(`${filters.toIso}T23:59:59`) : null;
+
   const filtered = enriched.filter((o) => {
-    if (statusFilter && o.orderStatus !== statusFilter) return false;
+    if (filters.statusFilter && o.orderStatus !== filters.statusFilter) return false;
     if (fromDate || toDate) {
       const d = parseDateDMY(o.dateIn);
       if (!d) return false;
       if (fromDate && d < fromDate) return false;
       if (toDate && d > toDate) return false;
     }
-    if (query) {
+    if (filters.query) {
       const haystack = `${o.name} ${o.customer} ${o.id}`.toLowerCase();
-      if (!haystack.includes(query)) return false;
+      if (!haystack.includes(filters.query)) return false;
     }
     return true;
   });
@@ -170,135 +213,167 @@ export default async function OrdersListPage({
   const orphanCount = enriched.filter((o) => o.isOrphan).length;
 
   return (
-    <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
-      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
-          <h1 className="text-xl font-bold text-stone-900">รายการใบสั่งงาน</h1>
-          <span className="ml-auto text-xs text-stone-500 tabular-nums">
-            {filtered.length}/{enriched.length} ใบ
-          </span>
-        </div>
-      </header>
-
-      <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto space-y-4">
-        {/* Filters */}
-        <form action="/orders" className="flex flex-wrap items-end gap-2">
-          <div className="relative w-full sm:w-72">
-            <label className="block text-[11px] text-stone-500 mb-1">ค้นหา</label>
-            <IconSearch size={16} className="absolute left-3 top-[34px] -translate-y-1/2 text-stone-400 pointer-events-none" />
-            <input
-              type="search"
-              name="q"
-              defaultValue={query}
-              placeholder="ค้นชื่องาน / ลูกค้า / id..."
-              className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-stone-500 mb-1">รับ จาก</label>
-            <input
-              type="date"
-              name="from"
-              defaultValue={fromIso}
-              className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-stone-500 mb-1">ถึง</label>
-            <input
-              type="date"
-              name="to"
-              defaultValue={toIso}
-              className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
-            />
-          </div>
-          {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
-          <button
-            type="submit"
-            className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-          >
-            กรอง
-          </button>
-          {(query || fromIso || toIso || statusFilter) && (
-            <a href="/orders" className="text-xs text-stone-500 hover:text-stone-700 underline">
-              ล้างตัวกรอง
-            </a>
-          )}
-        </form>
-
-        {/* Status pills */}
-        <div className="flex flex-wrap gap-2">
-          {STATUS_FILTERS.map((f) => {
-            const active = statusFilter === f.key;
-            const next = new URLSearchParams();
-            if (query) next.set('q', query);
-            if (fromIso) next.set('from', fromIso);
-            if (toIso) next.set('to', toIso);
-            if (f.key) next.set('status', f.key);
-            const qs = next.toString();
-            return (
-              <Link
-                key={f.key || 'all'}
-                href={qs ? `/orders?${qs}` : '/orders'}
-                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                  active
-                    ? 'bg-sky-600 text-white border-sky-600'
-                    : 'bg-white text-stone-700 border-stone-200 hover:border-stone-300'
-                }`}
-              >
-                {f.label}
-              </Link>
-            );
-          })}
-        </div>
-
-        {/* Toolbar — Export CSV + ตรวจสอบข้อมูล + + สั่งงานใหม่ */}
-        <div className="flex flex-wrap items-center gap-2">
-          <OrdersClient rows={filtered} />
+    <>
+      {/* Toolbar — Export CSV + ตรวจสอบข้อมูล + count + + สั่งงานใหม่ */}
+      <div className="flex flex-wrap items-center gap-2">
+        <OrdersClient rows={filtered} />
+        <Link
+          href={orphanCount > 0 ? '/orders?status=sent' : '/orders'}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${
+            orphanCount > 0
+              ? 'bg-red-50 text-red-700 hover:bg-red-100'
+              : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+          }`}
+          title="ใบสั่งที่ยังไม่ได้สร้าง Job (ไม่นับ ร่าง / จัดส่งแล้ว / ยกเลิก)"
+        >
+          <IconAlertCircle size={13} />
+          ตรวจสอบข้อมูล {orphanCount > 0 && `(${orphanCount})`}
+        </Link>
+        <span className="text-xs text-stone-500 tabular-nums">
+          {filtered.length}/{enriched.length} ใบ
+        </span>
+        {(session.role === 'admin' || session.role === 'sales') && (
           <Link
-            href={orphanCount > 0 ? '/orders?status=sent' : '/orders'}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${
-              orphanCount > 0
-                ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-            }`}
-            title="ใบสั่งที่ยังไม่ได้สร้าง Job (ไม่นับ ร่าง / จัดส่งแล้ว / ยกเลิก)"
+            href="/orders/new"
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark"
           >
-            <IconAlertCircle size={13} />
-            ตรวจสอบข้อมูล {orphanCount > 0 && `(${orphanCount})`}
+            <IconPlus size={13} />
+            สั่งงานใหม่
           </Link>
-          {(session.role === 'admin' || session.role === 'sales') && (
-            <Link
-              href="/orders/new"
-              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-            >
-              <IconPlus size={13} />
-              สั่งงานใหม่
-            </Link>
-          )}
-        </div>
-
-        {errorMessage ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-            <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
-            <p className="text-sm text-amber-800 mt-2 font-mono">{errorMessage}</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
-            <div className="flex justify-center mb-2 text-stone-300">
-              <IconFileText size={36} />
-            </div>
-            <p className="text-sm text-stone-500">
-              {query || statusFilter || fromIso || toIso
-                ? 'ไม่พบใบสั่งงานตามเงื่อนไข'
-                : 'ยังไม่มีใบสั่งงาน'}
-            </p>
-          </div>
-        ) : (
-          <OrdersTable rows={filtered} role={session.role} perPage={perPage} />
         )}
       </div>
-    </DashboardShell>
+
+      {errorMessage ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+          <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
+          <p className="text-sm text-amber-800 mt-2 font-mono">{errorMessage}</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
+          <div className="flex justify-center mb-2 text-stone-300">
+            <IconFileText size={36} />
+          </div>
+          <p className="text-sm text-stone-500">
+            {filters.query || filters.statusFilter || filters.fromIso || filters.toIso
+              ? 'ไม่พบใบสั่งงานตามเงื่อนไข'
+              : 'ยังไม่มีใบสั่งงาน'}
+          </p>
+        </div>
+      ) : (
+        <OrdersTable rows={filtered} role={session.role} perPage={filters.perPage} />
+      )}
+    </>
+  );
+}
+
+/** Filter form — searchParams-driven defaults, no data dep. Renders in
+ *  the first server chunk. */
+function FilterForm({ filters }: { filters: ResolvedFilters }) {
+  const { query, statusFilter, fromIso, toIso } = filters;
+  return (
+    <form action="/orders" className="flex flex-wrap items-end gap-2">
+      <div className="relative w-full sm:w-72">
+        <label className="block text-[11px] text-stone-500 mb-1">ค้นหา</label>
+        <IconSearch size={16} className="absolute left-3 top-[34px] -translate-y-1/2 text-stone-400 pointer-events-none" />
+        <input
+          type="search"
+          name="q"
+          defaultValue={query}
+          placeholder="ค้นชื่องาน / ลูกค้า / id..."
+          className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+        />
+      </div>
+      <div>
+        <label className="block text-[11px] text-stone-500 mb-1">รับ จาก</label>
+        <input
+          type="date"
+          name="from"
+          defaultValue={fromIso}
+          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
+        />
+      </div>
+      <div>
+        <label className="block text-[11px] text-stone-500 mb-1">ถึง</label>
+        <input
+          type="date"
+          name="to"
+          defaultValue={toIso}
+          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
+        />
+      </div>
+      {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
+      <button
+        type="submit"
+        className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
+      >
+        กรอง
+      </button>
+      {(query || fromIso || toIso || statusFilter) && (
+        <a href="/orders" className="text-xs text-stone-500 hover:text-stone-700 underline">
+          ล้างตัวกรอง
+        </a>
+      )}
+    </form>
+  );
+}
+
+function StatusPills({ filters }: { filters: ResolvedFilters }) {
+  const { query, statusFilter, fromIso, toIso } = filters;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {STATUS_FILTERS.map((f) => {
+        const active = statusFilter === f.key;
+        const next = new URLSearchParams();
+        if (query) next.set('q', query);
+        if (fromIso) next.set('from', fromIso);
+        if (toIso) next.set('to', toIso);
+        if (f.key) next.set('status', f.key);
+        const qs = next.toString();
+        return (
+          <Link
+            key={f.key || 'all'}
+            href={qs ? `/orders?${qs}` : '/orders'}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              active
+                ? 'bg-sky-600 text-white border-sky-600'
+                : 'bg-white text-stone-700 border-stone-200 hover:border-stone-300'
+            }`}
+          >
+            {f.label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function OrdersSkeleton() {
+  return (
+    <div className="space-y-3" aria-hidden="true">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="h-7 w-24 bg-stone-100 rounded-lg animate-pulse" />
+        <div className="h-7 w-32 bg-stone-100 rounded-lg animate-pulse" />
+        <div className="h-3 w-20 bg-stone-100 rounded animate-pulse" />
+        <div className="ml-auto h-7 w-28 bg-stone-100 rounded-lg animate-pulse" />
+      </div>
+      <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+        <div className="border-b border-stone-100 p-3 flex gap-3 bg-stone-50">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="h-3 flex-1 bg-stone-200 rounded animate-pulse" />
+          ))}
+        </div>
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((row) => (
+          <div key={row} className="border-b border-stone-50 p-3 flex gap-3">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="h-3 flex-1 bg-stone-100 rounded animate-pulse"
+                style={{ animationDelay: `${(row + i) * 60}ms` }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

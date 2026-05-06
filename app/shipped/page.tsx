@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
@@ -24,16 +25,59 @@ interface SearchParams {
   per?: string;
 }
 
+interface ResolvedFilters {
+  query: string;
+  year: number;
+  month: number;
+  perPage: number;
+}
+
 export default async function ShippedPage({ searchParams }: { searchParams: SearchParams }) {
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/shipped');
 
-  const query = (searchParams.q || '').trim().toLowerCase();
-  const year = Number(searchParams.year) || 0;
-  const month = Number(searchParams.month) || 0;
-  const perPage = resolvePerPage(searchParams.per);
+  const filters: ResolvedFilters = {
+    query: (searchParams.q || '').trim().toLowerCase(),
+    year: Number(searchParams.year) || 0,
+    month: Number(searchParams.month) || 0,
+    perPage: resolvePerPage(searchParams.per),
+  };
 
+  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}`;
+
+  return (
+    <DashboardShell user={session.user} role={session.role}>
+      <AutoSync />
+      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-stone-900">จัดส่งแล้ว</h1>
+        </div>
+      </header>
+      <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
+        {/* Filter form is rendered inside the Suspense because the year
+         *  dropdown depends on the dataset to know which years exist. The
+         *  rest of the page chrome (header, sidebar, archive button) ships
+         *  in the first chunk so the user never sees a blank page. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/archive"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
+          >
+            <IconFolder size={13} />
+            ค้นหาในประวัติ
+          </Link>
+        </div>
+
+        <Suspense key={dataKey} fallback={<ShippedSkeleton />}>
+          <ShippedData filters={filters} />
+        </Suspense>
+      </div>
+    </DashboardShell>
+  );
+}
+
+async function ShippedData({ filters }: { filters: ResolvedFilters }) {
   let snap;
   let errorMessage: string | null = null;
   try {
@@ -58,92 +102,76 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
   }));
 
   const years = distinctYears(allShipped, (s) => s.shippedDate);
-  const filtered = filterByYearMonth(enriched, (s) => s.shippedDate, year, month).filter((s) => {
-    if (!query) return true;
+  const filtered = filterByYearMonth(enriched, (s) => s.shippedDate, filters.year, filters.month).filter((s) => {
+    if (!filters.query) return true;
     const haystack = `${s.name} ${s.id} ${s.orderId || ''} ${s.customer}`.toLowerCase();
-    return haystack.includes(query);
+    return haystack.includes(filters.query);
   });
 
   return (
-    <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
-      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
-          <h1 className="text-xl font-bold text-stone-900">จัดส่งแล้ว</h1>
-          <span className="ml-auto text-xs text-stone-500 tabular-nums">
-            {filtered.length}/{allShipped.length} รายการ
-          </span>
+    <>
+      <form action="/shipped" className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-72">
+          <IconSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+          <input
+            type="search"
+            name="q"
+            defaultValue={filters.query}
+            placeholder="ค้นชื่องาน / ลูกค้า / id..."
+            className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
         </div>
-      </header>
-      <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
-        {/* Filters */}
-        <form action="/shipped" className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-72">
-            <IconSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-            <input
-              type="search"
-              name="q"
-              defaultValue={query}
-              placeholder="ค้นชื่องาน / ลูกค้า / id..."
-              className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-            />
-          </div>
-          <select
-            name="year"
-            defaultValue={year || ''}
-            className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
-          >
-            <option value="">ทุกปี</option>
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y + 543}
-              </option>
-            ))}
-          </select>
-          <select
-            name="month"
-            defaultValue={month || ''}
-            className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent"
-          >
-            <option value="">ทุกเดือน</option>
-            {THAI_MONTHS_FULL.map((m, i) => (
-              <option key={m} value={i + 1}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-          >
-            กรอง
-          </button>
-          {(query || year || month) && (
-            <a href="/shipped" className="text-xs text-stone-500 hover:text-stone-700 underline">
-              ล้างตัวกรอง
-            </a>
-          )}
-        </form>
+        <select
+          name="year"
+          defaultValue={filters.year || ''}
+          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
+        >
+          <option value="">ทุกปี</option>
+          {years.map((y) => (
+            <option key={y} value={y}>
+              {y + 543}
+            </option>
+          ))}
+        </select>
+        <select
+          name="month"
+          defaultValue={filters.month || ''}
+          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent"
+        >
+          <option value="">ทุกเดือน</option>
+          {THAI_MONTHS_FULL.map((m, i) => (
+            <option key={m} value={i + 1}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
+        >
+          กรอง
+        </button>
+        {(filters.query || filters.year || filters.month) && (
+          <a href="/shipped" className="text-xs text-stone-500 hover:text-stone-700 underline">
+            ล้างตัวกรอง
+          </a>
+        )}
+      </form>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <ShippedClient rows={filtered} />
-          <Link
-            href="/archive"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
-          >
-            <IconFolder size={13} />
-            ค้นหาในประวัติ
-          </Link>
-        </div>
+      <div className="text-xs text-stone-500 tabular-nums">
+        {filtered.length}/{allShipped.length} รายการ
+      </div>
 
-        {errorMessage ? (
-          <ErrorBox message={errorMessage} />
-        ) : filtered.length === 0 ? (
-          <EmptyState filtered={!!(query || year || month)} />
-        ) : (
-          <>
-            <PageSizeBar total={filtered.length} perPage={perPage} shown={Math.min(filtered.length, perPage)} />
-            <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
+      <ShippedClient rows={filtered} />
+
+      {errorMessage ? (
+        <ErrorBox message={errorMessage} />
+      ) : filtered.length === 0 ? (
+        <EmptyState filtered={!!(filters.query || filters.year || filters.month)} />
+      ) : (
+        <>
+          <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={Math.min(filtered.length, filters.perPage)} />
+          <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
             <table className="w-full text-sm min-w-[760px]">
               <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
                 <tr>
@@ -156,7 +184,7 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {filtered.slice(0, perPage).map((s) => (
+                {filtered.slice(0, filters.perPage).map((s) => (
                   <tr key={s.id} className="hover:bg-emerald-50/30">
                     <td className="px-3 py-2 tabular-nums text-stone-500">#{s.id}</td>
                     <td className="px-3 py-2 font-medium text-stone-900">{s.name}</td>
@@ -175,16 +203,48 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
                 ))}
               </tbody>
             </table>
-            {filtered.length > perPage && (
+            {filtered.length > filters.perPage && (
               <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-                แสดง {perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัด
+                แสดง {filters.perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัด
               </div>
             )}
-            </div>
-          </>
-        )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function ShippedSkeleton() {
+  return (
+    <div className="space-y-3" aria-hidden="true">
+      {/* Filter form skeleton */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="h-9 w-72 bg-stone-100 rounded-xl animate-pulse" />
+        <div className="h-9 w-24 bg-stone-100 rounded-xl animate-pulse" />
+        <div className="h-9 w-28 bg-stone-100 rounded-xl animate-pulse" />
+        <div className="h-9 w-16 bg-stone-100 rounded-xl animate-pulse" />
       </div>
-    </DashboardShell>
+      <div className="h-3 w-24 bg-stone-100 rounded animate-pulse" />
+      <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+        <div className="border-b border-stone-100 p-3 flex gap-3 bg-stone-50">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="h-3 flex-1 bg-stone-200 rounded animate-pulse" />
+          ))}
+        </div>
+        {[0, 1, 2, 3, 4, 5, 6].map((row) => (
+          <div key={row} className="border-b border-stone-50 p-3 flex gap-3">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="h-3 flex-1 bg-stone-100 rounded animate-pulse"
+                style={{ animationDelay: `${(row + i) * 60}ms` }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

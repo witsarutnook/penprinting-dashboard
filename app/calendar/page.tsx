@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
@@ -26,6 +27,12 @@ interface SearchParams {
   customer?: string;
 }
 
+interface CalFilters {
+  dept: Dept | '';
+  urgency: Urgency | '';
+  customer: string;
+}
+
 function parseMonth(input: string | undefined): { year: number; month: number } {
   const fallback = (() => {
     const t = getBangkokToday();
@@ -45,20 +52,75 @@ function formatMonth(year: number, month: number): string {
 }
 
 export default async function CalendarPage({ searchParams }: { searchParams: SearchParams }) {
-  // Admin-only (defense in depth — middleware blocks anonymous already)
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session || session.role !== 'admin') {
-    redirect('/analytics');  // or could 403, but redirect is friendlier
+    redirect('/analytics');
   }
 
   const { year, month } = parseMonth(searchParams.m);
-  const filters = {
+  const filters: CalFilters = {
     dept: (searchParams.dept || '') as Dept | '',
     urgency: (searchParams.urgency || '') as Urgency | '',
     customer: searchParams.customer || '',
   };
 
+  // Prev/next month query strings (preserving filters) — computed from
+  // searchParams alone, so they render in the first chunk.
+  const prev = (() => {
+    const d = new Date(year, month - 1, 1);
+    return makeQuery(d.getFullYear(), d.getMonth(), filters);
+  })();
+  const next = (() => {
+    const d = new Date(year, month + 1, 1);
+    return makeQuery(d.getFullYear(), d.getMonth(), filters);
+  })();
+  const todayHref = makeQuery(undefined, undefined, filters);
+
+  const monthLabelFromInput = (() => {
+    const fmt = new Intl.DateTimeFormat('th-TH', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: 'long',
+    });
+    return fmt.format(new Date(year, month, 1));
+  })();
+
+  const dataKey = `${year}-${month}|${filters.dept}|${filters.urgency}|${filters.customer}`;
+
+  return (
+    <DashboardShell user={session.user} role={session.role}>
+      <AutoSync />
+      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+        <div className="px-4 sm:px-6 py-3">
+          <h1 className="text-lg sm:text-xl font-bold text-stone-900">ปฏิทิน</h1>
+        </div>
+      </header>
+
+      <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto">
+        <NavBar
+          monthLabel={monthLabelFromInput}
+          prevHref={prev}
+          nextHref={next}
+          todayHref={todayHref}
+        />
+        <FilterBar current={filters} year={year} month={month} />
+
+        <Suspense key={dataKey} fallback={<CalendarSkeleton />}>
+          <CalendarData year={year} month={month} filters={filters} />
+        </Suspense>
+      </div>
+    </DashboardShell>
+  );
+}
+
+async function CalendarData({
+  year, month, filters,
+}: {
+  year: number;
+  month: number;
+  filters: CalFilters;
+}) {
   let calendar;
   let errorMessage: string | null = null;
   try {
@@ -72,49 +134,44 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
         : String(err);
   }
 
-  // Prev/next month query strings (preserving filters)
-  const prev = (() => {
-    const d = new Date(year, month - 1, 1);
-    return makeQuery(d.getFullYear(), d.getMonth(), filters);
-  })();
-  const next = (() => {
-    const d = new Date(year, month + 1, 1);
-    return makeQuery(d.getFullYear(), d.getMonth(), filters);
-  })();
-  const todayHref = makeQuery(undefined, undefined, filters);
+  if (errorMessage) return <ErrorPanel message={errorMessage} />;
+  if (!calendar) return null;
 
   return (
-    <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
-      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3">
-          <h1 className="text-lg sm:text-xl font-bold text-stone-900">ปฏิทิน</h1>
-        </div>
-      </header>
-
-      <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto">
-        {errorMessage ? (
-          <ErrorPanel message={errorMessage} />
-        ) : calendar ? (
-          <>
-            <NavBar
-              monthLabel={calendar.monthLabel}
-              prevHref={prev}
-              nextHref={next}
-              todayHref={todayHref}
-            />
-            <FilterBar current={filters} year={year} month={month} />
-            <Summary totals={calendar.totalsByUrgency} totalJobs={calendar.totalJobs} />
-            <div className="mt-4">
-              <CalendarGrid days={calendar.days} todayKey={calendar.todayKey} />
-            </div>
-            <p className="text-xs text-stone-400 mt-4 text-right">
-              cache 60s · server-rendered · Asia/Bangkok TZ
-            </p>
-          </>
-        ) : null}
+    <>
+      <Summary totals={calendar.totalsByUrgency} totalJobs={calendar.totalJobs} />
+      <div className="mt-4">
+        <CalendarGrid days={calendar.days} todayKey={calendar.todayKey} />
       </div>
-    </DashboardShell>
+      <p className="text-xs text-stone-400 mt-4 text-right">
+        cache 60s · server-rendered · Asia/Bangkok TZ
+      </p>
+    </>
+  );
+}
+
+function CalendarSkeleton() {
+  return (
+    <div aria-hidden="true">
+      {/* Summary pill row */}
+      <div className="bg-white rounded-xl border border-stone-200 p-3 mb-3 flex gap-3 items-center">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="h-5 w-20 bg-stone-100 rounded-full animate-pulse" />
+        ))}
+      </div>
+      {/* Month grid — 6 weeks × 7 cols */}
+      <div className="bg-white rounded-xl border border-stone-200 p-2 mt-4">
+        <div className="grid grid-cols-7 gap-2">
+          {Array.from({ length: 42 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-20 sm:h-24 bg-stone-50 border border-stone-100 rounded animate-pulse"
+              style={{ animationDelay: `${i * 30}ms` }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -182,7 +239,6 @@ function FilterBar({
   year: number;
   month: number;
 }) {
-  // Submit GET form to refresh with new filters (server-side)
   return (
     <form
       action="/calendar"

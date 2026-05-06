@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
@@ -24,16 +25,48 @@ interface SearchParams {
   per?: string;
 }
 
+interface ResolvedFilters {
+  query: string;
+  year: number;
+  month: number;
+  perPage: number;
+}
+
 export default async function CancelledPage({ searchParams }: { searchParams: SearchParams }) {
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session || session.role !== 'admin') redirect('/board?dept=post');
 
-  const query = (searchParams.q || '').trim().toLowerCase();
-  const year = Number(searchParams.year) || 0;
-  const month = Number(searchParams.month) || 0;
-  const perPage = resolvePerPage(searchParams.per);
+  const filters: ResolvedFilters = {
+    query: (searchParams.q || '').trim().toLowerCase(),
+    year: Number(searchParams.year) || 0,
+    month: Number(searchParams.month) || 0,
+    perPage: resolvePerPage(searchParams.per),
+  };
 
+  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}`;
+
+  return (
+    <DashboardShell user={session.user} role={session.role}>
+      <AutoSync />
+      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-stone-900">รายการยกเลิก</h1>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 hidden sm:inline">
+            admin only
+          </span>
+        </div>
+      </header>
+      <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
+        <Suspense key={dataKey} fallback={<CancelledSkeleton />}>
+          <CancelledData filters={filters} />
+        </Suspense>
+      </div>
+    </DashboardShell>
+  );
+}
+
+async function CancelledData({ filters }: { filters: ResolvedFilters }) {
   let cancelled;
   let errorMessage: string | null = null;
   try {
@@ -45,96 +78,85 @@ export default async function CancelledPage({ searchParams }: { searchParams: Se
 
   const allCancelled = cancelled || [];
   const years = distinctYears(allCancelled, (c) => c.cancelledAt);
-  const filtered = filterByYearMonth(allCancelled, (c) => c.cancelledAt, year, month).filter((c) => {
-    if (!query) return true;
+  const filtered = filterByYearMonth(allCancelled, (c) => c.cancelledAt, filters.year, filters.month).filter((c) => {
+    if (!filters.query) return true;
     const haystack = `${c.name} ${c.id} ${c.cancelledBy} ${c.reason}`.toLowerCase();
-    return haystack.includes(query);
+    return haystack.includes(filters.query);
   });
 
   return (
-    <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
-      <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
-          <h1 className="text-xl font-bold text-stone-900">รายการยกเลิก</h1>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 hidden sm:inline">
-            admin only
-          </span>
-          <span className="ml-auto text-xs text-stone-500 tabular-nums">
-            {filtered.length}/{allCancelled.length} รายการ
-          </span>
+    <>
+      <form action="/cancelled" className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-72">
+          <IconSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+          <input
+            type="search"
+            name="q"
+            defaultValue={filters.query}
+            placeholder="ค้นชื่องาน / ผู้ยกเลิก / เหตุผล..."
+            className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
         </div>
-      </header>
-      <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
-        {/* Filters */}
-        <form action="/cancelled" className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-72">
-            <IconSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-            <input
-              type="search"
-              name="q"
-              defaultValue={query}
-              placeholder="ค้นชื่องาน / ผู้ยกเลิก / เหตุผล..."
-              className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-            />
-          </div>
-          <select
-            name="year"
-            defaultValue={year || ''}
-            className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
-          >
-            <option value="">ทุกปี</option>
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y + 543}
-              </option>
-            ))}
-          </select>
-          <select
-            name="month"
-            defaultValue={month || ''}
-            className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent"
-          >
-            <option value="">ทุกเดือน</option>
-            {THAI_MONTHS_FULL.map((m, i) => (
-              <option key={m} value={i + 1}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-          >
-            กรอง
-          </button>
-          {(query || year || month) && (
-            <a href="/cancelled" className="text-xs text-stone-500 hover:text-stone-700 underline">
-              ล้างตัวกรอง
-            </a>
-          )}
-        </form>
+        <select
+          name="year"
+          defaultValue={filters.year || ''}
+          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
+        >
+          <option value="">ทุกปี</option>
+          {years.map((y) => (
+            <option key={y} value={y}>
+              {y + 543}
+            </option>
+          ))}
+        </select>
+        <select
+          name="month"
+          defaultValue={filters.month || ''}
+          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent"
+        >
+          <option value="">ทุกเดือน</option>
+          {THAI_MONTHS_FULL.map((m, i) => (
+            <option key={m} value={i + 1}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
+        >
+          กรอง
+        </button>
+        {(filters.query || filters.year || filters.month) && (
+          <a href="/cancelled" className="text-xs text-stone-500 hover:text-stone-700 underline">
+            ล้างตัวกรอง
+          </a>
+        )}
+      </form>
 
-        {/* Client toolbar — Export CSV */}
-        <CancelledClient rows={filtered} />
+      <div className="text-xs text-stone-500 tabular-nums">
+        {filtered.length}/{allCancelled.length} รายการ
+      </div>
 
-        {errorMessage ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-            <p className="text-sm text-amber-800 font-mono">{errorMessage}</p>
+      <CancelledClient rows={filtered} />
+
+      {errorMessage ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+          <p className="text-sm text-amber-800 font-mono">{errorMessage}</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
+          <div className="flex justify-center mb-2 text-stone-300">
+            <IconAlertCircle size={36} />
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
-            <div className="flex justify-center mb-2 text-stone-300">
-              <IconAlertCircle size={36} />
-            </div>
-            <p className="text-sm text-stone-500">
-              {query || year || month ? 'ไม่พบรายการที่ตรงตามตัวกรอง' : 'ไม่มีรายการยกเลิก'}
-            </p>
-          </div>
-        ) : (
-          <>
-            <PageSizeBar total={filtered.length} perPage={perPage} shown={Math.min(filtered.length, perPage)} />
-            <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
+          <p className="text-sm text-stone-500">
+            {filters.query || filters.year || filters.month ? 'ไม่พบรายการที่ตรงตามตัวกรอง' : 'ไม่มีรายการยกเลิก'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={Math.min(filtered.length, filters.perPage)} />
+          <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
             <table className="w-full text-sm min-w-[860px]">
               <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
                 <tr>
@@ -148,7 +170,7 @@ export default async function CancelledPage({ searchParams }: { searchParams: Se
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {filtered.slice(0, perPage).map((c) => (
+                {filtered.slice(0, filters.perPage).map((c) => (
                   <tr key={c.id} className="hover:bg-red-50/30">
                     <td className="px-3 py-2 tabular-nums text-stone-500">#{c.id}</td>
                     <td className="px-3 py-2 font-medium text-red-700 line-through decoration-red-300">
@@ -171,16 +193,47 @@ export default async function CancelledPage({ searchParams }: { searchParams: Se
                 ))}
               </tbody>
             </table>
-            {filtered.length > perPage && (
+            {filtered.length > filters.perPage && (
               <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-                แสดง {perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัดให้แคบลง
+                แสดง {filters.perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัดให้แคบลง
               </div>
             )}
-            </div>
-          </>
-        )}
-      </div>
-    </DashboardShell>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
+function CancelledSkeleton() {
+  return (
+    <div className="space-y-3" aria-hidden="true">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="h-9 w-72 bg-stone-100 rounded-xl animate-pulse" />
+        <div className="h-9 w-24 bg-stone-100 rounded-xl animate-pulse" />
+        <div className="h-9 w-28 bg-stone-100 rounded-xl animate-pulse" />
+        <div className="h-9 w-16 bg-stone-100 rounded-xl animate-pulse" />
+      </div>
+      <div className="h-3 w-24 bg-stone-100 rounded animate-pulse" />
+      <div className="h-9 w-32 bg-stone-100 rounded-lg animate-pulse" />
+      <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+        <div className="border-b border-stone-100 p-3 flex gap-3 bg-stone-50">
+          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="h-3 flex-1 bg-stone-200 rounded animate-pulse" />
+          ))}
+        </div>
+        {[0, 1, 2, 3, 4, 5].map((row) => (
+          <div key={row} className="border-b border-stone-50 p-3 flex gap-3">
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+              <div
+                key={i}
+                className="h-3 flex-1 bg-stone-100 rounded animate-pulse"
+                style={{ animationDelay: `${(row + i) * 60}ms` }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
