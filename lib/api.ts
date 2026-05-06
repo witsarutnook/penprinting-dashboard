@@ -28,16 +28,22 @@ function getApiBase(): { url: string; token: string } {
   return { url, token };
 }
 
-/** GET ?action=<name> with token. Caller decides what shape to expect. */
-async function get<T>(action: string, params: Record<string, string> = {}): Promise<T> {
+/** GET ?action=<name> with token. Caller decides what shape to expect.
+ *  Default revalidate=60s (read-side caching) — pass `revalidate: 0` for write-path lookups
+ *  (e.g. allocating nextId before addJob — must see latest counter). */
+async function get<T>(
+  action: string,
+  params: Record<string, string> = {},
+  opts: { revalidate?: number } = {},
+): Promise<T> {
   const { url, token } = getApiBase();
   const qs = new URLSearchParams({ action, token, ...params });
+  const revalidate = opts.revalidate ?? 60;
   const res = await fetch(`${url}?${qs.toString()}`, {
     method: 'GET',
     // Apps Script web apps redirect via 302 to googleusercontent.com — must follow
     redirect: 'follow',
-    // Cache for 60s — analytics doesn't need real-time, reduce Apps Script quota burn
-    next: { revalidate: 60 },
+    next: { revalidate },
   });
   if (!res.ok) {
     throw new AppsScriptError(action, `HTTP ${res.status}`, res.status);
@@ -49,9 +55,14 @@ async function get<T>(action: string, params: Record<string, string> = {}): Prom
   return data as T;
 }
 
-/** Fetch the full snapshot used by the dashboard frontend. */
+/** Fetch the full snapshot used by the dashboard frontend (60s ISR cache). */
 export async function loadAll(): Promise<LoadAllResponse> {
   return get<LoadAllResponse>('loadAll');
+}
+
+/** Fetch loadAll with no caching — for write-path lookups (nextId allocation, etc). */
+export async function loadAllFresh(): Promise<LoadAllResponse> {
+  return get<LoadAllResponse>('loadAll', {}, { revalidate: 0 });
 }
 
 /** POST {action, token, ...body} — mirrors WP `apiPost`. Used for actions that

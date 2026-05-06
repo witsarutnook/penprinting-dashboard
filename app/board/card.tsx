@@ -10,6 +10,7 @@ import {
   DEPT_LABELS,
   STAFF,
 } from '@/lib/board';
+import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
 
@@ -25,6 +26,7 @@ export function Card({
   sessionRole: string | null;
 }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const urgencyColor = URGENCY_COLORS[job.urgency];
 
   function open() {
@@ -32,6 +34,10 @@ export function Card({
   }
   function close() {
     dialogRef.current?.close();
+  }
+  function startEdit() {
+    dialogRef.current?.close();
+    setEditOpen(true);
   }
 
   // Click backdrop closes the dialog
@@ -101,8 +107,14 @@ export function Card({
         ref={dialogRef}
         className="rounded-2xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-2xl w-[92vw]"
       >
-        <DetailContent job={job} onClose={close} sessionRole={sessionRole} />
+        <DetailContent
+          job={job}
+          onClose={close}
+          onEdit={startEdit}
+          sessionRole={sessionRole}
+        />
       </dialog>
+      <JobForm initial={job} open={editOpen} onClose={() => setEditOpen(false)} />
     </>
   );
 }
@@ -112,10 +124,12 @@ export function Card({
 function DetailContent({
   job,
   onClose,
+  onEdit,
   sessionRole,
 }: {
   job: BoardJob;
   onClose: () => void;
+  onEdit: () => void;
   sessionRole: string | null;
 }) {
   const urgencyColor = URGENCY_COLORS[job.urgency];
@@ -214,10 +228,10 @@ function DetailContent({
           </Section>
         )}
 
-        <ActionButtons job={job} sessionRole={sessionRole} onSuccess={onClose} />
+        <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
 
         <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600">
-          ℹ️ ฟีเจอร์ที่ยังไม่มี (แก้ชื่อ/วันที่ • ส่งต่อ • co-work) ใช้ใน{' '}
+          ℹ️ ฟีเจอร์ที่ยังไม่มี (ส่งต่อ • co-work) ใช้ใน{' '}
           <a
             href="https://app.penprinting.co/production-monitoring/"
             className="underline hover:text-stone-800"
@@ -235,10 +249,12 @@ function DetailContent({
 function ActionButtons({
   job,
   sessionRole,
+  onEdit,
   onSuccess,
 }: {
   job: BoardJob;
   sessionRole: string | null;
+  onEdit: () => void;
   onSuccess: () => void;
 }) {
   const router = useRouter();
@@ -321,6 +337,14 @@ function ActionButtons({
           className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {busy === 'ship' ? 'กำลังส่ง...' : '✅ จัดส่งเสร็จ'}
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={busy !== null}
+          className="px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+        >
+          ✏️ แก้ไข
         </button>
         {isAdmin && (
           <button

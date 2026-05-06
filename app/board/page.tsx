@@ -6,6 +6,7 @@ import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { computeBoard, URGENCY_COLORS, URGENCY_LABELS, type Urgency } from '@/lib/board';
 import { LogoutButton } from '../analytics/logout-button';
 import { Column } from './column';
+import { BoardToolbar } from './toolbar';
 
 export const metadata: Metadata = {
   title: 'Kanban Board',
@@ -45,6 +46,7 @@ export default async function BoardPage() {
           </div>
           {session && (
             <div className="flex items-center gap-2 text-xs text-stone-500">
+              <BoardToolbar canCreate={session.role === 'admin' || session.role === 'sales'} />
               <span>
                 {session.user} <span className="text-stone-400">({session.role})</span>
               </span>
