@@ -72,35 +72,43 @@ export async function POST(req: Request) {
   }
 
   // Allocate job id
+  // Idempotency check (auditor C5): if a job already references this order
+  // (e.g. addJob succeeded but updateOrder failed on a previous attempt),
+  // SKIP the addJob step and just retry updateOrder. Without this, retrying
+  // the promote-draft button would create duplicate jobs.
+  const existingJob = snap.jobs.find((j) => Number(j.orderId) === id);
   let jobId: number;
-  try {
-    const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-    if (r.error || !r.nextId) {
-      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+  if (existingJob) {
+    jobId = Number(existingJob.id);
+  } else {
+    try {
+      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
+      if (r.error || !r.nextId) {
+        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+      }
+      jobId = Number(r.nextId);
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 502 });
     }
-    jobId = Number(r.nextId);
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
 
-  // Create the job
-  const jobPayload = {
-    id: jobId,
-    name: order.name,
-    date: dateDue,
-    dateIn: dateIn || dateDue,
-    staff: assignStaff,
-    dept: assignDept,
-    status: 'pending',
-    orderId: id,
-  };
-  try {
-    const r = await post<{ ok?: boolean; error?: string }>('addJob', { data: jobPayload });
-    if (r.error) return NextResponse.json({ error: `addJob failed — ${r.error}` }, { status: 502 });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `addJob failed — ${msg}` }, { status: 502 });
+    const jobPayload = {
+      id: jobId,
+      name: order.name,
+      date: dateDue,
+      dateIn: dateIn || dateDue,
+      staff: assignStaff,
+      dept: assignDept,
+      status: 'pending',
+      orderId: id,
+    };
+    try {
+      const r = await post<{ ok?: boolean; error?: string }>('addJob', { data: jobPayload });
+      if (r.error) return NextResponse.json({ error: `addJob failed — ${r.error}` }, { status: 502 });
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `addJob failed — ${msg}` }, { status: 502 });
+    }
   }
 
   // Flip order status: draft → sent. Preserve the existing details/rawData snapshot.

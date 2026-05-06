@@ -61,7 +61,21 @@ export async function POST(req: Request) {
   );
   if (validationErr) return NextResponse.json({ error: validationErr }, { status: 400 });
 
-  const nextId = Number(snap.nextId) || 100;
+  // Atomically allocate the next job id from Apps Script (LockService inside
+  // getNextId) — never trust the cached snap.nextId because two concurrent
+  // forwards would collide on the same id. Reported by auditor C1 (2026-05-06).
+  let nextId: number;
+  try {
+    const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
+    if (r.error || !r.nextId) {
+      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+    }
+    nextId = Number(r.nextId);
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
+  }
+
   const newJob = {
     id: nextId,
     name: src.name,

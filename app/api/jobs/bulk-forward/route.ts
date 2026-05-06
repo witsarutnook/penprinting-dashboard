@@ -76,7 +76,26 @@ export async function POST(req: Request) {
   const jobsById = new Map<number, (typeof snap.jobs)[number]>();
   snap.jobs.forEach((j) => jobsById.set(Number(j.id), j));
 
-  let nextId = Number(snap.nextId) || 100;
+  // Atomically allocate ONE id PER item from Apps Script LockService.
+  // Pre-allocating N ids client-side from a cached snap.nextId is racy —
+  // a concurrent forward could grab `a+1` while we're using `[a, a+1, …]`
+  // in our batch. Calling getNextId N times guarantees unique ids even
+  // under concurrency at the cost of N round-trips. Bulk-forward is
+  // admin-only + rare (cap 25) so this trade-off is acceptable.
+  // Reported by auditor C1 (2026-05-06).
+  const allocatedIds: number[] = [];
+  try {
+    for (let i = 0; i < cleaned.length; i++) {
+      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
+      if (r.error || !r.nextId) {
+        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+      }
+      allocatedIds.push(Number(r.nextId));
+    }
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
+  }
   const buildItems: Array<{ oldId: number; newJob: Record<string, unknown> }> = [];
 
   for (const it of cleaned) {
@@ -103,7 +122,7 @@ export async function POST(req: Request) {
     buildItems.push({
       oldId: it.id,
       newJob: {
-        id: nextId++,
+        id: allocatedIds[buildItems.length],
         name: src.name,
         date: toISODate(src.date),
         dateIn: toISODate(src.dateIn),

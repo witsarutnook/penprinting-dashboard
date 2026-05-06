@@ -11,6 +11,7 @@ import {
   IconCheck, IconCornerUpRight,
 } from '@/lib/icons';
 import { useToast } from '@/components/toast-provider';
+import { PageSizeBar } from '@/components/page-size-bar';
 
 export interface OrderRow {
   id: number;
@@ -34,6 +35,8 @@ export interface OrderRow {
 interface Props {
   rows: OrderRow[];
   role: 'admin' | 'sales' | 'staff';
+  /** Default 20. Server passes this from `?per=20|50|100` URL param. */
+  perPage?: number;
 }
 
 /** WP-style /orders table: rows are clickable → opens a detail modal with
@@ -42,13 +45,15 @@ interface Props {
  *  Perf note: rows are React.memo'd and the click handler comes via a
  *  stable useCallback so opening the detail modal does NOT re-render
  *  500 rows. Without this, a row-click on /orders feels noticeably laggy. */
-export function OrdersTable({ rows, role }: Props) {
+export function OrdersTable({ rows, role, perPage = 20 }: Props) {
   const [activeId, setActiveId] = useState<number | null>(null);
   const active = rows.find((r) => r.id === activeId) || null;
   const onRowClick = useCallback((id: number) => setActiveId(id), []);
+  const visible = rows.slice(0, perPage);
 
   return (
     <>
+      <PageSizeBar total={rows.length} perPage={perPage} shown={visible.length} />
       <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
         <table className="w-full text-sm min-w-[1024px]">
           <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
@@ -65,14 +70,14 @@ export function OrdersTable({ rows, role }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
-            {rows.slice(0, 500).map((o, idx) => (
+            {visible.map((o, idx) => (
               <OrderRowMemo key={o.id} order={o} idx={idx} onClick={onRowClick} />
             ))}
           </tbody>
         </table>
-        {rows.length > 500 && (
+        {rows.length > visible.length && (
           <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-            แสดง 500 รายการแรก จากทั้งหมด {rows.length} — ใช้ตัวกรองเพื่อจำกัดให้แคบลง
+            แสดง {visible.length} จาก {rows.length} รายการ — ปรับจำนวนหรือใช้ตัวกรองด้านบน
           </div>
         )}
       </div>

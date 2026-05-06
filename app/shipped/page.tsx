@@ -8,6 +8,7 @@ import { displayDate } from '@/lib/jobs';
 import { AutoSync } from '@/lib/auto-sync';
 import { IconTruck, IconSearch, IconFolder } from '@/lib/icons';
 import { distinctYears, filterByYearMonth, dateMonthLabel, THAI_MONTHS_FULL } from '@/lib/list-helpers';
+import { PageSizeBar, resolvePerPage } from '@/components/page-size-bar';
 import Link from 'next/link';
 import { ShippedClient } from './client';
 
@@ -19,6 +20,7 @@ interface SearchParams {
   q?: string;
   year?: string;
   month?: string;
+  per?: string;
 }
 
 export default async function ShippedPage({ searchParams }: { searchParams: SearchParams }) {
@@ -29,6 +31,7 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
   const query = (searchParams.q || '').trim().toLowerCase();
   const year = Number(searchParams.year) || 0;
   const month = Number(searchParams.month) || 0;
+  const perPage = resolvePerPage(searchParams.per);
 
   let snap;
   let errorMessage: string | null = null;
@@ -137,7 +140,9 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
         ) : filtered.length === 0 ? (
           <EmptyState filtered={!!(query || year || month)} />
         ) : (
-          <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
+          <>
+            <PageSizeBar total={filtered.length} perPage={perPage} shown={Math.min(filtered.length, perPage)} />
+            <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
             <table className="w-full text-sm min-w-[760px]">
               <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
                 <tr>
@@ -150,7 +155,7 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {filtered.slice(0, 500).map((s) => (
+                {filtered.slice(0, perPage).map((s) => (
                   <tr key={s.id} className="hover:bg-emerald-50/30">
                     <td className="px-3 py-2 tabular-nums text-stone-500">#{s.id}</td>
                     <td className="px-3 py-2 font-medium text-stone-900">{s.name}</td>
@@ -169,12 +174,13 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
                 ))}
               </tbody>
             </table>
-            {filtered.length > 500 && (
+            {filtered.length > perPage && (
               <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-                แสดง 500 รายการแรก จาก {filtered.length} — ใช้ตัวกรองเพื่อจำกัด
+                แสดง {perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัด
               </div>
             )}
-          </div>
+            </div>
+          </>
         )}
       </div>
     </DashboardShell>

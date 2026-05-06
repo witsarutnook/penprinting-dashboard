@@ -10,7 +10,9 @@ export const metadata: Metadata = {
   title: 'การ์ด Tracking',
 };
 
-const TRACK_BASE_URL = 'https://app.penprinting.co/track-order';
+/** Public tracking URL on the v2 dashboard.
+ *  Aligned with the footer text in client.tsx after auditor C2. */
+const TRACK_BASE_URL = 'https://dashboard.penprinting.co/track';
 
 /** Server page reads the order, generates a QR data-URL pointing at the
  *  public tracking URL, and hands everything to the client wrapper which

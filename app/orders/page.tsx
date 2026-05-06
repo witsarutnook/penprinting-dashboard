@@ -11,6 +11,7 @@ import { computeUrgency, getBangkokToday, URGENCY_LABELS } from '@/lib/calendar'
 import { parseDateDMY } from '@/lib/analytics';
 import { OrdersClient } from './client';
 import { OrdersTable, type OrderRow } from './orders-table';
+import { resolvePerPage } from '@/components/page-size-bar';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ interface SearchParams {
   status?: string;
   from?: string;  // YYYY-MM-DD วันที่รับ from
   to?: string;    // YYYY-MM-DD วันที่รับ to
+  per?: string;   // page size — 20 / 50 / 100 (default 20)
 }
 
 const STATUS_FILTERS = [
@@ -31,6 +33,7 @@ const STATUS_FILTERS = [
   { key: 'shipped', label: 'จัดส่งแล้ว' },
   { key: 'cancelled', label: 'ยกเลิก' },
 ];
+
 
 
 export default async function OrdersListPage({
@@ -48,6 +51,7 @@ export default async function OrdersListPage({
   const toIso = (searchParams.to || '').trim();
   const fromDate = fromIso ? new Date(`${fromIso}T00:00:00`) : null;
   const toDate = toIso ? new Date(`${toIso}T23:59:59`) : null;
+  const perPage = resolvePerPage(searchParams.per);
 
   let snap;
   let errorMessage: string | null = null;
@@ -292,7 +296,7 @@ export default async function OrdersListPage({
             </p>
           </div>
         ) : (
-          <OrdersTable rows={filtered} role={session.role} />
+          <OrdersTable rows={filtered} role={session.role} perPage={perPage} />
         )}
       </div>
     </DashboardShell>

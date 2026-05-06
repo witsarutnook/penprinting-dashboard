@@ -230,7 +230,7 @@ export function TrackingCardClient({
         >
           <div>
             สแกน QR หรือเข้า{' '}
-            <span style={{ color: '#111', fontWeight: 500 }}>app.penprinting.co/track</span>
+            <span style={{ color: '#111', fontWeight: 500 }}>dashboard.penprinting.co/track</span>
           </div>
           <div>
             ติดต่อสอบถาม:{' '}

@@ -28,7 +28,6 @@ import {
   IconRefreshCw,
   IconUser,
   IconUsers,
-  IconPlus,
   IconCheckSquare,
   IconSquare,
   IconLock,
@@ -1001,11 +1000,10 @@ function ActionButtons({
 }) {
   const router = useRouter();
   const { recordForward } = useUndo();
-  const [busy, setBusy] = useState<null | 'ship' | 'cancel' | 'forward' | 'reassign' | 'cowork'>(null);
+  const [busy, setBusy] = useState<null | 'ship' | 'cancel' | 'forward' | 'reassign'>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign' | 'cowork'>(null);
+  const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign'>(null);
   const [actionTarget, setActionTarget] = useState('');
-  const [coworkRows, setCoworkRows] = useState<Array<{ dept: string; staff: string }>>([]);
   const isAdmin = sessionRole === 'admin';
   const fromType = computeFromType(String(job.dept), String(job.staff));
   const forwardTargets = fromType ? getVisibleTargets(fromType, isAdmin) : [];
@@ -1136,36 +1134,16 @@ function ActionButtons({
     }
   }
 
-  function startAction(mode: 'forward' | 'reassign' | 'cowork') {
+  function startAction(mode: 'forward' | 'reassign') {
     setError(null);
     setActionTarget('');
-    if (mode === 'cowork') {
-      const existing = parseCoworkArray(job.cowork);
-      setCoworkRows(existing.length > 0 ? existing : [{ dept: '', staff: '' }]);
-    }
     setActionMode(mode);
   }
 
   function cancelAction() {
     setActionMode(null);
     setActionTarget('');
-    setCoworkRows([]);
     setError(null);
-  }
-
-  async function submitCowork() {
-    // Drop empty rows; backend re-validates.
-    const cleaned = coworkRows
-      .map((r) => ({ dept: r.dept.trim(), staff: r.staff.trim() }))
-      .filter((r) => r.dept || r.staff);
-    setError(null);
-    setBusy('cowork');
-    const ok = await callApi('/api/jobs/cowork', { id: job.id, cowork: cleaned });
-    setBusy(null);
-    if (ok) {
-      router.refresh();
-      onSuccess();
-    }
   }
 
   return (
@@ -1200,114 +1178,6 @@ function ActionButtons({
               className="flex-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {busy === 'forward' ? 'กำลังส่งต่อ...' : 'ยืนยันส่งต่อ'}
-            </button>
-            <button
-              type="button"
-              onClick={cancelAction}
-              disabled={busy !== null}
-              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
-            >
-              ยกเลิก
-            </button>
-          </div>
-        </div>
-      ) : actionMode === 'cowork' ? (
-        <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-stone-700 flex items-center gap-1.5">
-              <IconUsers size={14} />
-              Co-work — ผู้ช่วยงาน
-            </label>
-            <button
-              type="button"
-              onClick={() => setCoworkRows((rows) => [...rows, { dept: '', staff: '' }])}
-              disabled={busy !== null}
-              className="text-[11px] text-accent hover:text-accent-dark font-medium disabled:opacity-50 inline-flex items-center gap-1"
-            >
-              <IconPlus size={11} />
-              เพิ่มแถว
-            </button>
-          </div>
-          {coworkRows.length === 0 ? (
-            <p className="text-xs text-stone-500 px-1 py-2">
-              ไม่มีผู้ช่วยงาน — กด &quot;เพิ่มแถว&quot; เพื่อใส่
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {coworkRows.map((row, i) => {
-                const staffOptions = STAFF[row.dept as Dept] || [];
-                return (
-                  <div key={i} className="flex items-center gap-2">
-                    <select
-                      value={row.dept}
-                      onChange={(e) => {
-                        const newDept = e.target.value;
-                        setCoworkRows((rows) =>
-                          rows.map((r, idx) =>
-                            idx === i
-                              ? {
-                                  dept: newDept,
-                                  staff:
-                                    STAFF[newDept as Dept]?.some((s) => s.id === r.staff) ? r.staff : '',
-                                }
-                              : r,
-                          ),
-                        );
-                      }}
-                      disabled={busy !== null}
-                      className="flex-1 px-2 py-1.5 border border-stone-200 rounded text-sm bg-white focus:outline-none focus:border-accent disabled:opacity-50"
-                    >
-                      <option value="">— แผนก —</option>
-                      {(['graphic', 'print', 'post'] as Dept[]).map((d) => (
-                        <option key={d} value={d}>
-                          {DEPT_LABELS[d]}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={row.staff}
-                      onChange={(e) =>
-                        setCoworkRows((rows) =>
-                          rows.map((r, idx) =>
-                            idx === i ? { ...r, staff: e.target.value } : r,
-                          ),
-                        )
-                      }
-                      disabled={busy !== null || !row.dept}
-                      className="flex-1 px-2 py-1.5 border border-stone-200 rounded text-sm bg-white focus:outline-none focus:border-accent disabled:opacity-50"
-                    >
-                      <option value="">— ผู้รับงาน —</option>
-                      {staffOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCoworkRows((rows) => rows.filter((_, idx) => idx !== i))
-                      }
-                      disabled={busy !== null}
-                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-red-100 text-stone-400 hover:text-red-700 disabled:opacity-50"
-                      aria-label="ลบแถว"
-                      title="ลบแถวนี้"
-                    >
-                      <IconX size={14} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={submitCowork}
-              disabled={busy !== null}
-              className="flex-1 px-3 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {busy === 'cowork' ? 'กำลังบันทึก...' : 'บันทึก co-work'}
             </button>
             <button
               type="button"
