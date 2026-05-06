@@ -48,8 +48,7 @@ async function get<T>(
     method: 'GET',
     // Apps Script web apps redirect via 302 to googleusercontent.com — must follow
     redirect: 'follow',
-    // Tag the loadAll cache so write routes can bust it instantly via revalidateTag.
-    next: action === 'loadAll' ? { revalidate, tags: [LOAD_ALL_TAG] } : { revalidate },
+    next: { revalidate },
   });
   if (!res.ok) {
     throw new AppsScriptError(action, `HTTP ${res.status}`, res.status);
@@ -120,15 +119,21 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
   if (data && typeof data === 'object' && 'error' in data) {
     throw new AppsScriptError(action, (data as { error: string }).error);
   }
-  // Successful write — bust the loadAll cache so /board, /orders etc. see
-  // the change on the very next render. Done lazily so non-write actions
-  // (searchArchive, etc.) skip the call.
+  // Successful write — bust the loadAll fetch cache so /board, /orders etc.
+  // see the change on the very next render. Uses revalidatePath rather than
+  // revalidateTag because the Apps Script GET URL changes per env-token and
+  // tagging via fetch options proved unstable on Vercel (analytics page
+  // crash 2026-05-06).
   if (WRITE_ACTIONS.has(action)) {
     try {
-      // dynamic import to avoid pulling next/cache into edge contexts
-      // that don't support it (middleware uses lib/api too via auth).
-      const { revalidateTag } = await import('next/cache');
-      revalidateTag(LOAD_ALL_TAG);
+      const { revalidatePath } = await import('next/cache');
+      // Bust every path that depends on loadAll snapshot.
+      revalidatePath('/board');
+      revalidatePath('/orders');
+      revalidatePath('/shipped');
+      revalidatePath('/cancelled');
+      revalidatePath('/analytics');
+      revalidatePath('/calendar');
     } catch {
       // ignore — non-fatal
     }
