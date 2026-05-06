@@ -8,7 +8,7 @@ import { broadcastWrite } from '@/lib/auto-sync';
 import { URGENCY_COLORS } from '@/lib/calendar';
 import {
   IconX, IconPencil, IconTrash, IconPrinter, IconAlertCircle, IconFileText,
-  IconCheck, IconCornerUpRight,
+  IconCheck, IconCornerUpRight, IconUsers, IconInfo, IconRefreshCw,
 } from '@/lib/icons';
 import { useToast } from '@/components/toast-provider';
 import { useConfirm } from '@/components/confirm-provider';
@@ -162,6 +162,18 @@ const OrderRowMemo = memo(function OrderRow({
   );
 });
 
+type DetailTab = 'info' | 'spec' | 'history';
+
+interface RawData {
+  details?: Record<string, unknown>;
+  photobook?: Array<Record<string, unknown>>;
+  cowork?: unknown;
+  notes?: string;
+  orderType?: string;
+  // Plus all the gatherFormData() fields — see lib/photobook.ts OrderFormData
+  [key: string]: unknown;
+}
+
 function OrderDetailModal({
   order, role, onClose,
 }: {
@@ -176,6 +188,37 @@ function OrderDetailModal({
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [busy, setBusy] = useState<null | 'delete'>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<DetailTab>('info');
+  const [rawData, setRawData] = useState<RawData | null>(null);
+  const [rawLoading, setRawLoading] = useState(false);
+  const [rawError, setRawError] = useState<string | null>(null);
+
+  // Reset state + lazy-load full spec when modal opens for a new order.
+  // /api/orders/raw/[id] returns the same rawData shape that's shown on
+  // the Kanban card detail's "สเปคงาน" tab — single source of truth so
+  // /orders + /board surface identical info.
+  useEffect(() => {
+    if (!order) return;
+    setTab('info');
+    setRawData(null);
+    setRawError(null);
+    setRawLoading(true);
+    let cancelled = false;
+    fetch(`/api/orders/raw/${order.id}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => {
+        if (cancelled) return;
+        setRawData((data?.rawData as RawData) || {});
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRawError(err instanceof Error ? err.message : 'โหลดสเปคงานไม่ได้');
+      })
+      .finally(() => {
+        if (!cancelled) setRawLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [order]);
 
   useEffect(() => {
     const dlg = dialogRef.current;
@@ -281,17 +324,90 @@ function OrderDetailModal({
           </button>
         </div>
 
+        {/* Tabs — match Kanban card detail (lib/board card.tsx DetailContent) */}
+        <div className="border-b border-stone-100 bg-white flex-shrink-0">
+          <div className="flex px-5 gap-4 overflow-x-auto">
+            <DetailTabBtn active={tab === 'info'} onClick={() => setTab('info')} label="ข้อมูลหลัก" />
+            <DetailTabBtn active={tab === 'spec'} onClick={() => setTab('spec')} label="สเปคงาน" />
+            <DetailTabBtn active={tab === 'history'} onClick={() => setTab('history')} label="ประวัติ" />
+          </div>
+        </div>
+
         {/* Body */}
         <div className="flex-grow overflow-y-auto p-5 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <KV label="ชื่องาน" value={order.name} />
-            <KV label="ลูกค้า" value={order.customer || '—'} />
-            <KV label="วันที่รับ" value={displayDate(order.dateIn)} />
-            <KV label="กำหนดส่ง" value={displayDate(order.dateDue)} />
-            <KV label="ผู้สั่งงาน" value={order.orderer || '—'} />
-            <KV label="ขั้นตอนปัจจุบัน" value={order.step} />
-            {order.pin && <KV label="PIN tracking" value={order.pin} />}
-          </div>
+          {tab === 'info' && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <KV label="ชื่องาน" value={order.name} />
+                <KV label="ลูกค้า" value={order.customer || '—'} />
+                <KV label="วันที่รับ" value={displayDate(order.dateIn)} />
+                <KV label="กำหนดส่ง" value={displayDate(order.dateDue)} />
+                <KV label="ผู้สั่งงาน" value={order.orderer || '—'} />
+                <KV label="ขั้นตอนปัจจุบัน" value={order.step} />
+                {order.pin && <KV label="PIN tracking" value={order.pin} />}
+              </div>
+              {(() => {
+                const cowork = parseCoworkArray(rawData?.cowork);
+                if (cowork.length === 0) return null;
+                return (
+                  <div className="rounded-xl border border-violet-200 bg-violet-50/40 px-3 py-2.5">
+                    <div className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1.5">
+                      <IconUsers size={12} />
+                      Co-work — ผู้ร่วมพิมพ์ ({cowork.length})
+                    </div>
+                    <ul className="space-y-0.5 text-sm text-stone-700">
+                      {cowork.map((cw, i) => (
+                        <li key={i}>
+                          <span className="text-stone-500 text-xs">[{cw.dept}]</span>{' '}
+                          <span className="font-medium">{cw.staff}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+
+          {tab === 'spec' && (
+            <>
+              {rawLoading && (
+                <div className="flex items-center justify-center py-8 gap-2 text-sm text-stone-500">
+                  <IconRefreshCw size={14} className="animate-spin" />
+                  กำลังโหลดสเปคงาน...
+                </div>
+              )}
+              {rawError && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                  <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                  <span>{rawError}</span>
+                </div>
+              )}
+              {!rawLoading && !rawError && rawData && (
+                <SpecSection raw={rawData} />
+              )}
+            </>
+          )}
+
+          {tab === 'history' && (
+            <div className="text-center py-8 space-y-3">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-stone-100 text-stone-400 mx-auto">
+                <IconInfo size={20} />
+              </div>
+              <p className="text-sm text-stone-500">
+                ประวัติงาน (audit log) ดูได้ใน{' '}
+                <a
+                  href="https://app.penprinting.co/production-monitoring/"
+                  className="underline hover:text-stone-700"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  ระบบ WP
+                </a>
+              </p>
+            </div>
+          )}
+
           {error && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
               <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
@@ -367,6 +483,205 @@ function KV({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg bg-stone-50/60 border border-stone-100 px-3 py-2 flex items-baseline justify-between gap-2">
       <span className="text-xs text-stone-500 font-medium flex-shrink-0">{label}:</span>
       <span className="text-sm text-stone-900 break-words text-right">{value || '—'}</span>
+    </div>
+  );
+}
+
+// ─── Tab button (matches Kanban card detail) ─────────────
+function DetailTabBtn({
+  active, onClick, label,
+}: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+        active ? 'text-sky-700 border-sky-500' : 'text-stone-500 border-transparent hover:text-stone-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ─── Cowork helpers (kept inline — duplicated from board/card.tsx
+//      to avoid a refactor of that 1400-line file. If a third consumer
+//      shows up, lift to lib/order-detail.tsx.) ─────────────────────
+
+interface CoworkEntry { dept: string; staff: string }
+
+function parseCoworkArray(cowork: unknown): CoworkEntry[] {
+  if (!Array.isArray(cowork)) return [];
+  const out: CoworkEntry[] = [];
+  for (const c of cowork) {
+    if (typeof c === 'string' && c.trim()) {
+      out.push({ dept: 'print', staff: c.trim() });
+    } else if (c && typeof c === 'object') {
+      const obj = c as Record<string, unknown>;
+      const dept = String(obj.dept || '').trim();
+      const staff = String(obj.staff || '').trim();
+      if (staff) out.push({ dept: dept || 'print', staff });
+    }
+  }
+  return out;
+}
+
+// ─── Spec rendering — formats rawData into readable rows ──────────
+
+/** Friendly Thai labels for known rawData keys. Mirror of `lb` map in
+ *  WP frontend (production-monitoring.js ~line 1109) and DETAIL_LABELS
+ *  in board/card.tsx — same render shape so /orders + /board feel
+ *  consistent. */
+const SPEC_LABELS: Record<string, string> = {
+  size: 'ขนาด',
+  qty: 'จำนวน',
+  paperCover: 'กระดาษปก',
+  paperInner: 'กระดาษเนื้อใน',
+  coverColor: 'สีปก',
+  coverColorNote: 'หมายเหตุสีปก',
+  innerColor: 'สีเนื้อใน',
+  innerColorNote: 'หมายเหตุสีเนื้อใน',
+  plateOld: 'ใช้ Plate เก่า',
+  plateNew: 'Plate ใหม่',
+  copyprint: 'Copyprint',
+  inkjet: 'Inkjet',
+  digital: 'Digital',
+  plateSize: 'ขนาดเพลท',
+  billPerSet: 'บิล/ชุด',
+  setPerBook: 'ชุด/เล่ม',
+  sheetPerBook: 'แผ่น/เล่ม',
+  billColors: 'สีบิล',
+  perf: 'ปรุ',
+  perfPos: 'ตำแหน่งปรุ',
+  runNo: 'หมายเลขรัน',
+  runBook: 'รันเล่ม',
+  runNum: 'รันหมายเลข',
+  glue: 'ทากาว',
+  saddle: 'เย็บมุงหลังคา',
+  sew: 'เย็บกี่',
+  spine: 'สันธรรมดา',
+  glueHead: 'ทากาวหัว',
+  glueSide: 'ทากาวข้าง',
+  sewHead: 'เย็บหัว',
+  sewSide: 'เย็บข้าง',
+  sewCorner: 'เย็บมุม',
+  sewThread: 'เย็บด้าย',
+  sewSideTape: 'เย็บข้าง+เทป',
+  coatGloss: 'เคลือบเงา',
+  coatMatte: 'เคลือบด้าน',
+  coatUV: 'เคลือบ UV',
+  coatSpotUV: 'เคลือบ Spot UV',
+  stampColor: 'ปั๊มสี',
+  stampColorNote: 'หมายเหตุปั๊มสี',
+  emboss: 'ปั๊มนูน',
+  diecut: 'ไดคัท',
+  diecutSelf: 'ไดคัท(เอง)',
+  notes: 'หมายเหตุ',
+  orderer: 'ผู้สั่งงาน',
+};
+
+const SPEC_HIDDEN_KEYS = new Set([
+  'name', 'customer', 'dateIn', 'dateDue',
+  'pin', 'orderType', 'photobookItems', 'photobook',
+  'cowork', 'assignDept', 'assignStaff', 'forwardPrint', 'sizeUnit', 'qtyUnit',
+]);
+
+interface PhotobookItem {
+  size?: string;
+  binding?: string;
+  qty?: string;
+  special?: string;
+}
+
+function SpecSection({ raw }: { raw: RawData }) {
+  const isPhotobook = raw.orderType === 'photobook';
+
+  // Photobook items can be stored under either key — match orderFormFromRaw fallback.
+  const photobookItems: PhotobookItem[] = Array.isArray(raw.photobookItems)
+    ? (raw.photobookItems as PhotobookItem[])
+    : Array.isArray(raw.photobook)
+      ? (raw.photobook as PhotobookItem[])
+      : [];
+
+  // Filter rawData entries: drop the keys we hide + empty/false values.
+  const sizeUnit = String(raw.sizeUnit || '').trim();
+  const qtyUnit = String(raw.qtyUnit || '').trim();
+
+  const entries = Object.entries(raw).filter(([k, v]) => {
+    if (SPEC_HIDDEN_KEYS.has(k)) return false;
+    if (v === null || v === undefined) return false;
+    if (typeof v === 'string' && v.trim() === '') return false;
+    if (typeof v === 'boolean' && v === false) return false;
+    if (Array.isArray(v) && v.length === 0) return false;
+    if (Array.isArray(v) && v.every((x) => !x)) return false;
+    return true;
+  });
+
+  // Pretty value formatting — pair size with sizeUnit, qty with qtyUnit, etc.
+  const formatValue = (k: string, v: unknown): string => {
+    if (k === 'size' && sizeUnit) return `${v} ${sizeUnit}`;
+    if (k === 'qty' && qtyUnit) return `${v} ${qtyUnit}`;
+    if (typeof v === 'boolean') return v ? '✓' : '—';
+    if (Array.isArray(v)) return v.filter(Boolean).join(', ') || '—';
+    return String(v);
+  };
+
+  if (entries.length === 0 && photobookItems.length === 0) {
+    return <p className="text-sm text-stone-400 text-center py-4">ไม่มีสเปคงาน</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {isPhotobook && photobookItems.length > 0 && (
+        <section>
+          <h3 className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+            <IconFileText size={12} />
+            Photobook ({photobookItems.length} เล่ม)
+          </h3>
+          <div className="rounded-lg border border-violet-200 bg-violet-50/30 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-violet-100/50 text-xs text-violet-700">
+                <tr>
+                  <th className="text-left px-3 py-1.5 font-medium w-10">#</th>
+                  <th className="text-left px-3 py-1.5 font-medium">ขนาด</th>
+                  <th className="text-left px-3 py-1.5 font-medium">เข้าเล่ม</th>
+                  <th className="text-right px-3 py-1.5 font-medium w-16">จำนวน</th>
+                  <th className="text-left px-3 py-1.5 font-medium">คำสั่งพิเศษ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-violet-100">
+                {photobookItems.map((item, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-1.5 tabular-nums text-stone-500">{i + 1}</td>
+                    <td className="px-3 py-1.5 text-stone-900">{item.size || '—'}</td>
+                    <td className="px-3 py-1.5 text-stone-700">{item.binding || '—'}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-stone-900 font-medium">
+                      {item.qty || '—'}
+                    </td>
+                    <td className="px-3 py-1.5 text-stone-600">{item.special || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {entries.length > 0 && (
+        <section>
+          <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
+            รายละเอียดงาน
+          </h3>
+          <div className="rounded-lg border border-stone-200 divide-y divide-stone-100 bg-stone-50/40">
+            {entries.map(([k, v]) => (
+              <div key={k} className="flex items-baseline gap-3 px-3 py-2 text-sm">
+                <span className="text-stone-500 min-w-[100px] shrink-0">{SPEC_LABELS[k] || k}</span>
+                <span className="text-stone-900 break-words">{formatValue(k, v)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

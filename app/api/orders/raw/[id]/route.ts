@@ -2,14 +2,19 @@ import { NextResponse } from 'next/server';
 import { loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
-/** Fetch a single order's rawData on demand. Used by /orders/new
- *  "ดึงงานล่าสุด" button so we don't have to preload 1000 full orders
- *  with rawData on every render of the order entry page (M2 from auditor). */
+/** Fetch a single order's rawData on demand.
+ *  Consumers:
+ *    - /orders/new "ดึงงานล่าสุดของลูกค้านี้" button (admin/sales)
+ *    - /orders detail modal "สเปคงาน" tab (any role — same spec staff can
+ *      already see on the Kanban card detail)
+ *  Gate at the lowest common denominator: requireSession() = any logged-in
+ *  user. rawData carries the order's full spec (paper, plate, colors, etc.)
+ *  with no internal-only fields. */
 export async function GET(
   _req: Request,
   { params }: { params: { id: string } },
 ) {
-  const session = await requireSession(['admin', 'sales']);
+  const session = await requireSession();
   if (session instanceof NextResponse) return session;
 
   const id = Number(params.id);
