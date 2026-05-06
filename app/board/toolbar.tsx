@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { JobForm } from './job-form';
+import { OrderForm } from './order-form';
 import { BulkForwardModal } from './bulk-forward-modal';
 import type { BoardJob } from '@/lib/board';
 
@@ -10,11 +11,14 @@ interface ToolbarProps {
   isAdmin: boolean;
   /** Active jobs (post-computeBoard) — needed for bulk forward picker. */
   jobs: BoardJob[];
+  /** Default orderer for new orders — usually the logged-in user's display name. */
+  defaultOrderer: string;
 }
 
-/** Toolbar shown in `/board` header. Owns add-job + bulk-forward modal state. */
-export function BoardToolbar({ canCreate, isAdmin, jobs }: ToolbarProps) {
-  const [addOpen, setAddOpen] = useState(false);
+/** Toolbar shown in `/board` header. Owns order/job/bulk-forward modal state. */
+export function BoardToolbar({ canCreate, isAdmin, jobs, defaultOrderer }: ToolbarProps) {
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [addJobOpen, setAddJobOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
   return (
@@ -29,15 +33,26 @@ export function BoardToolbar({ canCreate, isAdmin, jobs }: ToolbarProps) {
         </button>
       )}
       {canCreate && (
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark transition-colors"
-        >
-          ➕ เพิ่มงาน
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => setOrderOpen(true)}
+            className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark transition-colors"
+          >
+            📝 ใบสั่งใหม่
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddJobOpen(true)}
+            className="px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200 transition-colors"
+            title="เพิ่ม job เดี่ยวๆ (ไม่มีใบสั่งงาน) — ใช้สำหรับ recover orphan"
+          >
+            + งานเดี่ยว
+          </button>
+        </>
       )}
-      <JobForm open={addOpen} onClose={() => setAddOpen(false)} />
+      <OrderForm open={orderOpen} onClose={() => setOrderOpen(false)} defaultOrderer={defaultOrderer} />
+      <JobForm open={addJobOpen} onClose={() => setAddJobOpen(false)} />
       <BulkForwardModal
         open={bulkOpen}
         onClose={() => setBulkOpen(false)}

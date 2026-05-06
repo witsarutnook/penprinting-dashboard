@@ -49,6 +49,7 @@ export default async function BoardPage() {
                 canCreate={session.role === 'admin' || session.role === 'sales'}
                 isAdmin={session.role === 'admin'}
                 jobs={board ? board.depts.flatMap((d) => d.columns.flatMap((c) => c.jobs)) : []}
+                defaultOrderer={session.user}
               />
               <span>
                 {session.user} <span className="text-stone-400">({session.role})</span>
