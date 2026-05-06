@@ -25,9 +25,9 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   if (!id || !Number.isFinite(id)) notFound();
 
   let initial: OrderSummary | null = null;
+  // Slim: rawData NOT included — fetched lazily via /api/orders/raw/[id]
   let recentOrders: Array<{
-    id: number; name: string; customer: string;
-    rawData: Record<string, unknown> | null;
+    id: number; name: string; customer: string; hasRawData: boolean;
   }> = [];
   let errorMessage: string | null = null;
   try {
@@ -48,7 +48,7 @@ export default async function EditOrderPage({ params }: { params: { id: string }
       details: (o.details && typeof o.details === 'object') ? (o.details as Record<string, unknown>) : null,
       rawData: (o.rawData && typeof o.rawData === 'object') ? (o.rawData as Record<string, unknown>) : null,
     };
-    // Pass recent orders for autocomplete + ดึงล่าสุด button
+    // Pass recent orders for autocomplete + ดึงล่าสุด button (slim)
     recentOrders = [...data.orders]
       .sort((a, b) => Number(b.id) - Number(a.id))
       .slice(0, 1000)
@@ -56,9 +56,7 @@ export default async function EditOrderPage({ params }: { params: { id: string }
         id: Number(x.id),
         name: String(x.name || ''),
         customer: String(x.customer || ''),
-        rawData: (x.rawData && typeof x.rawData === 'object')
-          ? (x.rawData as Record<string, unknown>)
-          : null,
+        hasRawData: !!(x.rawData && typeof x.rawData === 'object'),
       }));
   } catch (err) {
     errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);

@@ -34,13 +34,13 @@ interface OrderFormProps {
    *  fresh values for the new order. Mirrors WP duplicateOrder(). */
   initialPrefill?: Record<string, unknown> | null;
   /** Recent orders for the "ดึงงานล่าสุดของลูกค้านี้" button + customer
-   *  autocomplete history. Pass a lite shape (no need for spec) — only id,
-   *  name, customer, and rawData (for the duplicate fill). */
+   *  autocomplete history. Slim shape — rawData is fetched on demand from
+   *  /api/orders/raw/[id] when the user clicks the button (M2 fix). */
   recentOrders?: Array<{
     id: number;
     name: string;
     customer: string;
-    rawData: Record<string, unknown> | null;
+    hasRawData: boolean;
   }>;
 }
 
@@ -319,39 +319,55 @@ export function OrderForm({
     return Array.from(seen.values());
   }, [recentOrders, customers]);
 
-  /** Find the most-recent order with rawData for a customer (case-insensitive). */
-  const lastOrderForCustomer = useMemo(() => {
-    const map = new Map<string, OrderFormProps['recentOrders'] extends infer T
-      ? T extends Array<infer U> ? U : never : never>();
+  /** Find the most-recent order id with rawData for a customer (case-insensitive). */
+  const lastOrderIdForCustomer = useMemo(() => {
+    const map = new Map<string, number>();
     for (const o of recentOrders) {
       const name = (o.customer || '').trim().toLowerCase();
-      if (!name || name === '-' || !o.rawData) continue;
-      if (!map.has(name)) map.set(name, o); // recentOrders is sorted desc by id, first wins
+      if (!name || name === '-' || !o.hasRawData) continue;
+      if (!map.has(name)) map.set(name, o.id); // recentOrders is sorted desc by id, first wins
     }
     return map;
   }, [recentOrders]);
 
-  function loadFromLastOrder() {
+  const [loadingLast, setLoadingLast] = useState(false);
+
+  async function loadFromLastOrder() {
     const customerName = data.customer.trim();
     if (!customerName) return;
-    const last = lastOrderForCustomer.get(customerName.toLowerCase());
-    if (!last || !last.rawData) {
+    const lastId = lastOrderIdForCustomer.get(customerName.toLowerCase());
+    if (!lastId) {
       alert('ไม่พบงานเก่าของลูกค้านี้');
       return;
     }
-    const next = orderFormFromRaw(last.rawData, data.orderer || defaultOrderer);
-    // Preserve the customer name the user typed; reset dates so they pick fresh
-    next.customer = customerName;
-    next.dateIn = bangkokTodayISO();
-    next.dateDue = '';
-    setData(next);
-    setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
-    setTab('main');
+    setLoadingLast(true);
+    try {
+      // Fetch raw data on demand (M2 fix — was preloaded into props)
+      const res = await fetch(`/api/orders/raw/${lastId}`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload.rawData) {
+        alert(payload?.error || 'ดึงข้อมูลงานเก่าไม่สำเร็จ');
+        return;
+      }
+      const next = orderFormFromRaw(
+        payload.rawData as Record<string, unknown>,
+        data.orderer || defaultOrderer,
+      );
+      // Preserve the customer name the user typed; reset dates
+      next.customer = customerName;
+      next.dateIn = bangkokTodayISO();
+      next.dateDue = '';
+      setData(next);
+      setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
+      setTab('main');
+    } finally {
+      setLoadingLast(false);
+    }
   }
 
   const hasLastOrderForCustomer =
     !!data.customer.trim() &&
-    lastOrderForCustomer.has(data.customer.trim().toLowerCase());
+    lastOrderIdForCustomer.has(data.customer.trim().toLowerCase());
 
   function applyTemplate(templateId: string) {
     if (!templateId) return;
@@ -597,6 +613,7 @@ export function OrderForm({
                 customerSuggestions={customerSuggestions}
                 hasLastOrderForCustomer={hasLastOrderForCustomer}
                 onLoadFromLastOrder={loadFromLastOrder}
+                loadingLast={loadingLast}
               />
             )}
             {tab === 'post' && data.orderType === 'normal' && (
@@ -675,7 +692,7 @@ export function OrderForm({
 
 function MainTab({
   data, patch, togglePlateSize, onAddPbItem, onUpdatePbItem, onRemovePbItem,
-  customerSuggestions, hasLastOrderForCustomer, onLoadFromLastOrder,
+  customerSuggestions, hasLastOrderForCustomer, onLoadFromLastOrder, loadingLast,
 }: {
   data: OrderFormData;
   patch: (p: Partial<OrderFormData>) => void;
@@ -686,6 +703,7 @@ function MainTab({
   customerSuggestions: CustomerEntry[];
   hasLastOrderForCustomer: boolean;
   onLoadFromLastOrder: () => void;
+  loadingLast: boolean;
 }) {
   const isPB = data.orderType === 'photobook';
   return (
@@ -706,10 +724,11 @@ function MainTab({
               <button
                 type="button"
                 onClick={onLoadFromLastOrder}
-                className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium"
+                disabled={loadingLast}
+                className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium disabled:opacity-50"
                 title="ใส่ค่าจาก spec ของงานเก่าลูกค้านี้ — ระบบจะเซ็ตวันที่รับเป็นวันนี้และเคลียร์กำหนดส่ง"
               >
-                ↩ ดึงรายละเอียดจากงานล่าสุดของลูกค้านี้
+                {loadingLast ? '⏳ กำลังดึงข้อมูล...' : '↩ ดึงรายละเอียดจากงานล่าสุดของลูกค้านี้'}
               </button>
             )}
           </Field>

@@ -8,7 +8,7 @@ interface RecentOrder {
   id: number;
   name: string;
   customer: string;
-  rawData: Record<string, unknown> | null;
+  hasRawData: boolean;
 }
 
 /** Inline order-entry on /orders/new — no modal, scrolls with the page.

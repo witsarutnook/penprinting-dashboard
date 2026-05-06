@@ -208,20 +208,19 @@ function OrderDetailModal({
     if (!confirm(
       `ลบใบสั่งงาน #${order.id} "${order.name}" ?\n\n` +
       `⚠ ลบถาวร — กู้คืนไม่ได้!\n` +
-      `Job ที่ผูกอยู่จะไม่ถูกลบอัตโนมัติ — โปรดยกเลิกหรือตรวจสอบก่อน`,
+      `Job ที่ผูกอยู่ (ถ้ามี) จะถูก "ยกเลิก" อัตโนมัติพร้อมเหตุผล "ใบสั่งงานถูกลบ"`,
     )) return;
     const id = order.id;
     const name = order.name;
     setError(null);
     setBusy('delete');
-    // Optimistic — show toast + close modal IMMEDIATELY for instant UX feel.
     toast.show(`กำลังลบใบสั่ง #${id}...`);
     onClose();
     try {
       const res = await fetch('/api/orders/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, cascade: true }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -229,8 +228,12 @@ function OrderDetailModal({
         return;
       }
       broadcastWrite('/api/orders/delete');
-      toast.success(`ลบใบสั่ง #${id} "${name}" แล้ว`);
-      // Refresh in transition — UI doesn't block waiting for server re-render
+      const cascadeCount = Array.isArray(data.cancelledJobs) ? data.cancelledJobs.length : 0;
+      toast.success(
+        cascadeCount > 0
+          ? `ลบใบสั่ง #${id} "${name}" + ยกเลิก Job ${cascadeCount} งาน`
+          : `ลบใบสั่ง #${id} "${name}" แล้ว`,
+      );
       startTransition(() => router.refresh());
     } finally {
       setBusy(null);

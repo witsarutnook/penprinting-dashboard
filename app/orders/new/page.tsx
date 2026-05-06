@@ -29,10 +29,12 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Sea
 
   // Fetch templates + recentOrders (for autocomplete + ดึงงานล่าสุด button)
   // + (optionally) the source order for the duplicate flow.
+  // recentOrders is the SLIM shape: id + customer + name + hasRawData flag.
+  // The full rawData is fetched on demand via /api/orders/raw/[id] when the
+  // user clicks "ดึงงานล่าสุด" — keeps page payload small (M2 from auditor).
   let templates: Template[] = [];
   let recentOrders: Array<{
-    id: number; name: string; customer: string;
-    rawData: Record<string, unknown> | null;
+    id: number; name: string; customer: string; hasRawData: boolean;
   }> = [];
   let prefillFromOrder: Record<string, unknown> | null = null;
   let prefillSourceName: string | null = null;
@@ -40,8 +42,6 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Sea
     const data = await loadAll();
     templates = data.templates || [];
 
-    // newest-first; only orders with rawData are useful for the
-    // "ดึงงานล่าสุด" button. Cap at 1000 to keep payload sane.
     recentOrders = [...data.orders]
       .sort((a, b) => Number(b.id) - Number(a.id))
       .slice(0, 1000)
@@ -49,9 +49,7 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Sea
         id: Number(o.id),
         name: String(o.name || ''),
         customer: String(o.customer || ''),
-        rawData: (o.rawData && typeof o.rawData === 'object')
-          ? (o.rawData as Record<string, unknown>)
-          : null,
+        hasRawData: !!(o.rawData && typeof o.rawData === 'object'),
       }));
 
     if (searchParams.from) {

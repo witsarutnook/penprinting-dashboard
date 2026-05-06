@@ -11,7 +11,7 @@ interface RecentOrder {
   id: number;
   name: string;
   customer: string;
-  rawData: Record<string, unknown> | null;
+  hasRawData: boolean;
 }
 
 /** Inline edit page wrapper. For draft orders, renders an extra

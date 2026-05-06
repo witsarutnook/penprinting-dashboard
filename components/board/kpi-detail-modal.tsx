@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   STAFF, DEPT_LABELS, type BoardJob, type Dept,
 } from '@/lib/board';
@@ -38,6 +39,7 @@ interface Props {
  *  reference screenshot exactly. */
 export function KPIDetailModal({ open, onClose, urgency, jobs }: Props) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     const dlg = dialogRef.current;
@@ -143,9 +145,22 @@ export function KPIDetailModal({ open, onClose, urgency, jobs }: Props) {
                     const staffName =
                       STAFF[dept]?.find((s) => s.id === j.staff)?.name || j.staff;
                     return (
-                      <tr key={j.id} className="hover:bg-stone-50">
+                      <tr
+                        key={j.id}
+                        onClick={() => {
+                          // Jump to /board filtered to this dept + staff,
+                          // pre-search by job name so the card is easy to spot.
+                          const params = new URLSearchParams();
+                          params.set('dept', String(j.dept));
+                          if (j.name) params.set('q', j.name);
+                          onClose();
+                          router.push(`/board?${params.toString()}`);
+                        }}
+                        className="cursor-pointer hover:bg-sky-50/50 transition-colors"
+                        title="กดเพื่อเปิด Kanban เห็นการ์ดนี้"
+                      >
                         <td className="px-3 py-2 tabular-nums text-stone-400">{i + 1}</td>
-                        <td className="px-3 py-2 font-medium text-stone-900">{j.name}</td>
+                        <td className="px-3 py-2 font-medium text-stone-900 hover:text-sky-700">{j.name}</td>
                         <td className="px-3 py-2 text-stone-600 hidden sm:table-cell">{j.customer || '—'}</td>
                         <td className="px-3 py-2 text-stone-700">
                           <span className="font-medium">{DEPT_LABELS[dept] || dept}</span>
