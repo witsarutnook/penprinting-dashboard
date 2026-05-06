@@ -173,8 +173,17 @@ export function orderFormFromRaw(
     merge.billColors = bc.slice(0, 6);
   }
   if (r.orderType === 'photobook') merge.orderType = 'photobook';
-  if (Array.isArray(r.photobookItems)) {
-    merge.photobookItems = r.photobookItems
+  // Read items from either `photobookItems` (legacy + form-submit shape) OR
+  // `photobook` (canonical storage key after M14 dedupe). Without the
+  // fallback, edit/duplicate of any post-M14 photobook order arrives with
+  // an empty list and validatePhotobook() fails on save.
+  const rawItems = Array.isArray(r.photobookItems)
+    ? r.photobookItems
+    : Array.isArray(r.photobook)
+      ? r.photobook
+      : null;
+  if (rawItems) {
+    merge.photobookItems = rawItems
       .filter((x) => x && typeof x === 'object')
       .map((x) => {
         const o = x as Record<string, unknown>;

@@ -2,6 +2,8 @@
 
 > Last scan: **2026-05-06 PM** (penprinting-auditor) — หลังจบ Phase 3.5.10 + 3.5.11 + critical/high audit close-out
 >
+> Latest update: **2026-05-06 PM** — Critical + 5 High batch ปิดครบ
+>
 > ✅ = ปิดแล้ว / commit hash อยู่ในวงเล็บ
 > ⏳ = ยังเหลือ
 >
@@ -11,42 +13,13 @@
 
 ## 🔴 Critical
 
-- [ ] **M14r** — Photobook round-trip data loss
-  - File: [lib/photobook.ts:176](lib/photobook.ts:176) (`orderFormFromRaw`)
-  - Issue: M14 fix dedupe เป็น key `photobook` แล้ว แต่ `orderFormFromRaw` ยังอ่านจาก `r.photobookItems` เท่านั้น → edit/duplicate photobook order = items หาย → save = "ต้องมีรายการ Photobook อย่างน้อย 1 เล่ม" หรือถูก strip
-  - Print page อ่าน `raw.photobook` ตรง ([orders/[id]/print/page.tsx:220](app/orders/[id]/print/page.tsx:220)) — แต่ edit/dup ผ่าน orderFormFromRaw แตก
-  - Fix: เพิ่ม fallback `if (Array.isArray(r.photobook)) merge.photobookItems = r.photobook` ก่อนบรรทัด 176
+_(ปิดครบ — ดู Closed section)_
 
 ---
 
-## 🟠 High (regression ของ audit fix รอบก่อน)
+## 🟠 High
 
-- [ ] **H10a** — order-form.tsx ยังใช้ native `confirm()` / `prompt()`
-  - File: [app/board/order-form.tsx:301,395,430](app/board/order-form.tsx:301)
-  - 301 = reset, 395 = saveAsTemplate, 430 = deleteTemplate
-  - Fix: import `useConfirm()` → `confirm({...})` + `prompt({...})`
-
-- [ ] **H10b** — order-form.tsx ยังใช้ native `alert()`
-  - File: [app/board/order-form.tsx:340,349](app/board/order-form.tsx:340)
-  - "ไม่พบงานเก่า" + "ดึงข้อมูลล่าสุดไม่สำเร็จ"
-  - Fix: ใช้ `useToast().error(...)` (มีอยู่แล้วในไฟล์อื่น)
-
-- [ ] **H10c** — promote-draft ใช้ native `confirm()`
-  - File: [app/orders/[id]/edit/client.tsx:33](app/orders/[id]/edit/client.tsx:33)
-  - ข้อความ: "ส่งใบสั่งนี้เข้าระบบ? ..."
-  - Fix: `useConfirm().confirm({ variant: 'default' })`
-
-- [ ] **C1r** — `/api/jobs/add` ยังใช้ cached `nextId` (race เปิดอยู่)
-  - File: [app/api/jobs/add/route.ts:55-56](app/api/jobs/add/route.ts:55)
-  - Issue: route อื่น (forward, bulk-forward, promote-draft, forward-undo) ปิด race ด้วย atomic `getNextId` action แล้ว
-  - แต่ "งานเดี่ยว" path ยัง read `snap.nextId` จาก `loadAllFresh()` → 2 submits พร้อมกันชนได้
-  - Fix: swap เป็น `post<{nextId}>('getNextId', {})` ตาม pattern ใน [forward/route.ts:67-77](app/api/jobs/forward/route.ts:67)
-
-- [ ] **H2r** — `/track` client gate ยัง `< 6` (server เปิด `>= 3` แล้ว)
-  - File: [app/track/client.tsx:38](app/track/client.tsx:38)
-  - Server fix H2: `/api/track/lookup:118` รับ `id.length >= 3` แล้ว
-  - แต่ client เด้งที่ `orderId.length < 6` ก่อน → legacy 4-digit id เข้าไม่ได้
-  - Fix: เปลี่ยนเป็น `< 3`
+_(ปิดครบ — ดู Closed section)_
 
 ---
 
@@ -136,12 +109,25 @@
 
 ---
 
-## 🎯 Recommended close order
+## ✅ Closed
 
-1. **Batch 1 (regression cleanup):** M14r → H10a/b/c → C1r → H2r — 1 commit, low risk, scope ชัด, ใช้ pattern เดิม
-2. **Batch 2 (UX/middleware):** M-photobook-tab → M-middleware-matcher → M-cross-dept-gate
-3. **Batch 3 (perf/security):** M-bulk-forward-N-roundtrips (Apps Script change!) → M-login-ratelimit-map → M-orders-date-range-tz
-4. **Batch 4 (cosmetic):** Lows ทั้งหมด — 1 commit
+### Batch 1 — regression cleanup (Critical + 5 High)
+2026-05-06 PM (1 commit — see git for hash)
+
+- [x] **M14r** — `lib/photobook.ts` `orderFormFromRaw` reads from `r.photobook` fallback, not just `r.photobookItems`. Edit/duplicate of post-M14 photobook orders no longer drops items.
+- [x] **H10a** — `app/board/order-form.tsx` reset/saveAsTemplate/deleteTemplate now use `useConfirm()` + `useConfirm().prompt()`. Themed dialogs replace native `confirm()`/`prompt()`.
+- [x] **H10b** — `app/board/order-form.tsx` "ไม่พบงานเก่า" + "ดึงข้อมูลล่าสุดไม่สำเร็จ" now use `useToast().error()` instead of native `alert()`.
+- [x] **H10c** — `app/orders/[id]/edit/client.tsx` promote-draft confirm now uses `useConfirm().confirm()`.
+- [x] **C1r** — `/api/jobs/add` swapped from `loadAllFresh().nextId` (cached) to atomic `post('getNextId', {})` action. Matches forward/bulk-forward/promote-draft pattern. Two concurrent "งานเดี่ยว" submits no longer race.
+- [x] **H2r** — `app/track/client.tsx` client gate `< 6` → `< 3`, aligns with H1 server fix (`/api/track/lookup` accepts `id.length >= 3`). Legacy 4-digit ids work again.
+
+---
+
+## 🎯 Recommended close order (remaining)
+
+1. **Batch 2 (UX/middleware):** M-photobook-tab → M-middleware-matcher → M-cross-dept-gate
+2. **Batch 3 (perf/security):** M-bulk-forward-N-roundtrips (Apps Script change!) → M-login-ratelimit-map → M-orders-date-range-tz
+3. **Batch 4 (cosmetic):** Lows ทั้งหมด — 1 commit
 
 ## 📝 Update protocol
 

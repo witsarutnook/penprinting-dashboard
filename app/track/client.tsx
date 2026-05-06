@@ -35,7 +35,10 @@ export function TrackClient({ initialId }: { initialId: string }) {
     e.preventDefault();
     setError(null);
     setResult(null);
-    if (orderId.length < 6 || pin.length !== 4) {
+    // Server accepts id.length >= 3 (auditor H2 — pre-2020 legacy ids were
+    // 4-digit). Keep client gate aligned so 4-digit lookups don't bounce
+    // here before reaching /api/track/lookup.
+    if (orderId.length < 3 || pin.length !== 4) {
       setError('เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง (PIN ต้องเป็นตัวเลข 4 หลัก)');
       return;
     }

@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { STAFF } from '@/lib/board';
 import { bangkokTodayISO, dmyToISOInput } from '@/lib/jobs';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { useConfirm } from '@/components/confirm-provider';
+import { useToast } from '@/components/toast-provider';
 import {
   PB_SIZES, PB_BINDINGS, type PhotobookItem,
   type OrderFormData, emptyOrderForm, orderFormFromRaw, emptyPhotobookItem,
@@ -108,6 +110,8 @@ export function OrderForm({
 }: OrderFormProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const router = useRouter();
+  const confirmDlg = useConfirm();
+  const toast = useToast();
   const isEdit = !!initial;
   const [customers, setCustomers] = useState<CustomerEntry[]>(customersCache || []);
   useEffect(() => {
@@ -297,8 +301,14 @@ export function OrderForm({
     }
   }
 
-  function reset() {
-    if (!confirm('ล้างข้อมูลทั้งหมดในฟอร์ม?')) return;
+  async function reset() {
+    const ok = await confirmDlg.confirm({
+      title: 'ล้างข้อมูลทั้งหมดในฟอร์ม?',
+      message: 'ค่าทุกช่องจะถูกตั้งค่ากลับเป็นค่าเริ่มต้น',
+      variant: 'warn',
+      okLabel: 'ล้าง',
+    });
+    if (!ok) return;
     setData(emptyOrderForm(defaultOrderer));
   }
 
@@ -337,7 +347,7 @@ export function OrderForm({
     if (!customerName) return;
     const lastId = lastOrderIdForCustomer.get(customerName.toLowerCase());
     if (!lastId) {
-      alert('ไม่พบงานเก่าของลูกค้านี้');
+      toast.error('ไม่พบงานเก่าของลูกค้านี้');
       return;
     }
     setLoadingLast(true);
@@ -346,7 +356,7 @@ export function OrderForm({
       const res = await fetch(`/api/orders/raw/${lastId}`);
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload.rawData) {
-        alert(payload?.error || 'ดึงข้อมูลงานเก่าไม่สำเร็จ');
+        toast.error(payload?.error || 'ดึงข้อมูลงานเก่าไม่สำเร็จ');
         return;
       }
       const next = orderFormFromRaw(
@@ -392,7 +402,12 @@ export function OrderForm({
   }
 
   async function saveAsTemplate() {
-    const name = prompt('ตั้งชื่อ template:');
+    const name = await confirmDlg.prompt({
+      title: 'ตั้งชื่อ template',
+      message: 'ใช้ชื่อที่อ่านง่าย จะแสดงใน Quick-fill เมื่อสั่งงานใหม่',
+      placeholder: 'เช่น "นามบัตร 4 สี ออฟเซต"',
+      okLabel: 'บันทึก',
+    });
     if (!name || !name.trim()) return;
     setTemplateError(null);
     setTemplateBusy(true);
@@ -427,7 +442,13 @@ export function OrderForm({
   }
 
   async function deleteTemplate(id: number) {
-    if (!confirm('ลบ template นี้? ไม่สามารถย้อนกลับได้')) return;
+    const ok = await confirmDlg.confirm({
+      title: 'ลบ template นี้?',
+      message: 'ไม่สามารถย้อนกลับได้',
+      variant: 'danger',
+      okLabel: 'ลบ',
+    });
+    if (!ok) return;
     setTemplateError(null);
     setTemplateBusy(true);
     try {

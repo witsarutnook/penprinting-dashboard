@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { OrderForm } from '@/app/board/order-form';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { useConfirm } from '@/components/confirm-provider';
 import { IconCheck, IconAlertCircle } from '@/lib/icons';
 import type { OrderSummary } from '@/lib/board';
 
@@ -25,12 +26,19 @@ export function OrderEditClient({
   recentOrders?: RecentOrder[];
 }) {
   const router = useRouter();
+  const confirmDlg = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ jobId: number } | null>(null);
 
   async function promote() {
-    if (!confirm('ส่งใบสั่งนี้เข้าระบบ? ระบบจะสร้าง Job ในแผนก/ผู้รับงานที่กำหนดและเปลี่ยนสถานะเป็น "สั่งแล้ว"')) return;
+    const ok = await confirmDlg.confirm({
+      title: 'ส่งใบสั่งนี้เข้าระบบ?',
+      message: 'ระบบจะสร้าง Job ในแผนก/ผู้รับงานที่กำหนดและเปลี่ยนสถานะเป็น "สั่งแล้ว"',
+      okLabel: 'ส่งเข้าระบบ',
+      variant: 'default',
+    });
+    if (!ok) return;
     setError(null);
     setBusy(true);
     try {

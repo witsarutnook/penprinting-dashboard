@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import {
   toISODate,
@@ -50,13 +50,26 @@ export async function POST(req: Request) {
     );
   }
 
+  // Atomic id allocation via Apps Script getNextId (LockService-protected).
+  // Was reading snap.nextId from a fresh loadAll, which is still
+  // race-prone — two concurrent "งานเดี่ยว" submits (or งานเดี่ยว +
+  // promote-draft) could read the same counter and produce duplicate
+  // ids. getNextId mints + bumps the counter inside one lock — same
+  // pattern used by /api/jobs/forward, bulk-forward, forward-undo,
+  // and orders/promote-draft (auditor C1r).
   let nextId: number;
   try {
-    const snap = await loadAllFresh();
-    nextId = Number(snap.nextId) || 100;
+    const idResult = await post<{ nextId?: number; error?: string }>('getNextId', {});
+    if (idResult.error || typeof idResult.nextId !== 'number') {
+      return NextResponse.json(
+        { error: idResult.error || 'getNextId returned no id' },
+        { status: 502 },
+      );
+    }
+    nextId = idResult.nextId;
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `อ่าน nextId ไม่ได้ — ${msg}` }, { status: 502 });
+    return NextResponse.json({ error: `getNextId failed — ${msg}` }, { status: 502 });
   }
 
   const payload: JobPayload = {
