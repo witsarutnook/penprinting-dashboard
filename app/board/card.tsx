@@ -10,7 +10,7 @@ import {
   DEPT_LABELS,
   STAFF,
 } from '@/lib/board';
-import { computeFromType, getVisibleTargets } from '@/lib/forward';
+import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
 import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -232,7 +232,7 @@ function DetailContent({
         <ActionButtons job={job} sessionRole={sessionRole} onEdit={onEdit} onSuccess={onClose} />
 
         <div className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2 text-xs text-stone-600">
-          ℹ️ ฟีเจอร์ที่ยังไม่มี (co-work • bulk forward) ใช้ใน{' '}
+          ℹ️ ฟีเจอร์ที่ยังไม่มี (co-work) ใช้ใน{' '}
           <a
             href="https://app.penprinting.co/production-monitoring/"
             className="underline hover:text-stone-800"
@@ -259,14 +259,21 @@ function ActionButtons({
   onSuccess: () => void;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel' | 'forward'>(null);
+  const [busy, setBusy] = useState<null | 'ship' | 'delete' | 'cancel' | 'forward' | 'reassign'>(null);
   const [error, setError] = useState<string | null>(null);
-  const [forwardMode, setForwardMode] = useState(false);
-  const [forwardTarget, setForwardTarget] = useState('');
+  const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign'>(null);
+  const [actionTarget, setActionTarget] = useState('');
   const isAdmin = sessionRole === 'admin';
   const fromType = computeFromType(String(job.dept), String(job.staff));
   const forwardTargets = fromType ? getVisibleTargets(fromType, isAdmin) : [];
   const canForward = forwardTargets.length > 0;
+
+  // Same-dept reassign targets — exclude current staff and outsource/diecut_out for non-admin.
+  const dept = job.dept as Dept;
+  const reassignTargets = (STAFF[dept] || [])
+    .filter((s) => s.id !== job.staff)
+    .filter((s) => isAdmin || !RESTRICTED_TARGETS.has(s.id));
+  const canReassign = reassignTargets.length > 0;
 
   async function callApi(path: string, body: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(path, {
@@ -331,13 +338,9 @@ function ActionButtons({
   }
 
   async function submitForward() {
-    if (!forwardTarget) {
+    const target = forwardTargets.find((t) => t.value === actionTarget);
+    if (!actionTarget || !target) {
       setError('กรุณาเลือกปลายทาง');
-      return;
-    }
-    const target = forwardTargets.find((t) => t.value === forwardTarget);
-    if (!target) {
-      setError('ปลายทางไม่ถูกต้อง');
       return;
     }
     setError(null);
@@ -354,15 +357,33 @@ function ActionButtons({
     }
   }
 
-  function startForward() {
+  async function submitReassign() {
+    if (!actionTarget) {
+      setError('กรุณาเลือกผู้รับงาน');
+      return;
+    }
     setError(null);
-    setForwardTarget('');
-    setForwardMode(true);
+    setBusy('reassign');
+    const ok = await callApi('/api/jobs/reassign', {
+      id: job.id,
+      targetStaff: actionTarget,
+    });
+    setBusy(null);
+    if (ok) {
+      router.refresh();
+      onSuccess();
+    }
   }
 
-  function cancelForward() {
-    setForwardMode(false);
-    setForwardTarget('');
+  function startAction(mode: 'forward' | 'reassign') {
+    setError(null);
+    setActionTarget('');
+    setActionMode(mode);
+  }
+
+  function cancelAction() {
+    setActionMode(null);
+    setActionTarget('');
     setError(null);
   }
 
@@ -371,14 +392,14 @@ function ActionButtons({
       <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
         การดำเนินการ
       </h3>
-      {forwardMode ? (
+      {actionMode === 'forward' ? (
         <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
           <label className="block text-xs font-medium text-stone-700 mb-1.5">
             ↪ ส่งต่อไปที่
           </label>
           <select
-            value={forwardTarget}
-            onChange={(e) => setForwardTarget(e.target.value)}
+            value={actionTarget}
+            onChange={(e) => setActionTarget(e.target.value)}
             className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
             autoFocus
           >
@@ -393,14 +414,52 @@ function ActionButtons({
             <button
               type="button"
               onClick={submitForward}
-              disabled={busy !== null || !forwardTarget}
+              disabled={busy !== null || !actionTarget}
               className="flex-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {busy === 'forward' ? 'กำลังส่งต่อ...' : 'ยืนยันส่งต่อ'}
             </button>
             <button
               type="button"
-              onClick={cancelForward}
+              onClick={cancelAction}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </div>
+      ) : actionMode === 'reassign' ? (
+        <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+          <label className="block text-xs font-medium text-stone-700 mb-1.5">
+            🔄 ย้ายไปที่ <span className="text-stone-400 font-normal">(แผนกเดิม: {DEPT_LABELS[dept]})</span>
+          </label>
+          <select
+            value={actionTarget}
+            onChange={(e) => setActionTarget(e.target.value)}
+            className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            autoFocus
+          >
+            <option value="">— เลือกผู้รับงาน —</option>
+            {reassignTargets.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.isVendor ? ' (vendor)' : ''}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2 mt-3">
+            <button
+              type="button"
+              onClick={submitReassign}
+              disabled={busy !== null || !actionTarget}
+              className="flex-1 px-3 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {busy === 'reassign' ? 'กำลังย้าย...' : 'ยืนยันย้าย'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelAction}
               disabled={busy !== null}
               className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
             >
@@ -421,11 +480,21 @@ function ActionButtons({
           {canForward && (
             <button
               type="button"
-              onClick={startForward}
+              onClick={() => startAction('forward')}
               disabled={busy !== null}
               className="px-3 py-2 rounded-lg bg-sky-100 text-sky-800 text-sm font-medium hover:bg-sky-200 disabled:opacity-50"
             >
               ↪ ส่งต่อ
+            </button>
+          )}
+          {canReassign && (
+            <button
+              type="button"
+              onClick={() => startAction('reassign')}
+              disabled={busy !== null}
+              className="px-3 py-2 rounded-lg bg-violet-100 text-violet-800 text-sm font-medium hover:bg-violet-200 disabled:opacity-50"
+            >
+              🔄 ย้าย
             </button>
           )}
           {isAdmin && (

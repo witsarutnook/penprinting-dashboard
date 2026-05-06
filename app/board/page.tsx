@@ -75,7 +75,7 @@ export default async function BoardPage() {
               ) : null,
             )}
             <span className="ml-auto text-stone-400 hidden sm:inline">
-              co-work + drag-drop ใช้ใน{' '}
+              co-work ใช้ใน{' '}
               <a
                 href="https://app.penprinting.co/production-monitoring/"
                 className="underline hover:text-stone-600"
