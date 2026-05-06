@@ -338,14 +338,16 @@ function ActionButtons({
         >
           {busy === 'ship' ? 'กำลังส่ง...' : '✅ จัดส่งเสร็จ'}
         </button>
-        <button
-          type="button"
-          onClick={onEdit}
-          disabled={busy !== null}
-          className="px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
-        >
-          ✏️ แก้ไข
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={onEdit}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-lg bg-stone-100 text-stone-800 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+          >
+            ✏️ แก้ไข
+          </button>
+        )}
         {isAdmin && (
           <button
             type="button"

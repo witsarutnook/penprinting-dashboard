@@ -5,14 +5,14 @@ import { toISODate, validateJobInput, type JobPayload } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 
 /**
- * Update an existing job — all roles (matches WP — updateJob NOT in ROLE_REQUIREMENTS).
- * Staff need this to drag-drop reassign within the same dept; sales/admin need it to fix typos.
+ * Update an existing job — admin only on dashboard v2 (per user preference 2026-05-06).
+ * Staff/sales can still reassign via WP drag-drop; here in v2 the modal route is locked.
  *
  * Request body: { id, name, date, dateIn?, dept, staff, orderId?, status?, cowork? }
  * → Apps Script payload = full JOBS_HEADERS row (id required, status defaults preserved)
  */
 export async function POST(req: Request) {
-  const session = await requireSession();
+  const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
 
   let body: {
