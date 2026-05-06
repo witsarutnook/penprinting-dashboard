@@ -40,13 +40,14 @@ export default async function BoardPage() {
               ←
             </Link>
             <h1 className="text-lg sm:text-xl font-bold text-stone-900">Kanban Board</h1>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-stone-100 text-stone-600 hidden sm:inline">
-              read-only
-            </span>
           </div>
           {session && (
-            <div className="flex items-center gap-2 text-xs text-stone-500">
-              <BoardToolbar canCreate={session.role === 'admin' || session.role === 'sales'} />
+            <div className="flex items-center gap-2 text-xs text-stone-500 flex-wrap">
+              <BoardToolbar
+                canCreate={session.role === 'admin' || session.role === 'sales'}
+                isAdmin={session.role === 'admin'}
+                jobs={board ? board.depts.flatMap((d) => d.columns.flatMap((c) => c.jobs)) : []}
+              />
               <span>
                 {session.user} <span className="text-stone-400">({session.role})</span>
               </span>
@@ -73,8 +74,8 @@ export default async function BoardPage() {
                 </span>
               ) : null,
             )}
-            <span className="ml-auto text-stone-400">
-              ⚠️ read-only — แก้ไขใน{' '}
+            <span className="ml-auto text-stone-400 hidden sm:inline">
+              co-work + drag-drop ใช้ใน{' '}
               <a
                 href="https://app.penprinting.co/production-monitoring/"
                 className="underline hover:text-stone-600"
