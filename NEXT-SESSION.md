@@ -1,74 +1,58 @@
 # 🎯 Next Session — Pick up from here
 
-> **อ่านไฟล์นี้ + [PATTERNS.md](PATTERNS.md) + [CLAUDE.md](CLAUDE.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
+> **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> Session ก่อนหน้า (2026-05-06 PM) — **MEGA SESSION** 30+ commits ปิด Phase 3.5.10 + 3.5.11 + critical/high audit backlog ทั้งหมด. v2 dashboard ถึง **full WP feature parity**.
+> **Session ก่อนหน้า — 2026-05-06 PM mega-session (18 commits)** ปิด audit backlog ครบ 4 batches + sidebar perf overhaul (D+C) + observability (Sentry + per-user audit signing) + UI polish (favicon + QR + รายงานประจำเดือน + permission lockdown). v2 เริ่ม "ใช้งานจริงเต็มตัว".
 
 ## ✅ เสร็จแล้วในรอบล่าสุด (2026-05-06 PM)
 
-### Phase 3.5.10 + 3.5.11 — WP-parity + audit close-out
+### Audit close-out
+- 4 batches ปิดครบ: 1 Critical + 5 High + 7 Medium + 5 Low → **17/18 findings closed** (1 false positive)
+- [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) เป็น running tracker — ใช้สำหรับ audit รอบถัดไป
 
-**Kanban / card / detail modal:**
-- Inline forward + co-work dialogs บน card (ไม่เด้ง detail page)
-- Drag-drop reassign (same-dept) + cross-dept forward via custom MIME
-- Drag-vs-click handler split (handleDragStart bails on button targets)
-- Co-work guest fan-out (violet read-only cards), format = WP `string[]`
-- จัดส่งเสร็จ จำกัด `post:ship`, "ลบถาวร" ออกจาก detail (ยกเลิกพอ)
-- ActionButtons cowork code path ลบ (CoworkDialog เป็น canonical UI)
+### Sidebar perf overhaul
+- `useTransition` + pulsing dot บน sidebar/bottom-nav → instant click feedback (~16ms)
+- Per-action `revalidatePath` scope ใน [lib/api.ts](lib/api.ts) — warm cache survives unrelated writes
+- Suspense streaming SSR บน 6 pages — shell ~50ms, body fills เมื่อ Apps Script ตอบ
+- Page-flash artefact จาก per-route loading.tsx revert (shell อยู่ใน page.tsx ไม่ใช่ layout)
 
-**/orders /shipped /cancelled WP-parity:**
-- Year/Month dropdowns + ค้นหา + Export CSV + ค้นหาในประวัติ
-- /orders: date-range filter, ขั้นตอนปัจจุบัน + สถานะงาน, ตรวจสอบข้อมูล (orphan count), detail modal 5 actions (สั่งซ้ำ/แก้ไข/Tracking/พิมพ์/ลบ)
-- Per-page selector 20/50/100 (default 20)
-- /cancelled: strikethrough + restore button + `/api/jobs/restore`
+### Polish + observability
+- Favicon = real logo (`app/icon.png` + `apple-icon.png`)
+- QR บน A4 invoice → `/track?id=<id>`
+- Sentry wired (server/edge/client + global error boundary, +78 KB shared bundle)
+- Per-user audit signing — `_actor: "<role>:<user>"` ใน body, Apps Script side override default `admin:dashboard`
+- Documentation sweep — `dashboard-v2.md` ใหม่เป็น v2 source-of-truth
 
-**Order entry overhaul:**
-- `/orders/new` เป็น real inline page (ไม่ใช่ modal), `max-w-7xl`
-- บันทึกร่าง + พิมพ์+สั่ง buttons
-- `/orders/[id]/edit` page (admins/sales)
-- Drafts promote ผ่าน `/api/orders/promote-draft` (idempotent)
-- Customer autocomplete (1.6k entries) + ดึงรายละเอียดจากงานล่าสุด (lazy `/api/orders/raw/[id]`)
-- Templates UI (Quick-fill + บันทึก + จัดการ)
-- Cascade-cancel jobs ตอนลบ order
+### UI changes
+- `/` redirect → `/login` หรือ `/board` (drop landing splash)
+- `/orders` detail full WP-style 3-tab (ข้อมูลหลัก / สเปคงาน / ประวัติ) + lazy fetch raw
+- `/analytics` → port WP รายงานประจำเดือน + dept detail modal (รวม | แยกตามช่าง)
+- Drop "+ งานเดี่ยว" button จาก /board toolbar
+- Permission lockdown: /analytics admin only / /orders admin+sales / edit admin only
 
-**New routes:**
-- `/orders/[id]/edit` — full inline edit + draft promote CTA
-- `/orders/[id]/print` — A4 invoice auto-print
-- `/orders/[id]/tracking-card` — printable label + QR + html-to-image PNG
-- `/track` — public (no auth) + `/api/track/lookup` (cookie rate-limit 15/hr)
+---
 
-**Infrastructure / perf / DX:**
-- Toast system (`components/toast-provider.tsx`) — 4 variants
-- ConfirmDialog (`components/confirm-provider.tsx`) — แทน native confirm/prompt
-- Auto-sync guards (skip when dialog open / typing / dragging) + cleanup
-- `revalidatePath` ทุก successful write
-- Defensive defaults ใน `loadAll()`
-- React.memo OrdersTable rows + optimistic toasts + `startTransition`
-- KPI modal rows clickable + ใช้ `allJobs` (ไม่ใช่ visibleJobs)
+## ⚠️ Pending user actions (ค้างจาก 2026-05-06 PM)
 
-**Critical audit fixes:**
-- C1 forward + bulk-forward race (atomic getNextId per item)
-- C2 tracking-card QR URL aligned กับ v2 `/track`
-- C3 cowork dept dropdown ที่ submit payload ไม่ถูก
-- C4 `body.dataset.dragging` stuck flag ฆ่า auto-sync
-- C5 promote-draft duplicate jobs on retry
+1. **Apps Script redeploy** — ต้องรันเอง เพื่อ activate features ของ commit ล่าสุด:
+   ```bash
+   cd "production-monitoring/apps-script/dashboard"
+   ./push.sh
+   ```
+   แล้ว Apps Script editor → **Manage deployments → Edit existing → New version**.
+   - **Activates**: `getNextIds(count)` action (bulk-forward 25 jobs จาก ~12s → ~500ms) + per-user audit signing (audit log แสดงชื่อจริงผู้ใช้แทน `admin:dashboard`).
+   - **Backwards-compat fallback** ใน `/api/jobs/bulk-forward` + per-user signing silent skip จนกว่าจะ deploy — dashboard ยังใช้งานได้ปกติ.
 
-### API routes added
-- POST `/api/orders/promote-draft`, `/api/orders/delete`
-- POST `/api/orders/templates/{add,delete}`
-- GET `/api/orders/raw/[id]`
-- POST `/api/jobs/restore`
-- POST `/api/track/lookup`
+2. **Vercel env vars สำหรับ Sentry** (optional):
+   - `NEXT_PUBLIC_SENTRY_DSN` — error capture activate
+   - `SENTRY_ORG` + `SENTRY_PROJECT` + `SENTRY_AUTH_TOKEN` — source map upload
+   - ถ้ายังไม่ตั้ง = Sentry SDK auto-disable (no errors, no source map upload)
 
 ---
 
 ## ⏳ ที่ยังเหลือ (priority order)
 
-### 1. Documentation sweep
-- `production-monitoring/monitoring.md` + `Tech-Roadmap-Status.md` มีข้อมูลซ้อน WP/v2 — refactor ให้แยกชัด
-- หรือ split monitoring.md เป็น `monitoring.md` (WP) + `dashboard-v2.md` (Next.js) เป็น 2 source of truth
-
-### 2. Phase 2.1 Apps Script TS migration ที่เหลือ
+### 1. Phase 2.1 Apps Script TS migration ที่เหลือ
 Code.js เหลือ ~657 บรรทัด แตกเป็น 4 sections:
 - Auth (HMAC + cookie) ~80 บรรทัด — risky (break = unauth ทุก endpoint, smoke test ทั้งหมด)
 - Load operations ~150 บรรทัด — read-heavy, low-risk extraction
@@ -77,32 +61,30 @@ Code.js เหลือ ~657 บรรทัด แตกเป็น 4 sections
 
 แนะนำลำดับ: Load → Auth (smoke test ใหญ่) → Write (CRUD) → API last
 
-### 3. Per-user audit signing
-ตอนนี้ทุก v2 mutation ลง audit log ด้วย actor = `admin:dashboard` (service token). แก้:
-- Dashboard side: sign per-user token ด้วย `DASHBOARD_AUTH_SECRET` หลัง login → forward คู่กับ session cookie
-- Apps Script: parse user token + override actor = `<role>:<user>` ก่อน `appendAudit`
-- Cookie ขนาด ~250 bytes เพิ่ม — OK สำหรับทุก request
+### 2. Phase 3.6 — Decommission decision (ระยะยาว)
+v2 = full WP feature parity แล้ว + permissions match WP role matrix. ตัดสินใจ:
+- **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
+- **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น primary
 
-### 4. Sentry wiring
-`NEXT_PUBLIC_SENTRY_DSN` env มีอยู่ในโปรเจกต์ แต่ยังไม่ได้ instrument:
-- ติด `@sentry/nextjs` package
-- `sentry.client.config.ts` + `sentry.server.config.ts`
-- Source map upload ผ่าน `withSentryConfig` ใน next.config
+ต้องเช็คก่อนตัดสินใจ:
+- WP-only features ที่ v2 ยังไม่มี: TV Display kiosk (deferred earlier — ดู #3 ด้านล่าง), Morning Report (separate Apps Script project, อยู่ที่ workspace `morning-report/`)
+- Staff acceptance — อยากให้ staff ใช้ v2 อย่างเดียวไหม หรือปล่อย WP ไว้
 
-### 5. TV display kiosk บน v2 (deferred earlier)
-User requested skip ในรอบที่ผ่านมา — ยังเป็น backlog item:
+### 3. TV display kiosk บน v2 (deferred)
+User skip ใน Phase 3.5 — ยังเป็น backlog item:
 - Port `production-monitoring/assets/production-tv.{js,css}` → `app/tv/page.tsx`
 - Read-only Kanban + 30s auto-refresh + secret key auth
 - Dark theme, big fonts, 3-column mosaic
+- ต้องเลือกว่า:
+  - Mount ที่ `/tv?key=XXX` (matching WP) หรือ
+  - Subdomain แยก เช่น `tv.dashboard.penprinting.co`
 
-### 6. QR บน /orders/[id]/print
-A4 invoice ตอนนี้ไม่มี QR — เพิ่ม QR ที่ link ไป `/track?id=<orderId>` ที่มุมบน-ขวา
-
-### 7. Phase 3.6 — Decommission decision (ระยะยาว)
-หลัง v2 = full parity แล้ว — ตัดสินใจ:
-- **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
-- **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น admin/sales
-- ควรทำหลังจบ #3 (per-user audit signing) เพื่อ feature parity ครบจริงๆ
+### 4. Route group `(shell)/layout.tsx` refactor
+Future fix สำหรับ:
+- Per-route loading.tsx ที่จะใส่ได้โดยไม่ unmount shell (สำหรับ user ที่อยาก skeleton ใน body)
+- Mobile drawer / "More" sheet ที่เหมือน WP
+- Shared providers (Toast/Confirm) ที่ stays mounted across navigations
+- Effort ~2-3 ชม. defer until needed
 
 ---
 
@@ -110,29 +92,27 @@ A4 invoice ตอนนี้ไม่มี QR — เพิ่ม QR ที่
 
 | ต้องเข้าใจอะไร | ดูที่ไหน |
 |---|---|
-| Apps Script API patterns | [PATTERNS.md](PATTERNS.md) §1 |
-| Permission gating | [PATTERNS.md](PATTERNS.md) §2 |
-| URL state / Context patterns | [PATTERNS.md](PATTERNS.md) §3 |
-| Iconography (lib/icons.tsx) | [PATTERNS.md](PATTERNS.md) §4 |
-| Form patterns (`<dialog>`, repeater, edit-mode) | [PATTERNS.md](PATTERNS.md) §5 |
-| Toast / Confirm system | `components/{toast,confirm}-provider.tsx` |
-| Auto-sync + write cache-bust | `lib/auto-sync.tsx` |
-| WP source (reference) | `production-monitoring/assets/production-monitoring.js` |
-| WP Apps Script | `production-monitoring/apps-script/dashboard/Code.js` (657 บรรทัดเหลือ) |
-| Project routes/auth/env | [CLAUDE.md](CLAUDE.md) |
+| v2 source of truth (stack, routes, features, history) | [dashboard-v2.md](dashboard-v2.md) ⭐ |
+| Code patterns (Apps Script, permissions, URL state, icons, forms) | [PATTERNS.md](PATTERNS.md) |
+| Audit findings tracker | [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) |
+| Migration phases overview | [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) |
+| WP source + shared infrastructure (Sheet schema, security, lessons) | [../production-monitoring/monitoring.md](../production-monitoring/monitoring.md) |
+| Today's daily log | [../10-Daily/2026-05-06.md](../10-Daily/2026-05-06.md) |
 
-## 🧠 Decisions to remember
+## 🧠 Decisions to remember (latest)
 
-1. **Edit/delete/cancel = admin only** บน v2 (stricter than Apps Script `ROLE_REQUIREMENTS`). Forward / reassign / cowork / move-to-shipped = all roles. See [feedback_dashboard_v2_edit_admin_only.md](~/.claude/projects/-Users-witsarut-p-Desktop-Project-Report-Penprinting/memory/).
-2. **All cowork UI = violet** (no amber).
-3. **All icons = SVG outline** ([lib/icons.tsx](lib/icons.tsx)) — no emoji.
-4. **Date display = `displayDate()` from lib/jobs.ts** — handles ISO, DD/MM/YYYY, JS Date.toString() (GMT) all in one. Use `displayDateTime()` for timestamp columns.
-5. **Filter state in URL** (searchParams), not localStorage.
-6. **Bulk select = inline checkbox mode** — toggled from filter-chips row.
-7. **Card body click ≠ open detail** — only "รายละเอียด" button. Bulk-mode click = toggle selection.
-8. **Toast/Confirm > native** — ใช้ `useToast()` + `useConfirm()` แทน `alert()`/`confirm()` ทุกที่ (consistent UI + non-blocking).
-9. **`revalidatePath` after write** — ทุก successful mutation ต้อง bust cache เพื่อ next read สด (ไม่งั้นข้อมูลเก่า ISR ค้าง 60s).
-10. **Drag MIME types** — same-dept reassign = `application/x-pp-reassign`, cross-dept forward = `application/x-pp-forward` (กัน drop-target รับผิด).
+1. **Permissions ตาม WP role matrix** (locked 2026-05-06):
+   - `/analytics` admin only
+   - `/orders` admin + sales (staff redirect)
+   - `/orders/[id]/edit` + `/api/orders/update` admin only
+   - Sales = create + view + duplicate, ไม่ edit + ไม่ลบ
+2. **ISR 60s cache** — ห้าม extend จนกว่า WP retire (cross-system stale risk)
+3. **Per-action `revalidatePath`** scope ใน lib/api.ts — bust แค่ paths ที่ relevant. Pages outside the action's list keep warm cache. ดู `PATHS_BY_ACTION` map.
+4. **Suspense streaming on every authenticated page** — DashboardShell ใน page.tsx (ไม่ใช่ layout) ดังนั้น loading.tsx ที่ duplicate shell ทำให้กระตุก. Use Suspense ภายใน page เท่านั้น
+5. **`app/icon.png` + `app/apple-icon.png` only** — ไม่ใช้ favicon.ico (default scaffold). PNGs จาก real logo, square-padded
+6. **Sentry disabled when DSN missing** — dev / preview / fork builds ไม่พัง
+7. **Per-user audit signing** — `lib/api.ts` ส่ง `_actor` ใน body, Apps Script honors. Backwards-compat: Apps Script ไม่มี code นี้ → silent skip
+8. **3-tab order detail** matches Kanban card detail UI — ข้อมูลหลัก / สเปคงาน / ประวัติ. Lazy fetch via `/api/orders/raw/[id]` (any role)
 
 ## 🛠 Quick start for next session
 
@@ -140,8 +120,8 @@ A4 invoice ตอนนี้ไม่มี QR — เพิ่ม QR ที่
 cd /Users/witsarut.p/Desktop/Project\ Report\ Penprinting/penprinting-dashboard
 git pull
 npm install              # if package.json changed
-npm run type-check
-npm run build           # before any commit
+npx tsc --noEmit         # type-check
+npm run build            # before any commit
 ```
 
 Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys).
@@ -151,6 +131,9 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 หลังจบ session:
 1. อัปเดตข้อ "เสร็จแล้ว" + เลื่อน item ลง / ลบ จาก "ที่ยังเหลือ"
 2. ถ้าเจอ pattern ใหม่ — เพิ่มใน [PATTERNS.md](PATTERNS.md)
-3. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) iteration table
+3. ถ้ามี audit findings ใหม่ — เพิ่มใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md)
+4. อัปเดต [dashboard-v2.md §10 Version History](dashboard-v2.md)
+5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
+6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-06 PM (mega-session: Phase 3.5.10 + 3.5.11 + audit close-out)_
+_อัปเดตล่าสุด: 2026-05-06 PM (18-commit mega-session: audit + perf + monthly report + permissions)_

@@ -283,6 +283,23 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### UI feedback close-out (2026-05-06 PM, late)
+- **`20c584e`** — feat: lock /analytics + /orders permissions + monthly report dept detail
+  - `/analytics` admin only / `/orders` admin+sales / `/api/orders/update` + `/orders/[id]/edit` admin only
+  - Sidebar/bottom-nav `adminOrSalesOnly` + `adminOnly` flags via canSee() helper
+  - Dept block click → modal "รวม | แยกตามช่าง" toggle (mirrors WP `openReportDeptList`)
+  - `MonthlyReportDept` extended with `rows` + `rowsByStaff` precomputed
+- **`55bd628`** — feat: /analytics — port WP รายงานประจำเดือน as default sub-tab
+  - 2 sub-tabs: รายงานประจำเดือน (default, `?view=monthly`) + Analytics 12 เดือน (`?view=range`)
+  - Monthly view: 3 sections (Executive Summary 7 stats with ▲/▼ vs prev / Customer Insights / Per-Dept)
+  - `lib/analytics.ts computeMonthlyReport()` mirrors WP renderReport
+- **`e2556ea`** — feat: /orders detail modal — full WP-style 3-tab + drop +งานเดี่ยว
+  - 3 tabs: ข้อมูลหลัก / สเปคงาน / ประวัติ (matches Kanban card detail)
+  - Lazy fetch via `/api/orders/raw/[id]` (relax to `requireSession()`)
+  - Photobook items dedicated table
+  - Drop "+ งานเดี่ยว" button from /board toolbar
+- **`cf49eb2`** — refactor: drop landing splash — / redirects based on session
+
 ### Polish + observability (2026-05-06 PM)
 - **`b385670`** — feat: brand favicon + QR on A4 invoice
   - `app/icon.png` + `app/apple-icon.png` from real logo
@@ -294,6 +311,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
   - `lib/api.ts` ships `_actor: "<role>:<user>"` from session cookie
   - Apps Script side honors override (v5.10.1)
 - **`beaeb34`** — fix: remove leftover Next.js default favicon.ico
+- **`154b8f5`** — docs: split monitoring.md — add dashboard-v2.md as v2 source of truth
 
 ### Sidebar perf overhaul (2026-05-06 PM)
 - **`162a3e1`** — perf: stream /board with Suspense
