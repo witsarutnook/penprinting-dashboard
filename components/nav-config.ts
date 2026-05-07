@@ -46,8 +46,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'การผลิต',
     items: [
       { href: '/orders/new', label: 'สั่งงาน', icon: IconFileText, mobile: true, adminOrSalesOnly: true },
-      { href: '/board?dept=graphic', label: 'กราฟฟิก', icon: IconPencil },
-      { href: '/board?dept=print', label: 'พิมพ์', icon: IconPrinter },
+      { href: '/board?dept=graphic', label: 'กราฟฟิก', icon: IconPencil, mobile: true },
+      { href: '/board?dept=print', label: 'พิมพ์', icon: IconPrinter, mobile: true },
       { href: '/board?dept=post', label: 'หลังพิมพ์ / จัดส่ง', icon: IconScissors, mobile: true },
       { href: '/calendar', label: 'ปฏิทิน', icon: IconCalendar, adminOnly: true },
     ],
@@ -56,7 +56,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'รายการ',
     items: [
       { href: '/analytics', label: 'รายงาน', icon: IconTrendingUp, adminOnly: true },
-      { href: '/orders', label: 'รายการใบสั่งงาน', icon: IconClock, mobile: true, adminOrSalesOnly: true },
+      { href: '/orders', label: 'รายการใบสั่งงาน', icon: IconClock, adminOrSalesOnly: true },
       { href: '/shipped', label: 'จัดส่งแล้ว', icon: IconTruck },
       { href: '/cancelled', label: 'รายการยกเลิก', icon: IconAlertCircle, adminOnly: true },
       { href: '/archive', label: 'ค้นข้อมูลเก่า', icon: IconFolderOpen, adminOnly: true },
@@ -82,13 +82,26 @@ export function getNavGroups(role: string | undefined): NavGroup[] {
   })).filter((g) => g.items.length > 0);
 }
 
-/** Flat list of mobile-priority items, capped at 5. Slicing happens AFTER
- *  the role filter — staff who can't see the "สั่งงาน" item slot the next
- *  mobile-flagged item in (e.g. กราฟฟิก) instead of getting a 4-item bar. */
+/** Flat list of mobile-priority items, capped at 4. Bottom nav reserves
+ *  the 5th slot for the "More" hamburger that opens a sheet with the
+ *  remaining nav items. Capped at 4 (not 5) so we never displace the
+ *  hamburger — keeps the "more" affordance reachable from every state.
+ *  For staff (no สั่งงาน): 3 dept items + hamburger = 4 slots total. */
 export function getBottomNavItems(role: string | undefined): NavItem[] {
   return NAV_GROUPS.flatMap((g) => g.items)
     .filter((it) => it.mobile && canSee(it, role))
-    .slice(0, 5);
+    .slice(0, 4);
+}
+
+/** Items NOT shown in the bottom-nav primary row — surfaced via the
+ *  hamburger sheet on mobile. Returns the role-visible nav GROUPS with
+ *  bottom-nav items stripped, so the sheet can preserve group headings. */
+export function getMoreMenuGroups(role: string | undefined): NavGroup[] {
+  const inBottom = new Set(getBottomNavItems(role).map((it) => `${it.href}|${it.label}`));
+  return NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((it) => canSee(it, role) && !inBottom.has(`${it.href}|${it.label}`)),
+  })).filter((g) => g.items.length > 0);
 }
 
 // Re-export for components that need explicit icon refs
