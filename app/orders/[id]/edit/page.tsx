@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadAll, loadOrder, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { OrderEditClient } from './client';
@@ -33,8 +33,15 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   }> = [];
   let errorMessage: string | null = null;
   try {
-    const data = await loadAll();
-    const o = data.orders.find((x) => Number(x.id) === id);
+    // Fetch the target order (uncached, single-row, ~200ms) AND the cached
+    // 60s-ISR snapshot (for the recentOrders autocomplete) IN PARALLEL.
+    // Edit page now starts rendering as soon as the target lands instead
+    // of waiting on the full snapshot every time.
+    const [orderResult, snap] = await Promise.all([
+      loadOrder(id),
+      loadAll(),
+    ]);
+    const o = orderResult.order;
     if (!o) notFound();
     initial = {
       id: Number(o.id),
@@ -51,7 +58,7 @@ export default async function EditOrderPage({ params }: { params: { id: string }
       rawData: (o.rawData && typeof o.rawData === 'object') ? (o.rawData as Record<string, unknown>) : null,
     };
     // Pass recent orders for autocomplete + ดึงล่าสุด button (slim)
-    recentOrders = [...data.orders]
+    recentOrders = [...snap.orders]
       .sort((a, b) => Number(b.id) - Number(a.id))
       .slice(0, 1000)
       .map((x) => ({

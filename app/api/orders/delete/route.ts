@@ -7,11 +7,15 @@ import { requireSession } from '@/lib/route-helpers';
  *  with reason "ใบสั่งงานถูกลบ" so the Kanban doesn't end up with orphan
  *  cards (monitoring.md §8 recurring failure mode).
  *
- *  Behaviour:
- *  - body.cascade=false → behave as before (just delete the order row).
- *  - default (cascade=true) → cancel attached jobs first, then delete.
+ *  Fast path: Apps Script `deleteOrderCascade` (v5.10.4+) does cascade
+ *  + delete in one lock — no orphan window. Falls back to multi-call
+ *  flow when the action isn't available yet.
  *
- *  Mirrors WP `apiPost('deleteOrder', { id })` + adds the cascade step. */
+ *  Behaviour:
+ *  - body.cascade=false → behave as before (just delete the order row,
+ *    no atomic fast path needed).
+ *  - default (cascade=true) → atomic cascade if available, multi-call
+ *    fallback otherwise. */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
@@ -28,6 +32,35 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
   }
   const cascade = body.cascade !== false; // default true
+
+  // ── Fast path: atomic Apps Script action (v5.10.4+) ──
+  // Only when cascade=true (the default + 99% of callers). cascade=false
+  // skips this and uses the plain `deleteOrder` action below.
+  if (cascade) {
+    try {
+      const r = await post<{ ok?: boolean; orderId?: number; cancelledJobs?: number[]; error?: string }>(
+        'deleteOrderCascade',
+        {
+          data: {
+            id,
+            reason: `ใบสั่งงาน #${id} ถูกลบ (cascade)`,
+            cancelledBy: `${session.role}:${session.user}`,
+            cancelledAt: new Date().toISOString(),
+          },
+        },
+      );
+      if (r.error) {
+        return NextResponse.json({ error: r.error }, { status: 400 });
+      }
+      return NextResponse.json({ ok: true, cancelledJobs: r.cancelledJobs || [] });
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      if (!/Unknown action/i.test(msg)) {
+        return NextResponse.json({ error: msg }, { status: 502 });
+      }
+      // Fall through to legacy multi-call flow below.
+    }
+  }
 
   // Find attached jobs (if cascading)
   let attachedJobs: Array<{ id: number; dept: string; staff: string; name: string }> = [];

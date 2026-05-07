@@ -10,9 +10,11 @@ import { requireSession } from '@/lib/route-helpers';
  * it under the red ยกเลิก badge.
  *
  * Cascade: any active job(s) referencing this order get cancelled with
- * reason "ใบสั่งงาน #<id> ถูกยกเลิก". Same cascade pattern as the old
- * delete route — kept verbatim so we don't leave orphan Kanban cards
- * pointing at a now-cancelled order.
+ * reason "ใบสั่งงาน #<id> ถูกยกเลิก". No orphan window — Apps Script
+ * `cancelOrder` (v5.10.4+) does cascade + status flip in a single lock.
+ * Falls back to multi-call flow when the action isn't available yet
+ * (Apps Script not redeployed); legacy path stays atomic per-job but
+ * has a small partial-failure window.
  *
  * Body: { id }
  * Returns: { ok, cancelledJobs: [jobIds] } on success
@@ -31,6 +33,41 @@ export async function POST(req: Request) {
   const id = Number(body.id);
   if (!id || !Number.isFinite(id)) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
+  }
+
+  // ── Fast path: atomic Apps Script action (v5.10.4+) ──
+  // Single round-trip: cascade-cancel jobs + flip order status, all in
+  // one LockService scope. No orphan possible because both halves are
+  // in the same Sheet write. Falls through to the legacy multi-call
+  // flow on "Unknown action" (older Apps Script deploy) — that flow
+  // also handles cascade but has a small partial-failure window where
+  // jobs are cancelled but order status update fails.
+  try {
+    const r = await post<{ ok?: boolean; orderId?: number; cancelledJobs?: number[]; error?: string }>(
+      'cancelOrder',
+      {
+        data: {
+          id,
+          reason: `ใบสั่งงาน #${id} ถูกยกเลิก (cascade)`,
+          cancelledBy: `${session.role}:${session.user}`,
+          cancelledAt: new Date().toISOString(),
+        },
+      },
+    );
+    if (r.error) {
+      // Real error from atomic action — surface it. (Don't fall through;
+      // a logical error like "already cancelled" should propagate.)
+      return NextResponse.json({ error: r.error }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true, cancelledJobs: r.cancelledJobs || [] });
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    // Only fall back if Apps Script doesn't recognize the action —
+    // network/lock errors should surface immediately (don't double-try).
+    if (!/Unknown action/i.test(msg)) {
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
+    // Fall through to legacy multi-call flow below.
   }
 
   let snap;

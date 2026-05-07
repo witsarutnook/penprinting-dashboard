@@ -99,6 +99,44 @@ export async function POST(req: Request) {
   if (existingJob) {
     jobId = Number(existingJob.id);
   } else {
+    // ── Fast path: atomic Apps Script `promoteDraft` (v5.10.4+) ──
+    // Single round-trip: allocate jobId + append job + flip order status,
+    // all in one LockService scope. No orphan window where addJob succeeds
+    // but updateOrder fails. Falls back to legacy 2-call flow below if
+    // the action isn't deployed yet.
+    try {
+      const r = await post<{ ok?: boolean; jobId?: number; orderId?: number; error?: string }>(
+        'promoteDraft',
+        {
+          data: {
+            id,
+            job: {
+              name: order.name,
+              date: dateDue,
+              dateIn: dateIn || dateDue,
+              staff: assignStaff,
+              dept: assignDept,
+              status: 'pending',
+            },
+          },
+        },
+      );
+      if (r.ok && r.jobId) {
+        return NextResponse.json({ ok: true, jobId: r.jobId, orderId: id });
+      }
+      if (r.error && !/Unknown action/i.test(r.error)) {
+        return NextResponse.json({ error: r.error }, { status: 400 });
+      }
+      // Else fall through to legacy 2-call flow.
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      if (!/Unknown action/i.test(msg)) {
+        return NextResponse.json({ error: msg }, { status: 502 });
+      }
+      // Fall through to legacy flow.
+    }
+
+    // Legacy multi-call flow — addJob then updateOrder.
     if (speculativeJobIdErr || speculativeJobId == null) {
       return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${speculativeJobIdErr || 'unknown'}` }, { status: 502 });
     }

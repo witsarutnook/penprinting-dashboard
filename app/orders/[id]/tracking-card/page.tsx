@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import QRCode from 'qrcode';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadOrder, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { TrackingCardClient } from './client';
 
@@ -28,8 +28,8 @@ export default async function TrackingCardPage({ params }: { params: { id: strin
   let order;
   let errorMessage: string | null = null;
   try {
-    const data = await loadAll();
-    order = data.orders.find((o) => Number(o.id) === id);
+    const result = await loadOrder(id);
+    order = result.order;
   } catch (err) {
     errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
   }

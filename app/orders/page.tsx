@@ -6,13 +6,14 @@ import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { AutoSync } from '@/lib/auto-sync';
-import { IconSearch, IconFileText, IconPlus, IconAlertCircle } from '@/lib/icons';
+import { IconSearch, IconFileText, IconPlus } from '@/lib/icons';
 import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
 import { computeUrgency, getBangkokToday, URGENCY_LABELS } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
 import { OrdersClient } from './client';
 import { OrdersTable, type OrderRow } from './orders-table';
 import { resolvePerPage } from '@/lib/page-size';
+import { DataAuditButton, type OrphanOrder, type DuplicateGroup } from './data-audit-modal';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
@@ -243,25 +244,61 @@ async function OrdersData({
     return true;
   });
 
-  const orphanCount = enriched.filter((o) => o.isOrphan).length;
+  // Build the data-audit sets from the same snapshot — no extra round-trip.
+  // Orphans = orders.status='sent' with no matching job/shipped/cancelled
+  // (already flagged in `enriched.isOrphan`); pull the assignDept/Staff from
+  // the original snapshot for recovery preselect.
+  const ordersById = new Map<number, typeof allOrders[number]>();
+  for (const o of allOrders) ordersById.set(Number(o.id), o);
+  const orphans: OrphanOrder[] = enriched
+    .filter((o) => o.isOrphan)
+    .map((o) => {
+      const src = ordersById.get(o.id);
+      return {
+        id: o.id,
+        name: o.name,
+        customer: o.customer,
+        dateIn: o.dateIn,
+        dateDue: o.dateDue,
+        assignDept: String(src?.assignDept || ''),
+        assignStaff: String(src?.assignStaff || ''),
+      };
+    });
+
+  // Duplicates = jobs grouped by orderId+name with >1 row. Mirrors WP
+  // scanDataIssues. Caused by partial-failure forwards before bulkForward
+  // atomic landed.
+  const duplicates: DuplicateGroup[] = (() => {
+    if (!snap) return [];
+    const groups = new Map<string, Array<{ id: number; dept: string; staff: string }>>();
+    for (const j of snap.jobs) {
+      if (!j.orderId) continue;
+      const key = `${j.orderId}|${j.name || ''}`;
+      const arr = groups.get(key) || [];
+      arr.push({ id: Number(j.id), dept: String(j.dept || ''), staff: String(j.staff || '') });
+      groups.set(key, arr);
+    }
+    const out: DuplicateGroup[] = [];
+    groups.forEach((rows, key) => {
+      if (rows.length > 1) {
+        const sorted = [...rows].sort((a, b) => b.id - a.id);  // newest first
+        const [, name = ''] = key.split('|');
+        out.push({ orderId: Number(key.split('|')[0]), name, rows: sorted });
+      }
+    });
+    return out;
+  })();
 
   return (
     <>
       {/* Toolbar — Export CSV + ตรวจสอบข้อมูล + count + + สั่งงานใหม่ */}
       <div className="flex flex-wrap items-center gap-2">
         <OrdersClient rows={filtered} />
-        <Link
-          href={orphanCount > 0 ? '/orders?status=sent' : '/orders'}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${
-            orphanCount > 0
-              ? 'bg-red-50 text-red-700 hover:bg-red-100'
-              : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-          }`}
-          title="ใบสั่งที่ยังไม่ได้สร้าง Job (ไม่นับ ร่าง / จัดส่งแล้ว / ยกเลิก)"
-        >
-          <IconAlertCircle size={13} />
-          ตรวจสอบข้อมูล {orphanCount > 0 && `(${orphanCount})`}
-        </Link>
+        <DataAuditButton
+          orphans={orphans}
+          duplicates={duplicates}
+          isAdmin={session.role === 'admin'}
+        />
         <span className="text-xs text-stone-500 tabular-nums">
           {filtered.length}/{enriched.length} ใบ
         </span>

@@ -146,6 +146,10 @@ const PATHS_BY_ACTION: Record<string, readonly string[]> = {
   addOrder:      ['/board', '/orders', '/orders/new', '/analytics'],
   updateOrder:   ['/board', '/orders', '/orders/new', '/analytics'],
   deleteOrder:   ['/board', '/orders', '/cancelled', '/analytics'],
+  // v5.10.4 atomic actions — same surface area as multi-call legacy flows
+  cancelOrder:        ['/board', '/orders', '/cancelled', '/calendar', '/analytics'],
+  deleteOrderCascade: ['/board', '/orders', '/cancelled', '/analytics'],
+  promoteDraft:       ['/board', '/orders', '/orders/new', '/calendar', '/analytics'],
   // Templates only show up in order entry
   addTemplate:    ['/orders/new'],
   deleteTemplate: ['/orders/new'],
