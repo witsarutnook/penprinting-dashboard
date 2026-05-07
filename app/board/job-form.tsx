@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { STAFF, DEPT_LABELS, type Dept, type BoardJob } from '@/lib/board';
 import { dmyToISOInput, bangkokTodayISO } from '@/lib/jobs';
 import { broadcastWrite } from '@/lib/auto-sync';
+import { useToast } from '@/components/toast-provider';
+import { usePendingMutations } from '@/components/board/pending-mutations';
 import { IconX, IconPencil, IconPlus, IconAlertCircle } from '@/lib/icons';
 
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
@@ -22,7 +23,8 @@ interface JobFormProps {
 /** Native <dialog> add/edit job modal — used in `/board` page + card detail. */
 export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: JobFormProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const router = useRouter();
+  const toast = useToast();
+  const { commit } = usePendingMutations();
   const isEdit = !!initial;
 
   const [name, setName] = useState('');
@@ -101,11 +103,14 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setBusy(true);
+    // Snapshot the values BEFORE closing the modal — once `open` flips,
+    // the useEffect resets state, so reading `name`/`dateDue` etc inside
+    // the in-flight fetch closure is safe but we want the toast text now.
+    const jobName = name.trim();
 
     const path = isEdit ? '/api/jobs/update' : '/api/jobs/add';
     const body: Record<string, unknown> = {
-      name: name.trim(),
+      name: jobName,
       date: dateDue,
       dateIn: dateIn || undefined,
       dept,
@@ -119,6 +124,12 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
       if (initial.cowork) body.cowork = initial.cowork;
     }
 
+    // Close modal immediately + fire the write in the background.
+    // Sidebar/bottom-nav pulsing dot lights up via commit() until the
+    // SSR re-render lands the updated card. Matches CoworkDialog
+    // pattern in card.tsx — no more 300-500ms modal-still-open lag.
+    onClose();
+    toast.show(isEdit ? `กำลังบันทึกงาน #${initial?.id}...` : `กำลังเพิ่มงาน "${jobName}"...`);
     try {
       const res = await fetch(path, {
         method: 'POST',
@@ -127,16 +138,14 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || `HTTP ${res.status}`);
-        setBusy(false);
+        toast.error(data?.error || `บันทึกไม่สำเร็จ — HTTP ${res.status}`);
         return;
       }
       broadcastWrite(path);
-      router.refresh();
-      onClose();
+      toast.success(isEdit ? `บันทึก #${initial?.id} เรียบร้อย` : `เพิ่ม "${jobName}" เรียบร้อย`);
+      commit(() => {});
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
-      setBusy(false);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
   }
 

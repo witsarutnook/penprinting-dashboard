@@ -187,7 +187,13 @@ async function CancelledData({ filters }: { filters: ResolvedFilters }) {
                       {c.reason || '—'}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <RestoreButton id={c.id} name={c.name} />
+                      <RestoreButton
+                        id={c.id}
+                        name={c.name}
+                        dept={c.dept}
+                        staff={c.staff}
+                        orderId={c.orderId}
+                      />
                     </td>
                   </tr>
                 ))}

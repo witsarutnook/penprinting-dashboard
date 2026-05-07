@@ -77,15 +77,28 @@ function withDefaults(data: Partial<LoadAllResponse>): LoadAllResponse {
   };
 }
 
-/** Fetch the full snapshot used by the dashboard frontend (60s ISR cache). */
+/** Fetch the full snapshot used by the dashboard frontend (60s ISR cache).
+ *  Passes `audit=0` so Apps Script (v5.10.5+) skips the audit_log read
+ *  — saves ~50-100KB payload + ~50ms script time. The /analytics page
+ *  needs audit and uses `loadAllWithAudit()` instead. Pre-v5.10.5 Apps
+ *  Script ignores the param and returns audit anyway, so this is a
+ *  forward-compat speedup. */
 export async function loadAll(): Promise<LoadAllResponse> {
+  const data = await get<Partial<LoadAllResponse>>('loadAll', { audit: '0' });
+  return withDefaults(data);
+}
+
+/** Same as loadAll but includes the 500 most recent audit rows — used by
+ *  /analytics for monthly-report breakdowns by dept. */
+export async function loadAllWithAudit(): Promise<LoadAllResponse> {
   const data = await get<Partial<LoadAllResponse>>('loadAll');
   return withDefaults(data);
 }
 
-/** Fetch loadAll with no caching — for write-path lookups (nextId allocation, etc). */
+/** Fetch loadAll with no caching — for write-path lookups (nextId allocation, etc).
+ *  Skips audit (write paths never need audit history). */
 export async function loadAllFresh(): Promise<LoadAllResponse> {
-  const data = await get<Partial<LoadAllResponse>>('loadAll', {}, { revalidate: 0 });
+  const data = await get<Partial<LoadAllResponse>>('loadAll', { audit: '0' }, { revalidate: 0 });
   return withDefaults(data);
 }
 

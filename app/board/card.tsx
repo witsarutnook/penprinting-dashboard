@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
   type BoardJob,
@@ -70,17 +70,19 @@ function coworkTooltip(raw: unknown): string {
   return inline ? `Co-work: ${inline}` : 'มี co-work';
 }
 
-/** Card with built-in detail modal + inline forward/cowork dialogs (native <dialog>). */
-export function Card({
-  job,
-  isVendorCol,
-  sessionRole,
-}: {
+interface CardProps {
   job: BoardJob;
   dept: Dept;
   isVendorCol: boolean;
   sessionRole: string | null;
-}) {
+}
+
+/** Card with built-in detail modal + inline forward/cowork dialogs (native <dialog>). */
+function CardImpl({
+  job,
+  isVendorCol,
+  sessionRole,
+}: CardProps) {
   const confirmDlg = useConfirm();
   const toast = useToast();
   const { hideJob, unhideJob, commit } = usePendingMutations();
@@ -448,6 +450,52 @@ export function Card({
     </>
   );
 }
+
+/** Field-by-field comparator — keep in sync with CardImpl's dependencies on
+ *  the `job` object. Listed explicitly (vs JSON.stringify) because the
+ *  comparator runs on every parent re-render for every visible card; for
+ *  ~50 cards × ~30 fields a stringify tax would dwarf the savings. Fields
+ *  not listed here aren't read during render so don't need to invalidate. */
+function arePropsEqual(prev: CardProps, next: CardProps): boolean {
+  if (prev.isVendorCol !== next.isVendorCol) return false;
+  if (prev.sessionRole !== next.sessionRole) return false;
+  if (prev.dept !== next.dept) return false;
+  const a = prev.job;
+  const b = next.job;
+  if (a === b) return true;
+  if (
+    a.id !== b.id ||
+    a.name !== b.name ||
+    a.staff !== b.staff ||
+    a.dept !== b.dept ||
+    a.dateRaw !== b.dateRaw ||
+    a.dateInRaw !== b.dateInRaw ||
+    a.dueIso !== b.dueIso ||
+    a.urgency !== b.urgency ||
+    a.daysUntilDue !== b.daysUntilDue ||
+    a.orderId !== b.orderId ||
+    a.status !== b.status ||
+    a.hasCowork !== b.hasCowork ||
+    a.isGuest !== b.isGuest ||
+    a.customer !== b.customer
+  ) return false;
+  // cowork is a small array (or undefined); JSON-compare is cheap and
+  // catches every shape we care about. Order is a nested object — same
+  // treatment. Both are rarely set, so the stringify only fires for the
+  // few cards that have them.
+  if (JSON.stringify(a.cowork) !== JSON.stringify(b.cowork)) return false;
+  if (JSON.stringify(a.order) !== JSON.stringify(b.order)) return false;
+  return true;
+}
+
+/** React.memo wrapper — skips re-render when the parent (Column) re-runs
+ *  but THIS card's data didn't change. Big win on auto-sync ticks: a
+ *  fresh loadAll snapshot creates new object refs for every job, but
+ *  the comparator's field-level check finds 49/50 unchanged → only the
+ *  one card that actually moved re-renders. Internal context updates
+ *  (BulkMode, PendingMutations) still re-render this Card via their
+ *  hook subscriptions — the memo only filters parent-driven updates. */
+export const Card = memo(CardImpl, arePropsEqual);
 
 // ─── Inline Forward dialog (matches WP screenshot) ──────────
 

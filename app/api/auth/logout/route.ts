@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { COOKIE_NAME } from '@/lib/auth';
 
+// Cookie-clear only — no DB, no Apps Script. Edge runtime for parity
+// with /login + zero cold start.
+export const runtime = 'edge';
+
 export async function POST() {
   const res = NextResponse.json({ ok: true });
   // Expire cookie by setting maxAge: 0

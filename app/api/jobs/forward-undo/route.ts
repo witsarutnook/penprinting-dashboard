@@ -9,8 +9,7 @@ import { toISODate } from '@/lib/jobs';
  *
  * Atomically: deletes the new (forwarded) job + appends the original snapshot
  * back as a fresh row. Uses Apps Script `bulkForward(items=1)` so it happens
- * inside one LockService — no orphan-job race. Allocates the restored row's
- * id explicitly via getNextId (forward-compat with pre-v5.10.2 Apps Script).
+ * inside one LockService — no orphan-job race.
  *
  * Cowork is restored from the snapshot so attached collaborators come back.
  *
@@ -46,23 +45,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing currentJobId or snapshot' }, { status: 400 });
   }
 
-  // Allocate the restored row's id explicitly — works regardless of Apps
-  // Script deploy state (auto-alloc would silently write a blank id on
-  // pre-v5.10.2). Old job-id history stays in the audit log.
-  let newId: number;
-  try {
-    const idRes = await post<{ nextId?: number; error?: string }>('getNextId', {});
-    if (idRes.error || !idRes.nextId) {
-      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${idRes.error || 'unknown'}` }, { status: 502 });
-    }
-    newId = Number(idRes.nextId);
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
-
+  // Apps Script `bulkForward` (v5.10.2+) auto-allocates the new row's id
+  // when `newJob.id` is missing/0/undefined — under the same LockService
+  // scope as the delete+append, so atomicity is preserved. We pass
+  // `id: 0` explicitly to opt in. Saves a `getNextId` round-trip
+  // (~300ms) on every undo.
   const newJob: Record<string, unknown> = {
-    id: newId,
+    id: 0,
     name: String(snap.name || ''),
     date: toISODate(String(snap.date || '')),
     dateIn: toISODate(String(snap.dateIn || '')),
@@ -77,6 +66,7 @@ export async function POST(req: Request) {
     const result = await post<{
       ok?: boolean;
       processed?: number;
+      succeeded?: Array<{ oldId: number | string; newId: number | string; name: string }>;
       failed?: Array<{ oldId?: number; error?: string }>;
       error?: string;
     }>('bulkForward', { data: { items: [{ oldId: currentJobId, newJob }] } });
@@ -91,7 +81,10 @@ export async function POST(req: Request) {
     if (!result.processed) {
       return NextResponse.json({ error: 'undo failed — processed=0' }, { status: 502 });
     }
-    return NextResponse.json({ ok: true, restoredId: newId });
+    // Surface the server-allocated id back to the client (used for the
+    // toast + audit signing on the undo toast itself).
+    const restoredId = result.succeeded?.[0]?.newId;
+    return NextResponse.json({ ok: true, restoredId: restoredId ? Number(restoredId) : undefined });
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });

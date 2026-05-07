@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadAllWithAudit, AppsScriptError } from '@/lib/api';
 import { computeAnalytics, computeMonthlyReport } from '@/lib/analytics';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import {
@@ -134,7 +134,7 @@ async function MonthlyData({ year, month }: { year: number; month: number }) {
   let errorMessage: string | null = null;
 
   try {
-    const data = await loadAll();
+    const data = await loadAllWithAudit();
     report = computeMonthlyReport(data, year, month);
   } catch (err) {
     errorMessage = err instanceof AppsScriptError
@@ -232,7 +232,7 @@ async function AnalyticsData({ months }: { months: Range }) {
   let errorMessage: string | null = null;
 
   try {
-    const data = await loadAll();
+    const data = await loadAllWithAudit();
     result = computeAnalytics(data, months);
   } catch (err) {
     errorMessage = err instanceof AppsScriptError

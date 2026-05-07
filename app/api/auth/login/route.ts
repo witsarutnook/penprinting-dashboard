@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_TTL_SECONDS, lookupPassword, signSession } from '@/lib/auth';
 
+// Auth uses Web Crypto + signed cookies — no Node-only deps. Run on Edge
+// to skip the Vercel Node.js cold start (~150ms saved on the first login
+// of the day, when staff first open the dashboard each morning).
+export const runtime = 'edge';
+
 /**
  * Login rate-limit via signed httpOnly cookie (auditor M-login-ratelimit-map).
  *
