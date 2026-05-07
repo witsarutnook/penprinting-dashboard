@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useTransition, type DragEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, type DragEvent } from 'react';
 import { type BoardColumn, type Dept, DEPT_LABELS } from '@/lib/board';
 import { getStaffTheme } from '@/lib/staff-icons';
 import { broadcastWrite } from '@/lib/auto-sync';
@@ -36,11 +35,9 @@ export function Column({
   column: BoardColumn;
   sessionRole: string | null;
 }) {
-  const router = useRouter();
   const toast = useToast();
   const confirmDlg = useConfirm();
-  const [, startTransition] = useTransition();
-  const { hiddenIds, pendingInserts, hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
+  const { hiddenIds, pendingInserts, hideJob, unhideJob, addPendingInsert, removePendingInsert, commit } = usePendingMutations();
   const isAdmin = sessionRole === 'admin';
   const isVendor = !!column.staff.isVendor;
   const theme = getStaffTheme(dept, column.staff.id);
@@ -168,14 +165,12 @@ export function Column({
         }
         broadcastWrite('/api/jobs/reassign');
         toast.success(`ย้ายงาน #${id} → ${targetStaffLabel}`);
-        startTransition(() => router.refresh());
-        // Defer cleanup so the new SSR data has time to land before we
-        // remove the phantom — avoids a flicker gap. 500ms is generous
-        // for ISR + Suspense streaming on /board.
-        setTimeout(() => {
+        // commit() refreshes inside a transition + queues cleanup that
+        // fires AFTER the new SSR data lands — no source-bounceback.
+        commit(() => {
           if (phantomTempId !== null) removePendingInsert(phantomTempId);
           unhideJob(id);
-        }, 500);
+        });
         return;
       }
 
@@ -250,11 +245,10 @@ export function Column({
         }
         broadcastWrite('/api/jobs/forward');
         toast.success(`ส่งต่อ #${id} → ${match.label}`);
-        startTransition(() => router.refresh());
-        setTimeout(() => {
+        commit(() => {
           if (phantomTempId !== null) removePendingInsert(phantomTempId);
           unhideJob(id);
-        }, 500);
+        });
       }
     } finally {
       setBusy(false);

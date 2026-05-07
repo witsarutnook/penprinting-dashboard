@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   type BoardJob,
   type Dept,
@@ -54,9 +53,8 @@ function computeCommonTargets(jobs: BoardJob[], isAdmin: boolean): ForwardTarget
 
 export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardModalProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const router = useRouter();
   const toast = useToast();
-  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert, commit } = usePendingMutations();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [target, setTarget] = useState(''); // "dept:staffId" composite key
   const [busy, setBusy] = useState(false);
@@ -239,12 +237,12 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
       } else {
         toast.success(`ส่งต่อ ${data.processed || items.length} งาน → ${tDept}/${tStaff}`);
       }
-      router.refresh();
-      // Defer cleanup so SSR data lands first (no flicker).
-      setTimeout(() => {
+      // commit() defers cleanup until the SSR refresh completes — phantom
+      // stays until real card lands so source rows don't bounce back.
+      commit(() => {
         phantomTempIds.forEach((tid) => removePendingInsert(tid));
         hidIds.forEach((id) => unhideJob(id));
-      }, 500);
+      });
     } catch (err) {
       phantomTempIds.forEach((tid) => removePendingInsert(tid));
       hidIds.forEach((id) => unhideJob(id));

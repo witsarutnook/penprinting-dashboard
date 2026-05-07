@@ -4,10 +4,13 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
+  useTransition,
   type ReactNode,
 } from 'react';
+import { useRouter } from 'next/navigation';
 import type { BoardJob } from '@/lib/board';
 
 /**
@@ -53,6 +56,15 @@ interface PendingState {
   /** Returns the tempId so the caller can match removePendingInsert. */
   addPendingInsert: (input: { job: BoardJob; destDept: string; destStaff: string }) => number;
   removePendingInsert: (tempId: number) => void;
+  /**
+   * Refresh server data and queue a cleanup that fires AFTER the new data
+   * has streamed in (Next.js soft-navigation transition completes). Use
+   * this on the success path of a mutation so the phantom + hidden flag
+   * stay in place until the real card is rendered — prevents the source
+   * row from briefly bouncing back when SSR is slower than the previous
+   * fixed `setTimeout` budget.
+   */
+  commit: (cleanup: () => void) => void;
 }
 
 const Ctx = createContext<PendingState>({
@@ -62,14 +74,37 @@ const Ctx = createContext<PendingState>({
   unhideJob: () => {},
   addPendingInsert: () => 0,
   removePendingInsert: () => {},
+  commit: () => {},
 });
 
 export function PendingMutationsProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [hiddenIds, setHiddenIds] = useState<Set<number>>(new Set());
   const [pendingInserts, setPendingInserts] = useState<PendingInsertEntry[]>([]);
   // Counter for monotonically-decreasing tempIds — avoids collisions even if
   // two phantoms are added in the same millisecond.
   const tempIdCounter = useRef(0);
+  // Single shared transition wraps every router.refresh() — isPending stays
+  // true until the new SSR snapshot has actually streamed in. Cleanup
+  // callbacks queued via `commit()` fire only after the transition ends,
+  // which is the precise moment the real card replaces the phantom.
+  const [isPending, startTransition] = useTransition();
+  const queuedCleanups = useRef<Array<() => void>>([]);
+  const wasPending = useRef(false);
+
+  useEffect(() => {
+    if (wasPending.current && !isPending) {
+      // Transition finished — flush whatever was queued. We snapshot first
+      // so a cleanup that itself triggers a state update doesn't reorder
+      // entries pushed by another commit() during the same tick.
+      const toRun = queuedCleanups.current;
+      queuedCleanups.current = [];
+      toRun.forEach((fn) => {
+        try { fn(); } catch { /* never block other cleanups */ }
+      });
+    }
+    wasPending.current = isPending;
+  }, [isPending]);
 
   const hideJob = useCallback((id: number | string) => {
     const n = Number(id);
@@ -113,6 +148,13 @@ export function PendingMutationsProvider({ children }: { children: ReactNode }) 
     setPendingInserts((prev) => prev.filter((p) => p.tempId !== tempId));
   }, []);
 
+  const commit = useCallback((cleanup: () => void) => {
+    queuedCleanups.current.push(cleanup);
+    startTransition(() => {
+      router.refresh();
+    });
+  }, [router]);
+
   return (
     <Ctx.Provider
       value={{
@@ -122,6 +164,7 @@ export function PendingMutationsProvider({ children }: { children: ReactNode }) 
         unhideJob,
         addPendingInsert,
         removePendingInsert,
+        commit,
       }}
     >
       {children}

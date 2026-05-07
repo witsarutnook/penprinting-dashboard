@@ -71,10 +71,9 @@ export function Card({
   isVendorCol: boolean;
   sessionRole: string | null;
 }) {
-  const router = useRouter();
   const confirmDlg = useConfirm();
   const toast = useToast();
-  const { hideJob, unhideJob } = usePendingMutations();
+  const { hideJob, unhideJob, commit } = usePendingMutations();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editOrderOpen, setEditOrderOpen] = useState(false);
@@ -162,8 +161,7 @@ export function Card({
       }
       broadcastWrite('/api/jobs/move-to-shipped');
       toast.success(`จัดส่ง "${job.name}" เรียบร้อย`);
-      router.refresh();
-      unhideJob(job.id);
+      commit(() => unhideJob(job.id));
     } catch (err) {
       unhideJob(job.id);
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
@@ -450,10 +448,9 @@ function ForwardDialog({
   onClose: () => void;
   sessionRole: string | null;
 }) {
-  const router = useRouter();
   const { recordForward } = useUndo();
   const toast = useToast();
-  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert, commit } = usePendingMutations();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [target, setTarget] = useState('');
   const [note, setNote] = useState('');
@@ -556,12 +553,13 @@ function ForwardDialog({
       } else {
         toast.success(`ส่งต่อ "${job.name}" → ${tgt.label}`);
       }
-      router.refresh();
-      // Defer cleanup so SSR data lands before phantom is removed (no flicker).
-      setTimeout(() => {
+      // commit() refreshes inside a transition and fires cleanup AFTER the
+      // new SSR data has streamed in — phantom + hidden flag stay until
+      // the real card is on screen, so the source row never bounces back.
+      commit(() => {
         removePendingInsert(phantomTempId);
         unhideJob(job.id);
-      }, 500);
+      });
     } catch (err) {
       removePendingInsert(phantomTempId);
       unhideJob(job.id);
@@ -1054,11 +1052,10 @@ function ActionButtons({
   onEditOrder: () => void;
   onSuccess: () => void;
 }) {
-  const router = useRouter();
   const confirmDlg = useConfirm();
   const { recordForward } = useUndo();
   const toast = useToast();
-  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert, commit } = usePendingMutations();
   const [error, setError] = useState<string | null>(null);
   const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign'>(null);
   const [actionTarget, setActionTarget] = useState('');
@@ -1096,8 +1093,7 @@ function ActionButtons({
       }
       broadcastWrite('/api/jobs/move-to-shipped');
       toast.success(`จัดส่ง "${job.name}" เรียบร้อย`);
-      router.refresh();
-      unhideJob(job.id);
+      commit(() => unhideJob(job.id));
     } catch (err) {
       unhideJob(job.id);
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
@@ -1139,8 +1135,7 @@ function ActionButtons({
       }
       broadcastWrite('/api/jobs/cancel');
       toast.success(`ยกเลิก "${job.name}" — ${reason.trim()}`);
-      router.refresh();
-      unhideJob(job.id);
+      commit(() => unhideJob(job.id));
     } catch (err) {
       unhideJob(job.id);
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
@@ -1212,11 +1207,10 @@ function ActionButtons({
       } else {
         toast.success(`ส่งต่อ "${job.name}" → ${target.label}`);
       }
-      router.refresh();
-      setTimeout(() => {
+      commit(() => {
         removePendingInsert(phantomTempId);
         unhideJob(job.id);
-      }, 500);
+      });
     } catch (err) {
       removePendingInsert(phantomTempId);
       unhideJob(job.id);
@@ -1270,11 +1264,10 @@ function ActionButtons({
       }
       broadcastWrite('/api/jobs/reassign');
       toast.success(`ย้าย "${job.name}" → ${targetLabel}`);
-      router.refresh();
-      setTimeout(() => {
+      commit(() => {
         removePendingInsert(phantomTempId);
         unhideJob(job.id);
-      }, 500);
+      });
     } catch (err) {
       removePendingInsert(phantomTempId);
       unhideJob(job.id);

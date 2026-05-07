@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useBulkMode, BULK_MAX_SELECT } from './bulk-context';
 import {
   computeFromType,
@@ -24,9 +23,8 @@ interface Props {
  *  across selected jobs and submits via /api/jobs/bulk-forward. */
 export function BulkActionsBar({ jobs, isAdmin }: Props) {
   const { mode, selected, clearSelection } = useBulkMode();
-  const router = useRouter();
   const toast = useToast();
-  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert, commit } = usePendingMutations();
   const [target, setTarget] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -125,11 +123,10 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
       } else {
         toast.success(`ส่งต่อ ${data.processed || hidIds.length} งาน → ${tDept}/${tStaff}`);
       }
-      router.refresh();
-      setTimeout(() => {
+      commit(() => {
         phantomTempIds.forEach((tid) => removePendingInsert(tid));
         hidIds.forEach((id) => unhideJob(id));
-      }, 500);
+      });
     } catch (err) {
       phantomTempIds.forEach((tid) => removePendingInsert(tid));
       hidIds.forEach((id) => unhideJob(id));
