@@ -283,6 +283,18 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Forward perf overhaul — A+B (2026-05-07)
+- **Skip `loadAllFresh()` in write routes** — frontend ships `srcJob` snapshot in body for `/api/jobs/forward`, `/api/jobs/bulk-forward`, `/api/jobs/reassign`. -1 Apps Script round-trip per write. Drag-drop carries snapshot via dataTransfer `application/x-job-snapshot`.
+- **Optimistic UI on /board** — new `components/board/pending-mutations.tsx` context with `Set<jobId>` of "hidden" cards. column.tsx filters `column.jobs.filter(j => !hiddenIds.has(j.id))`. Every mutation (forward, reassign, ship, cancel, bulk-forward, drag-drop) hides instantly + closes modal + shows toast → perceived 0ms latency, matching WP UX. On failure: unhide + toast.error.
+- **Apps Script `bulkForward` server-side id alloc** — write.ts auto-allocates ids when newJob.id is missing/0 + returns `succeeded: [{oldId, newId, name}]`. Forward-compat hook (Vercel routes still allocate explicitly via getNextId for deploy-order safety).
+- Result: forward perceived latency 2.5-6s → **0ms**. Apps Script round-trips 3 → 2 (1 after future Vercel switch).
+
+### Phase 2.1 Apps Script TS migration — close-out (2026-05-07)
+- 4 sections moved to TS: [auth.ts](../production-monitoring/apps-script/dashboard/auth.ts), [load.ts](../production-monitoring/apps-script/dashboard/load.ts), [write.ts](../production-monitoring/apps-script/dashboard/write.ts), [api.ts](../production-monitoring/apps-script/dashboard/api.ts)
+- `Code.js` 677 → 93 lines (-86%); only constants + section markers remain
+- Type-check passes strict mode (`noImplicitAny` + `strictNullChecks`); pure refactor (zero behavior change)
+- See [Tech-Roadmap-Status.md §Phase 2.1](../Tech-Roadmap-Status.md) for full migration table
+
 ### UI feedback close-out (2026-05-06 PM, late)
 - **`20c584e`** — feat: lock /analytics + /orders permissions + monthly report dept detail
   - `/analytics` admin only / `/orders` admin+sales / `/api/orders/update` + `/orders/[id]/edit` admin only

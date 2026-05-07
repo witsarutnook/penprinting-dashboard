@@ -18,6 +18,8 @@ import {
 import { broadcastWrite } from '@/lib/auto-sync';
 import { displayDate } from '@/lib/jobs';
 import { IconX, IconCornerUpRight, IconAlertCircle } from '@/lib/icons';
+import { useToast } from '@/components/toast-provider';
+import { usePendingMutations } from '@/components/board/pending-mutations';
 
 const MAX_BATCH = 25;
 const DEPT_ORDER: Dept[] = ['graphic', 'print', 'post'];
@@ -53,6 +55,8 @@ function computeCommonTargets(jobs: BoardJob[], isAdmin: boolean): ForwardTarget
 export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardModalProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const router = useRouter();
+  const toast = useToast();
+  const { hideJob, unhideJob } = usePendingMutations();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [target, setTarget] = useState(''); // "dept:staffId" composite key
   const [busy, setBusy] = useState(false);
@@ -161,14 +165,31 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
     }
     const [tDept, tStaff] = target.split(':');
     setError(null);
-    setBusy(true);
-    setProgress(`กำลังส่ง ${selected.size} งาน...`);
 
-    const items = Array.from(selected).map((id) => ({
-      id,
-      targetDept: tDept,
-      targetStaff: tStaff,
-    }));
+    // Build items with each job's source snapshot — server skips loadAllFresh.
+    const jobsById = new Map(jobs.map((j) => [Number(j.id), j]));
+    const items = Array.from(selected).map((id) => {
+      const j = jobsById.get(Number(id));
+      return {
+        id,
+        targetDept: tDept,
+        targetStaff: tStaff,
+        srcJob: j ? {
+          name: j.name,
+          dept: String(j.dept),
+          staff: j.staff,
+          date: j.dateRaw,
+          dateIn: j.dateInRaw,
+          orderId: j.orderId,
+        } : undefined,
+      };
+    });
+
+    // Optimistic: hide every selected card + close modal + show progress toast.
+    const hidIds = items.map((it) => Number(it.id));
+    hidIds.forEach((id) => hideJob(id));
+    onClose();
+    toast.show(`กำลังส่ง ${selected.size} งาน → ${tDept}/${tStaff}...`);
 
     try {
       const res = await fetch('/api/jobs/bulk-forward', {
@@ -182,31 +203,28 @@ export function BulkForwardModal({ open, onClose, jobs, isAdmin }: BulkForwardMo
         failed?: Array<{ oldId?: number; name?: string; error?: string }>;
         error?: string;
       } = await res.json().catch(() => ({}));
-      setBusy(false);
-      setProgress(null);
       if (!res.ok) {
-        setError(data?.error || `HTTP ${res.status}`);
+        hidIds.forEach((id) => unhideJob(id));
+        toast.error(data?.error || `HTTP ${res.status}`);
         return;
       }
       broadcastWrite('/api/jobs/bulk-forward');
       const failed = data.failed || [];
       if (failed.length > 0) {
-        setError(
-          `ส่งต่อสำเร็จ ${data.processed || 0} จาก ${selected.size} งาน — ` +
-            `failed: ${failed
-              .map((f) => `id=${f.oldId} ${f.error || ''}`.trim())
-              .slice(0, 3)
-              .join('; ')}${failed.length > 3 ? '...' : ''}`,
+        // Unhide only the failed ones — successful items stay hidden until refresh.
+        const failedIds = new Set(failed.map((f) => Number(f.oldId)));
+        hidIds.forEach((id) => { if (failedIds.has(id)) unhideJob(id); });
+        toast.error(
+          `ส่งต่อสำเร็จ ${data.processed || 0} จาก ${selected.size} งาน — ล้มเหลว ${failed.length}`,
         );
-        router.refresh();
-        return;
+      } else {
+        toast.success(`ส่งต่อ ${data.processed || items.length} งาน → ${tDept}/${tStaff}`);
       }
       router.refresh();
-      onClose();
+      hidIds.forEach((id) => unhideJob(id));
     } catch (err) {
-      setBusy(false);
-      setProgress(null);
-      setError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+      hidIds.forEach((id) => unhideJob(id));
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
   }
 

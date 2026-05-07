@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
@@ -9,19 +9,41 @@ import { validateForwardTarget } from '@/lib/forward';
  * RESTRICTED_TARGETS (outsource, diecut_out) are admin only — gated by
  * `validateForwardTarget`.
  *
- * Strategy: call Apps Script `bulkForward` with items=[{oldId, newJob}] so the
- * delete+add happens in one LockService call (atomic). This avoids the WP-era
- * orphan-job class of bugs from sequential `deleteJob` + `addJob` (see
- * monitoring.md §8 "Forward duplicate cards" v5.6.2).
+ * Strategy: client passes the source job snapshot it already has on screen
+ * (frontend just clicked the card), so the server skips a `loadAllFresh()`
+ * round-trip. We still call `getNextId` explicitly so this route works
+ * regardless of Apps Script deploy state — write.ts has a forward-compat
+ * server-side allocator that's dormant when newJob.id is supplied. Net
+ * round-trips: 2 instead of 3 (skips loadAllFresh).
  *
- * Request body: { id, targetDept, targetStaff }
+ * Trust model: client-supplied dept/staff feeds `validateForwardTarget`,
+ * which is workflow-advisory not security. The session role gate
+ * (`requireSession`) and `RESTRICTED_TARGETS` admin check are server-side
+ * and unaffected. `bulkForward` atomically verifies oldId existence in
+ * the sheet — if another tab already moved the row, the new row is
+ * appended anyway and we surface that as a "processed" success.
+ *
+ * Request body: { id, targetDept, targetStaff, srcJob: { name, dept, staff,
+ *                  date, dateIn, orderId } }
  */
 export async function POST(req: Request) {
   const session = await requireSession();
   if (session instanceof NextResponse) return session;
   const isAdmin = session.role === 'admin';
 
-  let body: { id?: number | string; targetDept?: string; targetStaff?: string };
+  let body: {
+    id?: number | string;
+    targetDept?: string;
+    targetStaff?: string;
+    srcJob?: {
+      name?: string;
+      dept?: string;
+      staff?: string;
+      date?: string;
+      dateIn?: string;
+      orderId?: number | string | null;
+    };
+  };
   try {
     body = await req.json();
   } catch {
@@ -37,19 +59,9 @@ export async function POST(req: Request) {
   if (!targetDept || !targetStaff) {
     return NextResponse.json({ error: 'Missing target dept/staff' }, { status: 400 });
   }
-
-  // Fetch fresh snapshot — need source job + nextId allocation.
-  let snap;
-  try {
-    snap = await loadAllFresh();
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-  }
-
-  const src = snap.jobs.find((j) => Number(j.id) === oldId);
-  if (!src) {
-    return NextResponse.json({ error: `ไม่พบงาน id=${oldId} (อาจถูกลบ/ส่งต่อโดยคนอื่นแล้ว)` }, { status: 404 });
+  const src = body.srcJob;
+  if (!src || !src.dept || !src.staff) {
+    return NextResponse.json({ error: 'Missing srcJob (dept/staff required)' }, { status: 400 });
   }
 
   const validationErr = validateForwardTarget(
@@ -61,9 +73,9 @@ export async function POST(req: Request) {
   );
   if (validationErr) return NextResponse.json({ error: validationErr }, { status: 400 });
 
-  // Atomically allocate the next job id from Apps Script (LockService inside
-  // getNextId) — never trust the cached snap.nextId because two concurrent
-  // forwards would collide on the same id. Reported by auditor C1 (2026-05-06).
+  // Allocate the new id explicitly — keeps backwards-compat with the
+  // pre-v5.10.2 Apps Script that doesn't auto-allocate when newJob.id
+  // is missing (would write a blank-id row).
   let nextId: number;
   try {
     const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
@@ -78,9 +90,9 @@ export async function POST(req: Request) {
 
   const newJob = {
     id: nextId,
-    name: src.name,
-    date: toISODate(src.date),
-    dateIn: toISODate(src.dateIn),
+    name: String(src.name || ''),
+    date: toISODate(String(src.date || '')),
+    dateIn: toISODate(String(src.dateIn || '')),
     staff: targetStaff,
     dept: targetDept,
     status: 'pending',
@@ -93,6 +105,7 @@ export async function POST(req: Request) {
     const result = await post<{
       ok?: boolean;
       processed?: number;
+      succeeded?: Array<{ oldId: number; newId: number; name: string }>;
       failed?: Array<{ oldId?: number; name?: string; error?: string }>;
       error?: string;
     }>('bulkForward', { data: { items: [{ oldId, newJob }] } });

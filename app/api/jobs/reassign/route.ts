@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
@@ -8,22 +8,45 @@ import { RESTRICTED_TARGETS } from '@/lib/forward';
 /**
  * Reassign a job to a different staff WITHIN THE SAME DEPT — all roles.
  *
- * This is the v2 equivalent of WP `_performJobMove` (drag-drop within dept).
- * On v2 we couldn't reuse `/api/jobs/update` because that route is admin-only;
- * this dedicated endpoint enforces "staff field only, dept unchanged" so we
- * can keep general edit locked while letting staff/sales reassign work.
+ * v2 equivalent of WP `_performJobMove` (drag-drop within dept). On v2 we
+ * couldn't reuse `/api/jobs/update` because that route is admin-only;
+ * this dedicated endpoint enforces "staff field only, dept unchanged" so
+ * we can keep general edit locked while letting staff/sales reassign work.
  *
- * Apps Script `updateJob` is open to all roles — same as WP — so this just
- * proxies through after validating the same-dept constraint.
+ * Strategy: client passes the source snapshot (already on screen), server
+ * skips `loadAllFresh()`. Apps Script `updateJob` is open to all roles —
+ * same as WP — so this just proxies through after validating the
+ * same-dept constraint. Net round-trips: 1 instead of 2.
  *
- * Request body: { id, targetStaff }
+ * Trust model: client-supplied dept feeds the dept-membership check. If
+ * the client lies about dept, the worst case is moving a job to an
+ * unintended same-dept staff; the session role + RESTRICTED_TARGETS gate
+ * remain server-authoritative. updateJob preserves whatever's already in
+ * the row except the fields we send, so cowork stays intact even if the
+ * client omits it.
+ *
+ * Request body: { id, targetStaff, srcJob: { name, dept, staff, date,
+ *                  dateIn, status, orderId, cowork? } }
  */
 export async function POST(req: Request) {
   const session = await requireSession();
   if (session instanceof NextResponse) return session;
   const isAdmin = session.role === 'admin';
 
-  let body: { id?: number | string; targetStaff?: string };
+  let body: {
+    id?: number | string;
+    targetStaff?: string;
+    srcJob?: {
+      name?: string;
+      dept?: string;
+      staff?: string;
+      date?: string;
+      dateIn?: string;
+      status?: string;
+      orderId?: number | string | null;
+      cowork?: unknown;
+    };
+  };
   try {
     body = await req.json();
   } catch {
@@ -37,17 +60,9 @@ export async function POST(req: Request) {
   const targetStaff = String(body.targetStaff || '');
   if (!targetStaff) return NextResponse.json({ error: 'Missing targetStaff' }, { status: 400 });
 
-  // Need fresh source — staff might have changed in another tab.
-  let snap;
-  try {
-    snap = await loadAllFresh();
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-  }
-  const src = snap.jobs.find((j) => Number(j.id) === oldId);
-  if (!src) {
-    return NextResponse.json({ error: `ไม่พบงาน id=${oldId}` }, { status: 404 });
+  const src = body.srcJob;
+  if (!src || !src.dept || !src.staff) {
+    return NextResponse.json({ error: 'Missing srcJob (dept/staff required)' }, { status: 400 });
   }
 
   const dept = String(src.dept) as Dept;
@@ -69,12 +84,12 @@ export async function POST(req: Request) {
   // Cowork passes through unchanged so collaborators stay attached.
   const payload: Record<string, unknown> = {
     id: oldId,
-    name: src.name,
-    date: toISODate(src.date),
-    dateIn: toISODate(src.dateIn),
+    name: String(src.name || ''),
+    date: toISODate(String(src.date || '')),
+    dateIn: toISODate(String(src.dateIn || '')),
     dept, // unchanged
     staff: targetStaff,
-    status: src.status || 'pending',
+    status: String(src.status || 'pending'),
     orderId: src.orderId ? Number(src.orderId) : '',
   };
   if (src.cowork !== undefined) payload.cowork = src.cowork;

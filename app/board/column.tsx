@@ -8,6 +8,7 @@ import { broadcastWrite } from '@/lib/auto-sync';
 import { computeFromType, getVisibleTargets } from '@/lib/forward';
 import { useToast } from '@/components/toast-provider';
 import { useConfirm } from '@/components/confirm-provider';
+import { usePendingMutations } from '@/components/board/pending-mutations';
 import { Card } from './card';
 
 const VENDOR_PURPLE = '#7c3aed';
@@ -39,12 +40,18 @@ export function Column({
   const toast = useToast();
   const confirmDlg = useConfirm();
   const [, startTransition] = useTransition();
+  const { hiddenIds, hideJob, unhideJob } = usePendingMutations();
   const isAdmin = sessionRole === 'admin';
   const isVendor = !!column.staff.isVendor;
   const theme = getStaffTheme(dept, column.staff.id);
   const [dragOver, setDragOver] = useState<null | 'reassign' | 'forward'>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Filter out cards that are mid-mutation — they've been added to
+  // hiddenIds optimistically so the column reflects the user's action
+  // before the Apps Script round-trip completes.
+  const visibleJobs = column.jobs.filter((j) => !hiddenIds.has(Number(j.id)));
 
   function onDragOver(e: DragEvent<HTMLDivElement>) {
     const types = e.dataTransfer.types;
@@ -78,9 +85,27 @@ export function Column({
     const idStr = e.dataTransfer.getData('text/plain');
     const sourceDept = e.dataTransfer.getData('application/x-job-source-dept') || '';
     const sourceStaff = e.dataTransfer.getData('application/x-job-source-staff') || '';
+    const snapshotStr = e.dataTransfer.getData('application/x-job-snapshot') || '';
     const id = Number(idStr);
     if (!id || !Number.isFinite(id)) return;
     const targetStaff = column.staff.id;
+
+    // Parse the source snapshot the card carried in dataTransfer — used to
+    // skip the server's loadAllFresh round-trip. Falls back to dept/staff
+    // only if the snapshot is missing (older drag from a stale tab).
+    let srcJob: {
+      name?: string;
+      dept?: string;
+      staff?: string;
+      date?: string;
+      dateIn?: string;
+      status?: string;
+      orderId?: number | string | null;
+      cowork?: unknown;
+    } = { dept: sourceDept, staff: sourceStaff };
+    if (snapshotStr) {
+      try { srcJob = { ...srcJob, ...JSON.parse(snapshotStr) }; } catch { /* keep fallback */ }
+    }
 
     // Best-effort source label for the toast — we don't have the actual
     // source staff at drop time, so the dept name is the cleanest fallback.
@@ -92,15 +117,17 @@ export function Column({
     try {
       // Same-dept → reassign
       if (dropType === 'reassign') {
-        // Show toast IMMEDIATELY so the user sees instant feedback —
-        // the actual request still takes ~500-2s but UX feels snappy.
+        // Optimistic: hide the source card so it disappears from its old
+        // staff column instantly. Server still does the work behind it.
+        hideJob(id);
         toast.show(`กำลังย้าย #${id}: ${sourceStaffLabel} → ${targetStaffLabel}`);
         const res = await fetch('/api/jobs/reassign', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, targetStaff }),
+          body: JSON.stringify({ id, targetStaff, srcJob }),
         });
         if (!res.ok) {
+          unhideJob(id);  // rollback — bring it back
           const data = await res.json().catch(() => ({}));
           const msg = data?.error || `HTTP ${res.status}`;
           setError(msg);
@@ -111,7 +138,11 @@ export function Column({
         broadcastWrite('/api/jobs/reassign');
         toast.success(`ย้ายงาน #${id} → ${targetStaffLabel}`);
         // Use startTransition so the refresh doesn't block the UI thread.
-        startTransition(() => router.refresh());
+        startTransition(() => {
+          router.refresh();
+          // Drop the optimistic flag — fresh data already reflects the move.
+          unhideJob(id);
+        });
         return;
       }
 
@@ -146,13 +177,16 @@ export function Column({
           variant: 'default',
         });
         if (!ok) return;
+        // Optimistic: hide source card immediately
+        hideJob(id);
         toast.show(`กำลังส่งต่อ #${id} → ${match.label}...`);
         const res = await fetch('/api/jobs/forward', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, targetDept: dept, targetStaff }),
+          body: JSON.stringify({ id, targetDept: dept, targetStaff, srcJob }),
         });
         if (!res.ok) {
+          unhideJob(id);  // rollback
           const data = await res.json().catch(() => ({}));
           const msg = data?.error || `HTTP ${res.status}`;
           setError(msg);
@@ -162,7 +196,10 @@ export function Column({
         }
         broadcastWrite('/api/jobs/forward');
         toast.success(`ส่งต่อ #${id} → ${match.label}`);
-        startTransition(() => router.refresh());
+        startTransition(() => {
+          router.refresh();
+          unhideJob(id);
+        });
       }
     } finally {
       setBusy(false);
@@ -207,7 +244,7 @@ export function Column({
             color: isVendor ? VENDOR_PURPLE : '#57534e',
           }}
         >
-          {column.jobs.length}
+          {visibleJobs.length}
         </span>
       </div>
 
@@ -227,14 +264,14 @@ export function Column({
             {error}
           </div>
         )}
-        {column.jobs.length === 0 ? (
+        {visibleJobs.length === 0 ? (
           <div className="text-center text-stone-300 text-xs py-8">
             {dragOver === 'reassign' && 'วางที่นี่เพื่อย้ายงาน'}
             {dragOver === 'forward' && 'วางที่นี่เพื่อส่งต่อ'}
             {!dragOver && 'ไม่มีงานค้าง'}
           </div>
         ) : (
-          column.jobs.map((job) => (
+          visibleJobs.map((job) => (
             <Card
               key={`${job.id}-${job.isGuest ? 'g' : 'h'}`}
               job={job}

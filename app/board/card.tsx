@@ -17,6 +17,8 @@ import { displayDate } from '@/lib/jobs';
 import { useBulkMode } from '@/components/board/bulk-context';
 import { useUndo } from '@/components/board/undo-context';
 import { useConfirm } from '@/components/confirm-provider';
+import { useToast } from '@/components/toast-provider';
+import { usePendingMutations } from '@/components/board/pending-mutations';
 import { OrderForm } from './order-form';
 import {
   IconCheck,
@@ -71,13 +73,13 @@ export function Card({
 }) {
   const router = useRouter();
   const confirmDlg = useConfirm();
+  const toast = useToast();
+  const { hideJob, unhideJob } = usePendingMutations();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editOrderOpen, setEditOrderOpen] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [coworkOpen, setCoworkOpen] = useState(false);
-  const [shipBusy, setShipBusy] = useState(false);
-  const [shipError, setShipError] = useState<string | null>(null);
   const { mode: bulkMode, selected, toggleJob } = useBulkMode();
   const isSelected = selected.has(job.id);
   const urgencyColor = URGENCY_COLORS[job.urgency];
@@ -136,7 +138,6 @@ export function Card({
       toggleJob(job.id);
       return;
     }
-    if (shipBusy) return;
     const ok = await confirmDlg.confirm({
       title: 'จัดส่งเสร็จ?',
       message: `ปิดงาน "${job.name}" และย้ายไป /shipped`,
@@ -144,21 +145,29 @@ export function Card({
       variant: 'default',
     });
     if (!ok) return;
-    setShipError(null);
-    setShipBusy(true);
-    const res = await fetch('/api/jobs/move-to-shipped', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: job.id, name: job.name, orderId: job.orderId }),
-    });
-    setShipBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setShipError(data?.error || `HTTP ${res.status}`);
-      return;
+    // Optimistic: hide card + show toast immediately. WP-style instant feedback.
+    hideJob(job.id);
+    toast.show(`กำลังจัดส่ง "${job.name}"...`);
+    try {
+      const res = await fetch('/api/jobs/move-to-shipped', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: job.id, name: job.name, orderId: job.orderId }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `จัดส่งไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/move-to-shipped');
+      toast.success(`จัดส่ง "${job.name}" เรียบร้อย`);
+      router.refresh();
+      unhideJob(job.id);
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
-    broadcastWrite('/api/jobs/move-to-shipped');
-    router.refresh();
   }
 
   // Click backdrop closes the dialog
@@ -211,6 +220,18 @@ export function Card({
     // is a valid target) and the client-side gate falsely rejects valid
     // cross-dept forwards (e.g. print:cut → post:bind).
     e.dataTransfer.setData('application/x-job-source-staff', String(job.staff || ''));
+    // Full source snapshot so the drop handler can POST without a server-side
+    // loadAllFresh round-trip (matches the modal-based forward path).
+    e.dataTransfer.setData('application/x-job-snapshot', JSON.stringify({
+      name: job.name,
+      dept: dept,
+      staff: job.staff,
+      date: job.dateRaw,
+      dateIn: job.dateInRaw,
+      status: job.status,
+      orderId: job.orderId,
+      cowork: job.cowork,
+    }));
     e.dataTransfer.setData('text/plain', String(job.id));
     e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true);
@@ -323,12 +344,12 @@ export function Card({
                   e.stopPropagation();
                   handleShipClick();
                 }}
-                disabled={bulkMode || shipBusy}
+                disabled={bulkMode}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 font-medium text-[12px] disabled:opacity-50"
                 title="จัดส่งเสร็จ — ปิดงาน"
               >
                 <IconCheck size={13} />
-                {shipBusy ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
+                จัดส่งเสร็จ
               </button>
             )}
             {primaryAction?.kind === 'forward' && (
@@ -378,12 +399,6 @@ export function Card({
             )}
           </span>
         </div>
-        {shipError && (
-          <div className="mt-1 text-[10px] text-red-700 bg-red-50 border border-red-200 rounded px-1.5 py-0.5 flex items-start gap-1">
-            <IconAlertCircle size={10} className="flex-shrink-0 mt-px" />
-            <span>{shipError}</span>
-          </div>
-        )}
       </div>
 
       <dialog
@@ -437,10 +452,11 @@ function ForwardDialog({
 }) {
   const router = useRouter();
   const { recordForward } = useUndo();
+  const toast = useToast();
+  const { hideJob, unhideJob } = usePendingMutations();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [target, setTarget] = useState('');
   const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = sessionRole === 'admin';
   const fromType = computeFromType(String(job.dept), String(job.staff));
@@ -481,7 +497,6 @@ function ForwardDialog({
       return;
     }
     setError(null);
-    setBusy(true);
     const preForwardSnapshot = {
       name: job.name,
       dept: String(job.dept),
@@ -492,34 +507,56 @@ function ForwardDialog({
       orderId: job.orderId,
       cowork: job.cowork,
     };
-    const res = await fetch('/api/jobs/forward', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: job.id,
-        targetDept: tgt.dept,
-        targetStaff: tgt.value,
-        note: note.trim() || undefined,
-      }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data?.error || `HTTP ${res.status}`);
-      return;
-    }
-    const data = await res.json().catch(() => ({}));
-    broadcastWrite('/api/jobs/forward');
-    if (isAdmin && data?.newId) {
-      recordForward({
-        newJobId: Number(data.newId),
-        snapshot: preForwardSnapshot,
-        destinationLabel: tgt.label,
-        jobName: job.name,
-      });
-    }
-    router.refresh();
+    // Optimistic UX: hide source card + close modal + show toast immediately.
+    // The Apps Script round-trip runs in the background, exactly like WP's
+    // submitForward. On failure we unhide the card and surface a toast error.
+    hideJob(job.id);
     onClose();
+    toast.show(`กำลังส่งต่อ "${job.name}" → ${tgt.label}...`);
+    try {
+      const res = await fetch('/api/jobs/forward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: job.id,
+          targetDept: tgt.dept,
+          targetStaff: tgt.value,
+          note: note.trim() || undefined,
+          srcJob: {
+            name: job.name,
+            dept: String(job.dept),
+            staff: job.staff,
+            date: job.dateRaw,
+            dateIn: job.dateInRaw,
+            orderId: job.orderId,
+          },
+        }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `ส่งต่อไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      broadcastWrite('/api/jobs/forward');
+      if (isAdmin && data?.newId) {
+        recordForward({
+          newJobId: Number(data.newId),
+          snapshot: preForwardSnapshot,
+          destinationLabel: tgt.label,
+          jobName: job.name,
+        });
+      } else {
+        toast.success(`ส่งต่อ "${job.name}" → ${tgt.label}`);
+      }
+      router.refresh();
+      // hiddenIds clears on next render — fresh data won't include the old id
+      unhideJob(job.id);
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    }
   }
 
   const targetLabel = forwardTargets.find((t) => t.value === target)?.label;
@@ -537,8 +574,7 @@ function ForwardDialog({
           <button
             type="button"
             onClick={onClose}
-            disabled={busy}
-            className="text-stone-400 hover:text-stone-700 w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 disabled:opacity-50"
+            className="text-stone-400 hover:text-stone-700 w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100"
             aria-label="ปิด"
           >
             <IconX size={18} />
@@ -560,9 +596,8 @@ function ForwardDialog({
               <select
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                disabled={busy}
                 autoFocus
-                className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm bg-white focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
+                className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm bg-white focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
               >
                 <option value="">— เลือกปลายทาง —</option>
                 {forwardTargets.map((t) => (
@@ -578,7 +613,6 @@ function ForwardDialog({
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              disabled={busy}
               rows={4}
               className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-stone-50/40 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50 resize-y"
             />
@@ -594,18 +628,17 @@ function ForwardDialog({
           <button
             type="button"
             onClick={onClose}
-            disabled={busy}
-            className="px-4 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200"
           >
             ยกเลิก
           </button>
           <button
             type="button"
             onClick={submit}
-            disabled={busy || !target}
+            disabled={!target}
             className="px-5 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {busy ? 'กำลังส่งต่อ...' : 'ส่งต่อ'}
+            ส่งต่อ
           </button>
         </div>
       </div>
@@ -1014,7 +1047,8 @@ function ActionButtons({
   const router = useRouter();
   const confirmDlg = useConfirm();
   const { recordForward } = useUndo();
-  const [busy, setBusy] = useState<null | 'ship' | 'cancel' | 'forward' | 'reassign'>(null);
+  const toast = useToast();
+  const { hideJob, unhideJob } = usePendingMutations();
   const [error, setError] = useState<string | null>(null);
   const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign'>(null);
   const [actionTarget, setActionTarget] = useState('');
@@ -1032,33 +1066,31 @@ function ActionButtons({
     .filter((s) => isAdmin || !RESTRICTED_TARGETS.has(s.id));
   const canReassign = reassignTargets.length > 0;
 
-  async function callApi(path: string, body: Record<string, unknown>): Promise<boolean> {
-    const res = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data?.error || `HTTP ${res.status}`);
-      return false;
-    }
-    broadcastWrite(path);
-    return true;
-  }
-
   async function moveToShipped() {
     setError(null);
-    setBusy('ship');
-    const ok = await callApi('/api/jobs/move-to-shipped', {
-      id: job.id,
-      name: job.name,
-      orderId: job.orderId,
-    });
-    setBusy(null);
-    if (ok) {
+    // Optimistic: hide + dismiss action sheet + toast.
+    hideJob(job.id);
+    onSuccess();
+    toast.show(`กำลังจัดส่ง "${job.name}"...`);
+    try {
+      const res = await fetch('/api/jobs/move-to-shipped', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: job.id, name: job.name, orderId: job.orderId }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `จัดส่งไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/move-to-shipped');
+      toast.success(`จัดส่ง "${job.name}" เรียบร้อย`);
       router.refresh();
-      onSuccess();
+      unhideJob(job.id);
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
   }
 
@@ -1072,19 +1104,36 @@ function ActionButtons({
     });
     if (!reason || !reason.trim()) return;
     setError(null);
-    setBusy('cancel');
-    const ok = await callApi('/api/jobs/cancel', {
-      id: job.id,
-      name: job.name,
-      dept: job.dept,
-      staff: job.staff,
-      orderId: job.orderId,
-      reason: reason.trim(),
-    });
-    setBusy(null);
-    if (ok) {
+    // Optimistic: hide + dismiss + toast.
+    hideJob(job.id);
+    onSuccess();
+    toast.show(`กำลังยกเลิก "${job.name}"...`);
+    try {
+      const res = await fetch('/api/jobs/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: job.id,
+          name: job.name,
+          dept: job.dept,
+          staff: job.staff,
+          orderId: job.orderId,
+          reason: reason.trim(),
+        }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `ยกเลิกไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/cancel');
+      toast.success(`ยกเลิก "${job.name}" — ${reason.trim()}`);
       router.refresh();
-      onSuccess();
+      unhideJob(job.id);
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
   }
 
@@ -1095,8 +1144,7 @@ function ActionButtons({
       return;
     }
     setError(null);
-    setBusy('forward');
-    // Snapshot the source state BEFORE the API call — needed for undo if admin.
+    // Snapshot for admin undo path
     const preForwardSnapshot = {
       name: job.name,
       dept: String(job.dept),
@@ -1107,33 +1155,52 @@ function ActionButtons({
       orderId: job.orderId,
       cowork: job.cowork,
     };
-    const res = await fetch('/api/jobs/forward', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: job.id,
-        targetDept: target.dept,
-        targetStaff: target.value,
-      }),
-    });
-    setBusy(null);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data?.error || `HTTP ${res.status}`);
-      return;
-    }
-    const data = await res.json().catch(() => ({}));
-    broadcastWrite('/api/jobs/forward');
-    if (sessionRole === 'admin' && data?.newId) {
-      recordForward({
-        newJobId: Number(data.newId),
-        snapshot: preForwardSnapshot,
-        destinationLabel: target.label,
-        jobName: job.name,
-      });
-    }
-    router.refresh();
+    // Optimistic: hide source card + dismiss action sheet + show toast.
+    hideJob(job.id);
     onSuccess();
+    toast.show(`กำลังส่งต่อ "${job.name}" → ${target.label}...`);
+    try {
+      const res = await fetch('/api/jobs/forward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: job.id,
+          targetDept: target.dept,
+          targetStaff: target.value,
+          srcJob: {
+            name: job.name,
+            dept: String(job.dept),
+            staff: job.staff,
+            date: job.dateRaw,
+            dateIn: job.dateInRaw,
+            orderId: job.orderId,
+          },
+        }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `ส่งต่อไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      broadcastWrite('/api/jobs/forward');
+      if (sessionRole === 'admin' && data?.newId) {
+        recordForward({
+          newJobId: Number(data.newId),
+          snapshot: preForwardSnapshot,
+          destinationLabel: target.label,
+          jobName: job.name,
+        });
+      } else {
+        toast.success(`ส่งต่อ "${job.name}" → ${target.label}`);
+      }
+      router.refresh();
+      unhideJob(job.id);
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    }
   }
 
   async function submitReassign() {
@@ -1142,15 +1209,46 @@ function ActionButtons({
       return;
     }
     setError(null);
-    setBusy('reassign');
-    const ok = await callApi('/api/jobs/reassign', {
-      id: job.id,
-      targetStaff: actionTarget,
-    });
-    setBusy(null);
-    if (ok) {
+    const targetLabel =
+      reassignTargets.find((s) => s.id === actionTarget)?.name || actionTarget;
+    // Optimistic: hide + dismiss + toast (reassign card reappears in new
+    // staff column once router.refresh completes).
+    hideJob(job.id);
+    onSuccess();
+    toast.show(`กำลังย้าย "${job.name}" → ${targetLabel}...`);
+    try {
+      const res = await fetch('/api/jobs/reassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: job.id,
+          targetStaff: actionTarget,
+          srcJob: {
+            name: job.name,
+            dept: String(job.dept),
+            staff: job.staff,
+            date: job.dateRaw,
+            dateIn: job.dateInRaw,
+            status: job.status,
+            orderId: job.orderId,
+            cowork: job.cowork,
+          },
+        }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `ย้ายไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/reassign');
+      toast.success(`ย้าย "${job.name}" → ${targetLabel}`);
       router.refresh();
-      onSuccess();
+      unhideJob(job.id);
+      return;
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
   }
 
@@ -1194,15 +1292,14 @@ function ActionButtons({
             <button
               type="button"
               onClick={submitForward}
-              disabled={busy !== null || !actionTarget}
+              disabled={!actionTarget}
               className="flex-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {busy === 'forward' ? 'กำลังส่งต่อ...' : 'ยืนยันส่งต่อ'}
+              ยืนยันส่งต่อ
             </button>
             <button
               type="button"
               onClick={cancelAction}
-              disabled={busy !== null}
               className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
             >
               ยกเลิก
@@ -1233,15 +1330,14 @@ function ActionButtons({
             <button
               type="button"
               onClick={submitReassign}
-              disabled={busy !== null || !actionTarget}
+              disabled={!actionTarget}
               className="flex-1 px-3 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {busy === 'reassign' ? 'กำลังย้าย...' : 'ยืนยันย้าย'}
+              ยืนยันย้าย
             </button>
             <button
               type="button"
               onClick={cancelAction}
-              disabled={busy !== null}
               className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
             >
               ยกเลิก
@@ -1254,18 +1350,16 @@ function ActionButtons({
             <button
               type="button"
               onClick={moveToShipped}
-              disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <IconCheck size={16} />
-              {busy === 'ship' ? 'กำลังส่ง...' : 'จัดส่งเสร็จ'}
+              จัดส่งเสร็จ
             </button>
           )}
           {canForward && (
             <button
               type="button"
               onClick={() => startAction('forward')}
-              disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-100 text-sky-800 text-sm font-medium hover:bg-sky-200 disabled:opacity-50"
             >
               <IconCornerUpRight size={16} />
@@ -1276,7 +1370,6 @@ function ActionButtons({
             <button
               type="button"
               onClick={() => startAction('reassign')}
-              disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-100 text-violet-800 text-sm font-medium hover:bg-violet-200 disabled:opacity-50"
             >
               <IconRefreshCw size={16} />
@@ -1289,7 +1382,6 @@ function ActionButtons({
             <button
               type="button"
               onClick={job.orderId ? onEditOrder : onEdit}
-              disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent/10 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50"
               title={job.orderId
                 ? `แก้ใบสั่งงาน #${job.orderId} (cascade ไป Job ที่เชื่อมอยู่)`
@@ -1305,12 +1397,11 @@ function ActionButtons({
             <button
               type="button"
               onClick={cancelJob}
-              disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
               title="ย้ายไปรายการยกเลิก — กู้คืนได้ภายหลังจาก /cancelled"
             >
               <IconAlertTriangle size={16} />
-              {busy === 'cancel' ? 'กำลังยกเลิก...' : 'ยกเลิกงาน'}
+              ยกเลิกงาน
             </button>
           )}
         </div>

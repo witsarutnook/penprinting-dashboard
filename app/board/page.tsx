@@ -21,6 +21,7 @@ import { SearchBox } from '@/components/board/search-box';
 import { BulkModeProvider } from '@/components/board/bulk-context';
 import { BulkActionsBar } from '@/components/board/bulk-actions-bar';
 import { UndoProvider } from '@/components/board/undo-context';
+import { PendingMutationsProvider } from '@/components/board/pending-mutations';
 
 export const metadata: Metadata = {
   title: 'Kanban Board',
@@ -85,6 +86,7 @@ export default async function BoardPage({
     <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
       <UndoProvider>
+      <PendingMutationsProvider>
       <BulkModeProvider>
         {/* Top date row + search — no data dep, render in the first chunk */}
         <div className="bg-white border-b border-stone-100">
@@ -102,6 +104,7 @@ export default async function BoardPage({
           </Suspense>
         </div>
       </BulkModeProvider>
+      </PendingMutationsProvider>
       </UndoProvider>
     </DashboardShell>
   );

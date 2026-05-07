@@ -11,6 +11,8 @@ import {
 import { broadcastWrite } from '@/lib/auto-sync';
 import { IconCornerUpRight, IconAlertCircle, IconX } from '@/lib/icons';
 import { DEPT_LABELS, type BoardJob } from '@/lib/board';
+import { useToast } from '@/components/toast-provider';
+import { usePendingMutations } from './pending-mutations';
 
 interface Props {
   jobs: BoardJob[];
@@ -23,8 +25,9 @@ interface Props {
 export function BulkActionsBar({ jobs, isAdmin }: Props) {
   const { mode, selected, clearSelection } = useBulkMode();
   const router = useRouter();
+  const toast = useToast();
+  const { hideJob, unhideJob } = usePendingMutations();
   const [target, setTarget] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedJobs = useMemo(
@@ -60,12 +63,29 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
     }
     const [tDept, tStaff] = target.split(':');
     setError(null);
-    setBusy(true);
-    const items = Array.from(selected).map((id) => ({
-      id,
-      targetDept: tDept,
-      targetStaff: tStaff,
-    }));
+    const jobsById = new Map(selectedJobs.map((j) => [Number(j.id), j]));
+    const items = Array.from(selected).map((id) => {
+      const j = jobsById.get(Number(id));
+      return {
+        id,
+        targetDept: tDept,
+        targetStaff: tStaff,
+        srcJob: j ? {
+          name: j.name,
+          dept: String(j.dept),
+          staff: j.staff,
+          date: j.dateRaw,
+          dateIn: j.dateInRaw,
+          orderId: j.orderId,
+        } : undefined,
+      };
+    });
+    // Optimistic: hide every selected card + clear selection + toast.
+    const hidIds = items.map((it) => Number(it.id));
+    hidIds.forEach((id) => hideJob(id));
+    clearSelection();
+    setTarget('');
+    toast.show(`กำลังส่ง ${hidIds.length} งาน → ${tDept}/${tStaff}...`);
     try {
       const res = await fetch('/api/jobs/bulk-forward', {
         method: 'POST',
@@ -73,22 +93,25 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
         body: JSON.stringify({ items }),
       });
       const data = await res.json().catch(() => ({}));
-      setBusy(false);
       if (!res.ok) {
-        setError(data?.error || `HTTP ${res.status}`);
+        hidIds.forEach((id) => unhideJob(id));
+        toast.error(data?.error || `HTTP ${res.status}`);
         return;
       }
       broadcastWrite('/api/jobs/bulk-forward');
-      router.refresh();
-      clearSelection();
-      setTarget('');
       const failed = data.failed?.length || 0;
       if (failed > 0) {
-        setError(`ส่งสำเร็จ ${data.processed || 0} จาก ${selected.size} — ล้มเหลว ${failed}`);
+        const failedIds = new Set((data.failed as Array<{ oldId?: number }>).map((f) => Number(f.oldId)));
+        hidIds.forEach((id) => { if (failedIds.has(id)) unhideJob(id); });
+        toast.error(`ส่งสำเร็จ ${data.processed || 0} จาก ${hidIds.length} — ล้มเหลว ${failed}`);
+      } else {
+        toast.success(`ส่งต่อ ${data.processed || hidIds.length} งาน → ${tDept}/${tStaff}`);
       }
+      router.refresh();
+      hidIds.forEach((id) => unhideJob(id));
     } catch (err) {
-      setBusy(false);
-      setError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+      hidIds.forEach((id) => unhideJob(id));
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
   }
 
@@ -104,7 +127,7 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
         <select
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          disabled={busy || commonTargets.length === 0}
+          disabled={commonTargets.length === 0}
           className="flex-grow min-w-[180px] px-3 py-1.5 border border-stone-200 rounded-lg text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50 disabled:bg-stone-50"
         >
           <option value="">
@@ -121,17 +144,16 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
         <button
           type="button"
           onClick={submit}
-          disabled={busy || !target}
+          disabled={!target}
           className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <IconCornerUpRight size={14} />
-          {busy ? 'กำลังส่ง...' : `ส่งต่อ ${selected.size}`}
+          ส่งต่อ {selected.size}
         </button>
         <button
           type="button"
           onClick={clearSelection}
-          disabled={busy}
-          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm text-stone-600 hover:bg-stone-100 disabled:opacity-50"
+          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm text-stone-600 hover:bg-stone-100"
           aria-label="ล้างที่เลือก"
         >
           <IconX size={14} />

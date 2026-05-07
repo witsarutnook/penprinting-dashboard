@@ -9,7 +9,8 @@ import { toISODate } from '@/lib/jobs';
  *
  * Atomically: deletes the new (forwarded) job + appends the original snapshot
  * back as a fresh row. Uses Apps Script `bulkForward(items=1)` so it happens
- * inside one LockService — no orphan-job race.
+ * inside one LockService — no orphan-job race. Allocates the restored row's
+ * id explicitly via getNextId (forward-compat with pre-v5.10.2 Apps Script).
  *
  * Cowork is restored from the snapshot so attached collaborators come back.
  *
@@ -45,8 +46,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing currentJobId or snapshot' }, { status: 400 });
   }
 
-  // Allocate fresh nextId (the restored row is functionally the same job but
-  // gets a new sequence number — old job-id history stays in the audit log).
+  // Allocate the restored row's id explicitly — works regardless of Apps
+  // Script deploy state (auto-alloc would silently write a blank id on
+  // pre-v5.10.2). Old job-id history stays in the audit log.
   let newId: number;
   try {
     const idRes = await post<{ nextId?: number; error?: string }>('getNextId', {});

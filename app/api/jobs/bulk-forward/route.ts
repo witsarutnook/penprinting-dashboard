@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
@@ -8,13 +8,20 @@ import { validateForwardTarget } from '@/lib/forward';
  * Bulk forward — all roles, 1-25 jobs per request (mirrors WP `BULK_FORWARD_MAX`
  * and Apps Script 30s execution limit).
  *
- * Each item gets its own target dept/staff so admin can mix-and-match. Server
- * validates each via FW_TARGETS, allocates sequential nextIds from one fresh
- * loadAll, then sends ONE Apps Script bulkForward call (atomic in one
- * LockService — no partial-state race).
+ * Each item carries its own source snapshot (frontend already has it on
+ * screen) + target dept/staff. Server skips `loadAllFresh()` then allocates
+ * sequential ids via `getNextIds(N)` (one round-trip) before sending the
+ * batch to Apps Script `bulkForward`. Net Apps Script round-trips: 2 instead
+ * of 3 (skips loadAllFresh).
  *
- * Request body: { items: [{ id, targetDept, targetStaff }, ...] }
- * Response:     { ok, processed, failed: [{ oldId, name, error }] }
+ * Trust model: same as /api/jobs/forward — client-supplied src.dept/staff
+ * feeds workflow validation, which is best-effort. RESTRICTED_TARGETS admin
+ * gate + session role check are server-authoritative.
+ *
+ * Request body: { items: [{ id, targetDept, targetStaff, srcJob: { name,
+ *                  dept, staff, date, dateIn, orderId } }, ...] }
+ * Response:     { ok, processed, succeeded: [{oldId, newId, name}],
+ *                  failed: [{oldId, name, error}] }
  */
 const MAX_BATCH = 25;
 
@@ -22,6 +29,14 @@ interface IncomingItem {
   id?: number | string;
   targetDept?: string;
   targetStaff?: string;
+  srcJob?: {
+    name?: string;
+    dept?: string;
+    staff?: string;
+    date?: string;
+    dateIn?: string;
+    orderId?: number | string | null;
+  };
 }
 
 export async function POST(req: Request) {
@@ -45,9 +60,8 @@ export async function POST(req: Request) {
     );
   }
 
-  // De-dup — same job shouldn't be queued twice in one batch (would race in Apps Script).
   const seen = new Set<number>();
-  const cleaned: Array<{ id: number; targetDept: string; targetStaff: string }> = [];
+  const cleaned: Array<{ id: number; targetDept: string; targetStaff: string; src: NonNullable<IncomingItem['srcJob']> }> = [];
   for (const it of items) {
     const id = Number(it.id);
     if (!id || !Number.isFinite(id)) {
@@ -62,30 +76,29 @@ export async function POST(req: Request) {
     if (!targetDept || !targetStaff) {
       return NextResponse.json({ error: `id=${id} ขาด targetDept/targetStaff` }, { status: 400 });
     }
-    cleaned.push({ id, targetDept, targetStaff });
+    const src = it.srcJob;
+    if (!src || !src.dept || !src.staff) {
+      return NextResponse.json({ error: `id=${id} ขาด srcJob.dept/staff` }, { status: 400 });
+    }
+    const validationErr = validateForwardTarget(
+      String(src.dept),
+      String(src.staff),
+      targetDept,
+      targetStaff,
+      isAdmin,
+    );
+    if (validationErr) {
+      return NextResponse.json(
+        { error: `id=${id} (${src.name || ''}): ${validationErr}` },
+        { status: 400 },
+      );
+    }
+    cleaned.push({ id, targetDept, targetStaff, src });
   }
 
-  // One snapshot → resolve every source job + allocate sequential IDs.
-  let snap;
-  try {
-    snap = await loadAllFresh();
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-  }
-  const jobsById = new Map<number, (typeof snap.jobs)[number]>();
-  snap.jobs.forEach((j) => jobsById.set(Number(j.id), j));
-
-  // Atomically allocate N ids in ONE round-trip via the getNextIds Apps
-  // Script action (introduced v5.10.0 — auditor M-bulk-forward-N-roundtrips).
-  // Previously this looped getNextId N times — 25 items × ~300-500ms per
-  // round-trip routinely flirted with the Vercel 10s function timeout on
-  // a slow Sheet day. doPost wraps everything in LockService so a single
-  // batched call is just as race-safe as N sequential calls.
-  //
-  // Backwards-compat: if the Apps Script side hasn't been redeployed yet
-  // (getNextIds returns "Unknown action"), fall back to the per-item loop
-  // so the dashboard keeps working until clasp push lands.
+  // Allocate N sequential ids in one round-trip — keeps backwards-compat
+  // with the pre-v5.10.2 Apps Script that doesn't auto-allocate when
+  // newJob.id is missing. Falls back to N×getNextId on legacy projects.
   let allocatedIds: number[];
   try {
     const r = await post<{ ids?: number[]; error?: string }>('getNextIds', { count: cleaned.length });
@@ -94,8 +107,6 @@ export async function POST(req: Request) {
     }
     allocatedIds = r.ids.map(Number);
   } catch (errBatch) {
-    // Fall back to per-item allocation — slower but compatible with the
-    // pre-v5.10.0 Apps Script.
     console.warn('[bulk-forward] getNextIds unavailable, falling back to N×getNextId:', errBatch);
     allocatedIds = [];
     try {
@@ -114,49 +125,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `ขอ job ids ไม่สำเร็จ — ${msg}` }, { status: 502 });
     }
   }
-  const buildItems: Array<{ oldId: number; newJob: Record<string, unknown> }> = [];
 
-  for (const it of cleaned) {
-    const src = jobsById.get(it.id);
-    if (!src) {
-      return NextResponse.json(
-        { error: `ไม่พบงาน id=${it.id} (อาจถูกลบ/ส่งต่อโดยคนอื่นแล้ว)` },
-        { status: 404 },
-      );
-    }
-    const validationErr = validateForwardTarget(
-      String(src.dept),
-      String(src.staff),
-      it.targetDept,
-      it.targetStaff,
-      isAdmin,
-    );
-    if (validationErr) {
-      return NextResponse.json(
-        { error: `id=${it.id} (${src.name || ''}): ${validationErr}` },
-        { status: 400 },
-      );
-    }
-    buildItems.push({
-      oldId: it.id,
-      newJob: {
-        id: allocatedIds[buildItems.length],
-        name: src.name,
-        date: toISODate(src.date),
-        dateIn: toISODate(src.dateIn),
-        staff: it.targetStaff,
-        dept: it.targetDept,
-        status: 'pending',
-        orderId: src.orderId ? Number(src.orderId) : '',
-        // Cowork cleared on forward — matches WP submitForward
-      },
-    });
-  }
+  const buildItems: Array<{ oldId: number; newJob: Record<string, unknown> }> = cleaned.map((it, idx) => ({
+    oldId: it.id,
+    newJob: {
+      id: allocatedIds[idx],
+      name: String(it.src.name || ''),
+      date: toISODate(String(it.src.date || '')),
+      dateIn: toISODate(String(it.src.dateIn || '')),
+      staff: it.targetStaff,
+      dept: it.targetDept,
+      status: 'pending',
+      orderId: it.src.orderId ? Number(it.src.orderId) : '',
+      // Cowork cleared on forward — matches WP submitForward
+    },
+  }));
 
   try {
     const result = await post<{
       ok?: boolean;
       processed?: number;
+      succeeded?: Array<{ oldId: number; newId: number; name: string }>;
       failed?: Array<{ oldId?: number; name?: string; error?: string }>;
       error?: string;
     }>('bulkForward', { data: { items: buildItems } });
@@ -165,6 +154,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       processed: result.processed || 0,
+      succeeded: result.succeeded || [],
       failed: result.failed || [],
     });
   } catch (err) {
