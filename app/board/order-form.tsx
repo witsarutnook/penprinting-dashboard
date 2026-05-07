@@ -258,7 +258,37 @@ export function OrderForm({
     return { filled: checks.filter(Boolean).length, total: checks.length };
   }, [data]);
 
-  async function submit(force = false, mode: 'submit' | 'draft' | 'print' = 'submit') {
+  /**
+   * Open the print popup synchronously WHILE we're still in the user-trust
+   * window (so browser popup blockers don't kill it), then hand the window
+   * reference to `submit()` for the URL swap on success. Mirrors WP's
+   * `printOrder()` (production-monitoring.js:1952).
+   *
+   * Without this, calling `window.open()` AFTER `await fetch()` is rejected
+   * by Chrome/Safari/Firefox as "non-user-initiated popup" and silently
+   * fails — which is exactly what the user reported (no print page).
+   */
+  function handleSubmitAndPrint() {
+    const pw = window.open('about:blank', '_blank');
+    if (!pw) {
+      setError('Browser ปิด popup — โปรดอนุญาต popup สำหรับเว็บนี้');
+      return;
+    }
+    try {
+      pw.document.write(
+        '<html><head><title>กำลังเตรียมเอกสาร...</title></head>' +
+        '<body style="font:14px sans-serif;padding:40px;text-align:center;color:#666;">' +
+        '⏳ กำลังเตรียมเอกสาร...</body></html>'
+      );
+    } catch { /* about:blank cross-origin protections vary — non-fatal */ }
+    void submit(false, 'print', pw);
+  }
+
+  async function submit(
+    force = false,
+    mode: 'submit' | 'draft' | 'print' = 'submit',
+    printWindow?: Window | null,
+  ) {
     setError(null);
     setBusy(true);
     const body: Record<string, unknown> = { ...data };
@@ -277,10 +307,14 @@ export function OrderForm({
       setBusy(false);
       if (res.status === 409 && respJson?.error === 'duplicate') {
         setDuplicate({ duplicates: respJson.duplicates || [] });
+        // Close the placeholder popup — user has to confirm duplicate first.
+        // Re-clicking "พิมพ์+สั่ง" after force-confirm reopens it correctly.
+        if (printWindow && !printWindow.closed) printWindow.close();
         return;
       }
       if (!res.ok) {
         setError(respJson?.error || `HTTP ${res.status}`);
+        if (printWindow && !printWindow.closed) printWindow.close();
         return;
       }
       broadcastWrite(path);
@@ -296,12 +330,20 @@ export function OrderForm({
       };
       setSuccess(successInfo);
       if (mode === 'print' && successInfo.orderId) {
-        // Open the dedicated print page in a new tab — auto-prints on load.
-        window.open(`/orders/${successInfo.orderId}/print`, '_blank');
+        const printUrl = `/orders/${successInfo.orderId}/print`;
+        if (printWindow && !printWindow.closed) {
+          // Reuse the popup we opened on the click — won't be blocked.
+          printWindow.location.href = printUrl;
+        } else {
+          // Fallback for callers that didn't pre-open a window (force-retry
+          // from duplicate confirm, etc.). Likely blocked but worth trying.
+          window.open(printUrl, '_blank');
+        }
       }
     } catch (err) {
       setBusy(false);
       setError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+      if (printWindow && !printWindow.closed) printWindow.close();
     }
   }
 
@@ -691,7 +733,7 @@ export function OrderForm({
                 {busy ? 'กำลังบันทึก...' : isEdit ? 'บันทึกการแก้ไข' : 'ส่งใบสั่งงาน'}
               </button>
               {!isEdit && (
-                <button type="button" onClick={() => submit(false, 'print')} disabled={busy}
+                <button type="button" onClick={handleSubmitAndPrint} disabled={busy}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50"
                   title="ส่งใบสั่งงาน + เปิดหน้าพิมพ์ทันที">
                   <IconPrinter size={14} />
