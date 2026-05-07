@@ -26,7 +26,7 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
   const { mode, selected, clearSelection } = useBulkMode();
   const router = useRouter();
   const toast = useToast();
-  const { hideJob, unhideJob } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
   const [target, setTarget] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -80,8 +80,20 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
         } : undefined,
       };
     });
-    // Optimistic: hide every selected card + clear selection + toast.
+    // Optimistic: hide selected sources + inject phantoms in target column +
+    // clear selection + toast.
     const hidIds = items.map((it) => Number(it.id));
+    const phantomTempIds: number[] = [];
+    items.forEach((it) => {
+      const j = jobsById.get(Number(it.id));
+      if (j) {
+        phantomTempIds.push(addPendingInsert({
+          job: { ...j, hasCowork: false, cowork: undefined },
+          destDept: tDept,
+          destStaff: tStaff,
+        }));
+      }
+    });
     hidIds.forEach((id) => hideJob(id));
     clearSelection();
     setTarget('');
@@ -94,6 +106,7 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        phantomTempIds.forEach((tid) => removePendingInsert(tid));
         hidIds.forEach((id) => unhideJob(id));
         toast.error(data?.error || `HTTP ${res.status}`);
         return;
@@ -102,14 +115,23 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
       const failed = data.failed?.length || 0;
       if (failed > 0) {
         const failedIds = new Set((data.failed as Array<{ oldId?: number }>).map((f) => Number(f.oldId)));
-        hidIds.forEach((id) => { if (failedIds.has(id)) unhideJob(id); });
+        items.forEach((it, idx) => {
+          if (failedIds.has(Number(it.id))) {
+            unhideJob(Number(it.id));
+            if (phantomTempIds[idx] !== undefined) removePendingInsert(phantomTempIds[idx]);
+          }
+        });
         toast.error(`ส่งสำเร็จ ${data.processed || 0} จาก ${hidIds.length} — ล้มเหลว ${failed}`);
       } else {
         toast.success(`ส่งต่อ ${data.processed || hidIds.length} งาน → ${tDept}/${tStaff}`);
       }
       router.refresh();
-      hidIds.forEach((id) => unhideJob(id));
+      setTimeout(() => {
+        phantomTempIds.forEach((tid) => removePendingInsert(tid));
+        hidIds.forEach((id) => unhideJob(id));
+      }, 500);
     } catch (err) {
+      phantomTempIds.forEach((tid) => removePendingInsert(tid));
       hidIds.forEach((id) => unhideJob(id));
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }

@@ -4,44 +4,72 @@ import {
   createContext,
   useCallback,
   useContext,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
+import type { BoardJob } from '@/lib/board';
 
 /**
  * Optimistic-UI bookkeeping for /board mutations (forward, bulk-forward,
- * reassign-to-other-staff). When a mutation kicks off, the originating
- * card is added to `hiddenIds` so it disappears from the column instantly
- * — the user sees WP-style instant feedback while the Apps Script
- * round-trip runs in the background.
+ * reassign, ship, cancel). Two states are tracked:
  *
- * On success: caller triggers `router.refresh()` then drops the id from
- * the set. The fresh server data won't include the old id (forward → new
- * id; reassign → still has the same id but different staff), so the card
- * stays gone or reappears in the right column without a flicker.
+ * 1. `hiddenIds` — job ids that should be filtered out of column rendering.
+ *    Used when the SOURCE row should disappear instantly (forward, reassign,
+ *    ship, cancel). Cleared after `router.refresh()` lands the new data.
  *
- * On failure: caller calls `unhideJob` to bring the card back + shows an
- * error toast. The rollback window is short because we keep the id in the
- * set only as long as the fetch is pending.
+ * 2. `pendingInserts` — phantom job objects to render in destination columns
+ *    while the Apps Script round-trip is still in flight. Without this, the
+ *    user sees a 2-3s gap between source-card-disappears and dest-card-appears.
+ *    Phantoms use a NEGATIVE id so they never collide with real ids; the
+ *    Card component renders them like normal cards (urgency, name, dates all
+ *    derived from the source snapshot we passed in).
  *
- * Keep the API tiny — the rest of the system (auto-sync polling, drag
- * source-staff lookup, etc.) deliberately doesn't know about this
- * optimistic layer; it only affects render-time card visibility.
+ * On success: caller triggers `router.refresh()`, then on a short timeout
+ * (~500ms — long enough for the SSR re-render to land) clears both the
+ * hidden id and the phantom. State updates batch so the user sees the real
+ * card replace the phantom in a single render.
+ *
+ * On failure: caller calls `unhideJob` + `removePendingInsert` immediately
+ * and surfaces an error toast.
+ *
+ * Why phantoms instead of mutating a client-side `jobs[]` mirror (WP-style):
+ * keeping the SSR-rendered server data as the source of truth means a tab
+ * coming online via auto-sync polling sees real data, not stale local
+ * mutations. Phantoms are explicitly visual-only.
  */
+interface PendingInsertEntry {
+  tempId: number;
+  job: BoardJob;
+  destDept: string;
+  destStaff: string;
+}
+
 interface PendingState {
   hiddenIds: Set<number>;
+  pendingInserts: PendingInsertEntry[];
   hideJob: (id: number | string) => void;
   unhideJob: (id: number | string) => void;
+  /** Returns the tempId so the caller can match removePendingInsert. */
+  addPendingInsert: (input: { job: BoardJob; destDept: string; destStaff: string }) => number;
+  removePendingInsert: (tempId: number) => void;
 }
 
 const Ctx = createContext<PendingState>({
   hiddenIds: new Set(),
+  pendingInserts: [],
   hideJob: () => {},
   unhideJob: () => {},
+  addPendingInsert: () => 0,
+  removePendingInsert: () => {},
 });
 
 export function PendingMutationsProvider({ children }: { children: ReactNode }) {
   const [hiddenIds, setHiddenIds] = useState<Set<number>>(new Set());
+  const [pendingInserts, setPendingInserts] = useState<PendingInsertEntry[]>([]);
+  // Counter for monotonically-decreasing tempIds — avoids collisions even if
+  // two phantoms are added in the same millisecond.
+  const tempIdCounter = useRef(0);
 
   const hideJob = useCallback((id: number | string) => {
     const n = Number(id);
@@ -65,8 +93,37 @@ export function PendingMutationsProvider({ children }: { children: ReactNode }) 
     });
   }, []);
 
+  const addPendingInsert = useCallback(
+    ({ job, destDept, destStaff }: { job: BoardJob; destDept: string; destStaff: string }): number => {
+      tempIdCounter.current -= 1;
+      const tempId = tempIdCounter.current;  // negative, unique
+      const phantomJob: BoardJob = {
+        ...job,
+        id: tempId,
+        dept: destDept,
+        staff: destStaff,
+      };
+      setPendingInserts((prev) => [...prev, { tempId, job: phantomJob, destDept, destStaff }]);
+      return tempId;
+    },
+    [],
+  );
+
+  const removePendingInsert = useCallback((tempId: number) => {
+    setPendingInserts((prev) => prev.filter((p) => p.tempId !== tempId));
+  }, []);
+
   return (
-    <Ctx.Provider value={{ hiddenIds, hideJob, unhideJob }}>
+    <Ctx.Provider
+      value={{
+        hiddenIds,
+        pendingInserts,
+        hideJob,
+        unhideJob,
+        addPendingInsert,
+        removePendingInsert,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

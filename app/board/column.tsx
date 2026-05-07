@@ -40,7 +40,7 @@ export function Column({
   const toast = useToast();
   const confirmDlg = useConfirm();
   const [, startTransition] = useTransition();
-  const { hiddenIds, hideJob, unhideJob } = usePendingMutations();
+  const { hiddenIds, pendingInserts, hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
   const isAdmin = sessionRole === 'admin';
   const isVendor = !!column.staff.isVendor;
   const theme = getStaffTheme(dept, column.staff.id);
@@ -51,7 +51,13 @@ export function Column({
   // Filter out cards that are mid-mutation — they've been added to
   // hiddenIds optimistically so the column reflects the user's action
   // before the Apps Script round-trip completes.
-  const visibleJobs = column.jobs.filter((j) => !hiddenIds.has(Number(j.id)));
+  const filteredJobs = column.jobs.filter((j) => !hiddenIds.has(Number(j.id)));
+  // Inject any phantom cards routed to THIS staff/dept — these are the
+  // "destination" cards for pending forwards/reassigns. Render at the bottom.
+  const myPhantoms = pendingInserts
+    .filter((p) => p.destDept === dept && p.destStaff === column.staff.id)
+    .map((p) => p.job);
+  const visibleJobs = [...filteredJobs, ...myPhantoms];
 
   function onDragOver(e: DragEvent<HTMLDivElement>) {
     const types = e.dataTransfer.types;
@@ -117,8 +123,32 @@ export function Column({
     try {
       // Same-dept → reassign
       if (dropType === 'reassign') {
-        // Optimistic: hide the source card so it disappears from its old
-        // staff column instantly. Server still does the work behind it.
+        // Optimistic: hide source + inject phantom in destination so the
+        // user sees instant "card move" instead of a 2-3s gap waiting for
+        // router.refresh.
+        const sourceJob = column.jobs.find((j) => Number(j.id) === id);
+        // Find phantom source — could be from another column in this dept.
+        const phantomSrcBoardJob = sourceJob || (srcJob.name ? {
+          // Synthesize minimal BoardJob from drag snapshot — Card renders
+          // with the same dept/dates/name; cowork stays.
+          id, name: srcJob.name, customer: null,
+          staff: srcJob.staff || sourceStaff, dept: dept,
+          dateRaw: srcJob.date || '', dueIso: null,
+          urgency: 'normal' as const, daysUntilDue: null,
+          orderId: srcJob.orderId ? Number(srcJob.orderId) : null,
+          hasCowork: !!srcJob.cowork,
+          cowork: srcJob.cowork,
+          order: null, status: srcJob.status || 'pending',
+          dateInRaw: srcJob.dateIn || '',
+        } : null);
+        let phantomTempId: number | null = null;
+        if (phantomSrcBoardJob) {
+          phantomTempId = addPendingInsert({
+            job: phantomSrcBoardJob,
+            destDept: dept,
+            destStaff: targetStaff,
+          });
+        }
         hideJob(id);
         toast.show(`กำลังย้าย #${id}: ${sourceStaffLabel} → ${targetStaffLabel}`);
         const res = await fetch('/api/jobs/reassign', {
@@ -127,7 +157,8 @@ export function Column({
           body: JSON.stringify({ id, targetStaff, srcJob }),
         });
         if (!res.ok) {
-          unhideJob(id);  // rollback — bring it back
+          if (phantomTempId !== null) removePendingInsert(phantomTempId);
+          unhideJob(id);
           const data = await res.json().catch(() => ({}));
           const msg = data?.error || `HTTP ${res.status}`;
           setError(msg);
@@ -137,12 +168,14 @@ export function Column({
         }
         broadcastWrite('/api/jobs/reassign');
         toast.success(`ย้ายงาน #${id} → ${targetStaffLabel}`);
-        // Use startTransition so the refresh doesn't block the UI thread.
-        startTransition(() => {
-          router.refresh();
-          // Drop the optimistic flag — fresh data already reflects the move.
+        startTransition(() => router.refresh());
+        // Defer cleanup so the new SSR data has time to land before we
+        // remove the phantom — avoids a flicker gap. 500ms is generous
+        // for ISR + Suspense streaming on /board.
+        setTimeout(() => {
+          if (phantomTempId !== null) removePendingInsert(phantomTempId);
           unhideJob(id);
-        });
+        }, 500);
         return;
       }
 
@@ -177,7 +210,27 @@ export function Column({
           variant: 'default',
         });
         if (!ok) return;
-        // Optimistic: hide source card immediately
+        // Optimistic: hide source + inject phantom in destination column
+        // (different dept) so user sees the card "move" instantly.
+        const sourceJob = column.jobs.find((j) => Number(j.id) === id);
+        const phantomSrcBoardJob = sourceJob || (srcJob.name ? {
+          id, name: srcJob.name, customer: null,
+          staff: srcJob.staff || sourceStaff, dept: srcJob.dept || sourceDept,
+          dateRaw: srcJob.date || '', dueIso: null,
+          urgency: 'normal' as const, daysUntilDue: null,
+          orderId: srcJob.orderId ? Number(srcJob.orderId) : null,
+          hasCowork: false, cowork: undefined,  // forward clears cowork
+          order: null, status: 'pending',
+          dateInRaw: srcJob.dateIn || '',
+        } : null);
+        let phantomTempId: number | null = null;
+        if (phantomSrcBoardJob) {
+          phantomTempId = addPendingInsert({
+            job: { ...phantomSrcBoardJob, hasCowork: false, cowork: undefined },
+            destDept: dept,
+            destStaff: targetStaff,
+          });
+        }
         hideJob(id);
         toast.show(`กำลังส่งต่อ #${id} → ${match.label}...`);
         const res = await fetch('/api/jobs/forward', {
@@ -186,7 +239,8 @@ export function Column({
           body: JSON.stringify({ id, targetDept: dept, targetStaff, srcJob }),
         });
         if (!res.ok) {
-          unhideJob(id);  // rollback
+          if (phantomTempId !== null) removePendingInsert(phantomTempId);
+          unhideJob(id);
           const data = await res.json().catch(() => ({}));
           const msg = data?.error || `HTTP ${res.status}`;
           setError(msg);
@@ -196,10 +250,11 @@ export function Column({
         }
         broadcastWrite('/api/jobs/forward');
         toast.success(`ส่งต่อ #${id} → ${match.label}`);
-        startTransition(() => {
-          router.refresh();
+        startTransition(() => router.refresh());
+        setTimeout(() => {
+          if (phantomTempId !== null) removePendingInsert(phantomTempId);
           unhideJob(id);
-        });
+        }, 500);
       }
     } finally {
       setBusy(false);

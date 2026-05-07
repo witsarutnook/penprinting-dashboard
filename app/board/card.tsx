@@ -453,7 +453,7 @@ function ForwardDialog({
   const router = useRouter();
   const { recordForward } = useUndo();
   const toast = useToast();
-  const { hideJob, unhideJob } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [target, setTarget] = useState('');
   const [note, setNote] = useState('');
@@ -507,9 +507,14 @@ function ForwardDialog({
       orderId: job.orderId,
       cowork: job.cowork,
     };
-    // Optimistic UX: hide source card + close modal + show toast immediately.
-    // The Apps Script round-trip runs in the background, exactly like WP's
-    // submitForward. On failure we unhide the card and surface a toast error.
+    // Optimistic UX: hide source + inject phantom in destination column +
+    // close modal + show toast immediately. Card "moves" instantly like WP.
+    // forward clears cowork → phantom uses cleared cowork.
+    const phantomTempId = addPendingInsert({
+      job: { ...job, hasCowork: false, cowork: undefined },
+      destDept: tgt.dept,
+      destStaff: tgt.value,
+    });
     hideJob(job.id);
     onClose();
     toast.show(`กำลังส่งต่อ "${job.name}" → ${tgt.label}...`);
@@ -533,6 +538,7 @@ function ForwardDialog({
         }),
       });
       if (!res.ok) {
+        removePendingInsert(phantomTempId);
         unhideJob(job.id);
         const data = await res.json().catch(() => ({}));
         toast.error(data?.error || `ส่งต่อไม่สำเร็จ — HTTP ${res.status}`);
@@ -551,9 +557,13 @@ function ForwardDialog({
         toast.success(`ส่งต่อ "${job.name}" → ${tgt.label}`);
       }
       router.refresh();
-      // hiddenIds clears on next render — fresh data won't include the old id
-      unhideJob(job.id);
+      // Defer cleanup so SSR data lands before phantom is removed (no flicker).
+      setTimeout(() => {
+        removePendingInsert(phantomTempId);
+        unhideJob(job.id);
+      }, 500);
     } catch (err) {
+      removePendingInsert(phantomTempId);
       unhideJob(job.id);
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
@@ -1048,7 +1058,7 @@ function ActionButtons({
   const confirmDlg = useConfirm();
   const { recordForward } = useUndo();
   const toast = useToast();
-  const { hideJob, unhideJob } = usePendingMutations();
+  const { hideJob, unhideJob, addPendingInsert, removePendingInsert } = usePendingMutations();
   const [error, setError] = useState<string | null>(null);
   const [actionMode, setActionMode] = useState<null | 'forward' | 'reassign'>(null);
   const [actionTarget, setActionTarget] = useState('');
@@ -1155,7 +1165,13 @@ function ActionButtons({
       orderId: job.orderId,
       cowork: job.cowork,
     };
-    // Optimistic: hide source card + dismiss action sheet + show toast.
+    // Optimistic: hide source + phantom-insert in destination + dismiss
+    // action sheet + show toast. Forward clears cowork.
+    const phantomTempId = addPendingInsert({
+      job: { ...job, hasCowork: false, cowork: undefined },
+      destDept: target.dept,
+      destStaff: target.value,
+    });
     hideJob(job.id);
     onSuccess();
     toast.show(`กำลังส่งต่อ "${job.name}" → ${target.label}...`);
@@ -1178,6 +1194,7 @@ function ActionButtons({
         }),
       });
       if (!res.ok) {
+        removePendingInsert(phantomTempId);
         unhideJob(job.id);
         const data = await res.json().catch(() => ({}));
         toast.error(data?.error || `ส่งต่อไม่สำเร็จ — HTTP ${res.status}`);
@@ -1196,8 +1213,12 @@ function ActionButtons({
         toast.success(`ส่งต่อ "${job.name}" → ${target.label}`);
       }
       router.refresh();
-      unhideJob(job.id);
+      setTimeout(() => {
+        removePendingInsert(phantomTempId);
+        unhideJob(job.id);
+      }, 500);
     } catch (err) {
+      removePendingInsert(phantomTempId);
       unhideJob(job.id);
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
@@ -1211,8 +1232,13 @@ function ActionButtons({
     setError(null);
     const targetLabel =
       reassignTargets.find((s) => s.id === actionTarget)?.name || actionTarget;
-    // Optimistic: hide + dismiss + toast (reassign card reappears in new
-    // staff column once router.refresh completes).
+    // Optimistic: hide source + phantom-insert in new staff column + dismiss
+    // action sheet + toast. Reassign keeps cowork on the card.
+    const phantomTempId = addPendingInsert({
+      job,
+      destDept: String(job.dept),
+      destStaff: actionTarget,
+    });
     hideJob(job.id);
     onSuccess();
     toast.show(`กำลังย้าย "${job.name}" → ${targetLabel}...`);
@@ -1236,6 +1262,7 @@ function ActionButtons({
         }),
       });
       if (!res.ok) {
+        removePendingInsert(phantomTempId);
         unhideJob(job.id);
         const data = await res.json().catch(() => ({}));
         toast.error(data?.error || `ย้ายไม่สำเร็จ — HTTP ${res.status}`);
@@ -1244,9 +1271,12 @@ function ActionButtons({
       broadcastWrite('/api/jobs/reassign');
       toast.success(`ย้าย "${job.name}" → ${targetLabel}`);
       router.refresh();
-      unhideJob(job.id);
-      return;
+      setTimeout(() => {
+        removePendingInsert(phantomTempId);
+        unhideJob(job.id);
+      }, 500);
     } catch (err) {
+      removePendingInsert(phantomTempId);
       unhideJob(job.id);
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     }
