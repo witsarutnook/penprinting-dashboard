@@ -82,6 +82,76 @@ async function POST(req) {
 
 ---
 
+### 1.9 Lazy-load heavy client deps via `next/dynamic({ ssr: false })` + conditional mount (2026-05-07 afternoon, `1d6e57f`)
+- เมื่อ component ใช้ heavy library (recharts ~110KB, complex modals) ที่ไม่ได้ใช้ใน first paint → lazy-load ผ่าน `next/dynamic` + `ssr: false` + conditional render
+- **Pattern**:
+```ts
+// app/analytics/charts-lazy.tsx
+const KPIChart = dynamic(() => import('./kpi-chart'), { ssr: false, loading: () => <Skeleton /> });
+```
+```ts
+// app/board/card.tsx — conditional mount
+{editOpen && <JobForm onClose={...} />}    // chunk fetched on first ✏️ click
+```
+- **Saving**: /analytics First Load 295KB → 181KB (-39%) on the recharts case
+- **What to lazy-load**: heavy chart libs (recharts/d3), admin-only modals (OrderForm, JobForm), complex editors (Markdown, code editors), client-only animation libs
+- **What NOT to lazy-load**: forms users always see on a page (OrderForm on /orders/new is the FIRST paint), sidebar/nav (mounts everywhere), small components < 5KB (chunk overhead > saving), components above the fold
+- **Trade-off**: First click feels slightly slower (~50-150ms chunk fetch on fast network) but typical-user flows skip the chunk entirely
+- **Caveat**: Server Components can't use `dynamic({ ssr: false })` — wrap inside Client Component boundary
+
+### 1.10 React.memo with field-level comparator on context-consuming components (2026-05-07 afternoon, `3cb4501`)
+- เมื่อ parent re-renders บ่อย (auto-sync ticks → fresh `jobs[]` from SSR every N seconds) แต่ child ไม่ได้เปลี่ยน → default `React.memo` shallow check fails because every prop ref is new → unnecessary re-renders all the way down
+- **Pattern**: provide explicit `arePropsEqual` comparator that checks the fields that actually drive render
+```ts
+// app/board/card.tsx
+export default React.memo(Card, (prev, next) => {
+  const a = prev.job, b = next.job;
+  return a.id === b.id && a.name === b.name && a.dept === b.dept &&
+    a.staff === b.staff && a.dateDue === b.dateDue && a.dateIn === b.dateIn &&
+    a.status === b.status && a.orderId === b.orderId &&
+    JSON.stringify(a.cowork || []) === JSON.stringify(b.cowork || []);
+});
+```
+- **Saving**: 49/50 cards skip re-render on each auto-sync tick (only the moved card actually changed)
+- **Why it works with context**: Internal context updates (BulkMode/PendingMutations/Toast) still re-render via the `useContext` hook subscription path — `arePropsEqual` ONLY governs the prop-change path. Optimistic UI keeps working.
+- **เมื่อไหร่ใช้**: list items rendered in a long list where parent re-fetches data (Kanban cards, table rows under polling). Default shallow memo is fine when prop refs are stable.
+- **Caveat**: Don't memoize callback props' identity — pass them through `useCallback` in parent; otherwise comparator must skip them and you've subtly disabled re-renders that should fire. Better: derive callbacks from item id inside Card.
+
+### 1.11 Edge runtime for routes using only Web Crypto + cookies + fetch (2026-05-07 afternoon, `3cb4501` + `1d6e57f`)
+- Vercel Edge runtime starts ~150-300ms faster than Node serverless on first hit of the day. ทุก auth flow + public-facing route ที่ไม่พึ่ง Node-only APIs → ใช้ edge ได้
+- **Pattern**: `export const runtime = 'edge';` ใน route module
+- **Verified safe**:
+  - `/api/auth/login` + `/api/auth/logout` — uses Web Crypto for HMAC sign/verify, cookies, no Node deps
+  - `/api/track/lookup` — public route, signed cookie rate-limit, fetch to Apps Script
+- **Don't move to edge** if route uses:
+  - Node-only modules (`fs`, `path`, `child_process`, native crypto APIs not in Web Crypto)
+  - Sentry server SDK (some integrations are Node-only — verify before flipping)
+  - Heavy libraries that pull Node polyfills (look at `next build` output: edge bundle is rejected if too big or uses incompatible modules)
+- **Saving**: ~150ms cold-start saved on first login of day; ~150-300ms TTFB win on /track lookup
+
+### 1.12 Backwards-compat param flag for opt-in skip of heavy Apps Script reads (2026-05-07 afternoon, `3cb4501`)
+- Apps Script `loadAll` was always returning `recentAudit` (50-100KB) for every page even though only /analytics consumed it
+- **Pattern**: add boolean param ที่ default = old behavior, route opts in to skip
+```ts
+// load.ts
+function loadAll(opts?: { audit?: boolean }) {
+  const result = { jobs: [...], orders: [...], shipped: [...], cancelled: [...] };
+  if (opts?.audit !== false) result.recentAudit = loadRecentAudit();   // default unchanged
+  return result;
+}
+// api.ts switch case
+case 'loadAll': result = loadAll({ audit: e.parameter.audit !== '0' }); break;
+```
+```ts
+// lib/api.ts
+export async function loadAll() { return fetch(`${url}?action=loadAll&audit=0&token=${tk}`); }
+export async function loadAllWithAudit() { return fetch(`${url}?action=loadAll&token=${tk}`); }
+```
+- **Saving**: -50-100KB Apps Script payload per call on /board, /orders, /calendar, /shipped, /cancelled
+- **Why default unchanged matters**: Vercel can ship `loadAll()` (which now sends `audit=0`) BEFORE Apps Script redeploy. Old Apps Script ignores the param, returns full payload — no breakage. New Apps Script honors it, saves bytes.
+- **Same pattern reused for atomic-action-with-fallback** (§1.7) — additive flags, default-back-to-old behavior, ship in either order
+- **Anti-pattern**: changing default behavior of an existing action ("oh now `loadAll` ALWAYS skips audit") = forces coordinated deploy = brittle. Keep flag opt-in.
+
 ### 1.8 Server-computed audit data passed to client modal (no extra round-trip)
 - ถ้า client modal ต้องการ derived data (orphan orders, duplicate jobs, etc.) ที่ compute จาก same Sheet snapshot ที่ page already fetched → compute server-side ใน the page route, pass via prop
 - **Pattern**: page route ใช้ `loadAll()` (already cached 60s) → derive orphans + duplicates ใน same render path → pass `{orphans, duplicates}` to `<DataAuditModal>` client component
@@ -215,6 +285,25 @@ async function POST(req) {
 - v2 [/api/orders/update](app/api/orders/update/route.ts) does this server-side: scans `snap.jobs` for `orderId === id && name === oldName`, runs `updateJob` per-row
 - Returns `{ cascaded, cascadeFailed }` so UI can surface count
 
+### 5.9 Optimistic modal close on submit (2026-05-07 afternoon, `3cb4501`)
+- เมื่อ submit handler ทำ mutation ที่ไม่เปลี่ยน surrounding card layout (edit job fields, set cowork) → close modal ทันทีบน click + show toast progress + commit() in background
+- **Pattern**:
+```ts
+async function handleSubmit() {
+  onClose();                            // 0ms close (was: wait for fetch then close)
+  toast.show('กำลังบันทึก…');
+  try {
+    await commit();                     // background fetch
+    toast.show('บันทึกแล้ว', 'success');
+  } catch (err) {
+    toast.show('บันทึกไม่ได้', 'error');
+  }
+}
+```
+- **เมื่อไหร่ใช้**: edit-only mutations where the updated card is in the same column (no movement), cowork updates, settings changes
+- **เมื่อไหร่ไม่ใช้**: actions that change card position (forward/reassign — use phantom-card injection §6.2 instead) or where confirmation matters (delete — keep dialog open until success)
+- **Saving**: 400ms perceived lag → 0ms close (matches CoworkDialog pattern from PM batch)
+
 ### 5.8 Duplicate detection with `force` override
 - Server checks for existing non-cancelled order with same (name, customer) lowercase combo
 - If found → return 409 `{ error: 'duplicate', duplicates: [...] }` instead of writing
@@ -230,6 +319,29 @@ async function POST(req) {
 - [lib/auto-sync.tsx](lib/auto-sync.tsx) `useAutoSync()` — interval ทำเฉพาะตอน `document.visibilityState === 'visible'`
 - Saves Apps Script quota when tab is backgrounded
 - Pairs with BroadcastChannel for instant cross-tab updates
+
+### 6.4 Smart polling backoff via self-rescheduling setTimeout (2026-05-07 afternoon, `1d6e57f`)
+- Replace fixed `setInterval(15000)` with self-rescheduling `setTimeout` whose delay depends on user-activity recency. Idle tabs poll less; active tabs feel real-time.
+- **Schedule** (tuned for Penprinting workflow):
+  - 15s if last activity within 2 min (active typing/clicking/scrolling)
+  - 30s if last activity within 2-10 min (warm tab)
+  - 60s if last activity > 10 min (idle tab)
+- **Activity events**: passive listeners on `pointerdown`, `keydown`, `wheel`, `touchstart`. Update `lastActivityAt` ref on each.
+- **Pattern sketch** ([lib/auto-sync.tsx](lib/auto-sync.tsx)):
+```ts
+function schedule() {
+  const idleMs = Date.now() - lastActivityAt.current;
+  const next = idleMs < 120_000 ? 15_000 : idleMs < 600_000 ? 30_000 : 60_000;
+  timer.current = setTimeout(async () => {
+    if (document.visibilityState === 'visible' && !skipGuards()) await sync();
+    schedule();    // re-arm after work completes
+  }, next);
+}
+```
+- **Saving**: ~75% Apps Script quota reduction on idle tabs (e.g. dashboard left open overnight no longer pulls 4 reqs/min for 8 hours)
+- **เมื่อไหร่ใช้**: any client polling where freshness need scales with user attention. Live Kanban, status pages, monitoring dashboards.
+- **เมื่อไหร่ไม่ใช้**: trading/finance/safety-critical UIs where stale data has real cost — fixed interval is correct there
+- **Pre-existing visibility-aware skip retained** — backgrounded tabs still skip the call entirely; this just changes the schedule when tab is visible-but-idle
 
 ### 6.2 Undo provider — page-level toast with 10s window
 - [components/board/undo-context.tsx](components/board/undo-context.tsx) — `<UndoProvider>` wraps the board, exposes `useUndo().recordForward({...})`
@@ -285,4 +397,4 @@ async function POST(req) {
 3. เขียนสั้น: pattern + reason + example file path
 4. ถ้าเป็น cross-project pattern → เพิ่มที่ workspace `CLAUDE.md` ด้วย
 
-_อัปเดตล่าสุด: 2026-05-07 PM2 — added §1.7 (atomic-action-with-fallback deploy pattern) + §1.8 (server-computed audit data → client modal)_
+_อัปเดตล่าสุด: 2026-05-07 afternoon — added §1.9 (lazy-load + conditional mount), §1.10 (React.memo + field comparator), §1.11 (edge runtime safe routes), §1.12 (backwards-compat param flag), §5.9 (optimistic modal close on submit), §6.4 (smart polling backoff)_

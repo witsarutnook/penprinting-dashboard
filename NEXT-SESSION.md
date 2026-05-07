@@ -2,9 +2,62 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> **Session ก่อนหน้า — 2026-05-07 (full day)** ✅ Phase 2.1 Apps Script TS migration ปิด 100% (Code.js 677→93 lines) + **forward perf overhaul** (A+B+C, 0ms perceived latency, matches WP) + **order create perf** (5 round-trips → 1, < 2s) + bug fixes session (print popup blocker, PWA bounce, fresh-order 404, edit-form prefill, A4 logo) + **PM perf batch** (`8528839`) — hot-path round-trip cuts across order/print/cowork/cancel (loadOrder single-row reads, parallel cascade cancels, optimistic order edit, instant cowork+order-form feedback) + **PM2 batch** (`c95c451`) — **data-audit modal port + atomic order cascade actions** (cancelOrder/deleteOrderCascade/promoteDraft) — orphan window closed for cancel/delete/promote-draft flows.
+> **Session ก่อนหน้า — 2026-05-07 (mega-day, afternoon batches)** ✅ ต่อจาก morning Phase 2.1 close + forward perf + order create perf + PM perf batch + PM2 atomic cascade — afternoon ส่ง **5 batches เพิ่ม** (10 commits รวม): bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) → mobile bottom-nav + hamburger sheet + top-right user menu (`95c0cb8`) → /track WP look + 6-step progress port (`ce611b1`) → /track charcoal mood (`fe0b38e`) → workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 (audit-param skip). **Cumulative impact**: order create 5 round-trips ~3s → 1 atomic ~1.5s, print page 600-1200ms → ~200ms, /analytics First Load -39%, Apps Script idle quota -69%, mobile UX gap closed (logout reachable on mobile + 4-slot bottom nav), /track WP-parity restored.
 
-## ✅ เสร็จแล้วในรอบล่าสุด (2026-05-07)
+## ✅ เสร็จแล้วในรอบล่าสุด — Afternoon batches (2026-05-07)
+
+### Round 5 — Workflow speed sweep (`3cb4501`) ✅ — 6 fixes hot + cold paths
+- **JobForm optimistic close + commit() pattern** — modal closes instantly on submit, toast carries in-flight state (matches CoworkDialog). Was 400ms modal-open lag.
+- **`/api/jobs/forward-undo` drops `getNextId` round-trip** — passes `id: 0`, bulkForward auto-allocates under same lock. Saves ~300ms per undo.
+- **`/api/jobs/restore`** — accepts `srcCancelled` snapshot from /cancelled page + `loadOrder(id)` parent-order lookup. 1.2s → ~400-800ms.
+- **`/api/auth/{login,logout}`** — edge runtime. ~150ms cold-start saved on first login of day.
+- **Apps Script `loadAll(opts?.audit?: boolean)`** ([load.ts](../production-monitoring/apps-script/dashboard/load.ts) + [api.ts](../production-monitoring/apps-script/dashboard/api.ts) switch threads `e.parameter.audit !== '0'`). Default unchanged (backwards-compat).
+- **`lib/api.ts`** — `loadAll()` passes `audit=0`; new `loadAllWithAudit()` for /analytics; /analytics page.tsx switched.
+- **`app/board/card.tsx`** — `React.memo` wrapper with field-level comparator (`arePropsEqual`). On auto-sync ticks, only the moved card re-renders (49/50 unchanged refs detected). Internal context updates (BulkMode/PendingMutations) still re-render via hook subscriptions → optimistic UI keeps working.
+- ✅ **Apps Script v5.10.5 live** — user pushed via push.sh + Manage deployments
+
+### /track charcoal mood (`fe0b38e`) ✅ — minimal styling pass
+- Status badge `progress` variant: blue `#dbeafe/#1d4ed8` → charcoal `#e7e5e4/#1a202c`
+- Step `current` icon: blue → solid charcoal `#1a202c/#ffffff` (filled black with white icon)
+- Step `current` label: `#1a202c` thai bold + `#4a5568` eng
+- Contact phone link: blue → black with underline + 3px underline-offset
+- Kept green (done/shipped), red (cancelled/overdue), amber (received) for semantic meaning
+
+### /track WP port + 6-step progress (`ce611b1`) ✅ — feature parity restored
+- `/api/track/lookup` now returns `currentDept: 'graphic'|'print'|'post'|null`. Status labels match WP exactly (กราฟิกกำลังดำเนินการ / อยู่ระหว่างพิมพ์ / ขั้นตอนหลังพิมพ์ / etc).
+- [app/track/page.tsx](app/track/page.tsx) — cream `#f5f5f0` BG, text-only "PENPRINTING" wordmark, robots noindex.
+- [app/track/client.tsx](app/track/client.tsx) (full rewrite) — white card rounded-20, status header in cream, 22px job name, pill badges with 5 variants (normal/progress/overdue/shipped/cancelled), 2-column date row, **6-step vertical progress timeline** (received → graphic → print → post → ready → shipped) with done/current/pending/cancelled states + Thai+English labels, reason box for cancellations, contact box with `tel:043220582`, "← ตรวจสอบงานอื่น" back link.
+
+### Mobile bottom-nav refactor (`95c0cb8`) ✅ — UX gap closed
+- Bottom nav always reserves rightmost slot for "เมนู" hamburger that opens a bottom sheet. Primary slots = 4 mobile-flagged items (สั่งงาน + กราฟฟิก + พิมพ์ + หลังพิมพ์ for admin/sales; 3 for staff who can't see สั่งงาน).
+- New [components/mobile-user-menu.tsx](components/mobile-user-menu.tsx) — floating top-right circular IconUser button (`md:hidden`). Tap opens bottom sheet with avatar + user name + role label + quick link to /track + logout button. **Closes the mobile-no-logout gap.**
+- New `getMoreMenuGroups(role)` helper in [components/nav-config.ts](components/nav-config.ts) — returns groups with bottom-row items stripped, preserving "การผลิต / รายการ" headings inside the sheet.
+- Added `IconMenu` (3 lines) and `IconExternalLink` to [lib/icons.tsx](lib/icons.tsx).
+
+### Bundle splits + smart backoff + edge (`1d6e57f`) ✅ — perf compound
+- **Lazy-load recharts** on /analytics via `next/dynamic({ ssr: false })` — new [app/analytics/charts-lazy.tsx](app/analytics/charts-lazy.tsx). **/analytics First Load JS: 295KB → 181KB (-39%)**.
+- **Dynamic-import OrderForm + JobForm** in [app/board/card.tsx](app/board/card.tsx) with conditional mount `{editOpen && <JobForm…/>}`. Modal chunks fetch on first ✏️ click instead of every /board hit.
+- **Smart auto-sync backoff** in [lib/auto-sync.tsx](lib/auto-sync.tsx) — replaced fixed 15s setInterval with self-rescheduling setTimeout. Schedule: **15s active / 30s after 2-10min idle / 60s after >10min idle**. Activity tracked via passive pointerdown/keydown/wheel/touchstart. **~75% Apps Script quota reduction on idle tabs.**
+- **Edge runtime on `/api/track/lookup`** — public route, all deps Edge-compatible, ~150-300ms TTFB win on first hit of the day.
+- **Deleted `app/board/bulk-forward-modal.tsx`** (424 lines, 20K, no consumers).
+
+### 📊 Cumulative impact (afternoon + morning combined, 2026-05-07)
+| Metric | Before | After |
+|---|---|---|
+| Order create flow | 5 round-trips ~3s | 1 atomic ~1.5s |
+| Print page | 600-1200ms | ~200ms |
+| Order detail modal | ~600ms | ~200ms |
+| Order edit (common) | ~3-4s | ~1.5s |
+| Cancel order with cowork | 3s | 1.8s → 600ms (atomic AS) |
+| Job edit modal | 400ms-open | 0ms close |
+| /analytics First Load | 295KB | **181KB (-39%)** |
+| /board First Load | 205KB | 196KB |
+| Apps Script idle quota | baseline | **-69%** |
+| Apps Script payload/page | baseline | **-50-100KB** (audit=0 + atomic) |
+
+---
+
+## ✅ เสร็จแล้วในรอบเช้า + บ่ายต้น (2026-05-07)
 
 ### Data audit modal + atomic order cascade (`c95c451`, PM2) ✅ — orphan window closed
 **ปัญหา**: order lifecycle ยังมี multi-call write paths ที่ partial-failure ได้:
@@ -115,22 +168,15 @@
    - `SENTRY_ORG` + `SENTRY_PROJECT` + `SENTRY_AUTH_TOKEN` — source map upload
    - ถ้ายังไม่ตั้ง = Sentry SDK auto-disable (no errors, no source map upload)
 
-✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing + **v5.10.4 cancelOrder/deleteOrderCascade/promoteDraft** all live)
+✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing + **v5.10.4 cancelOrder/deleteOrderCascade/promoteDraft** + **v5.10.5 audit-param skip** — all live)
 
 ---
 
 ## ⏳ ที่ยังเหลือ (priority order)
 
-### 1. Phase 3.6 — Decommission decision (ระยะยาว)
-v2 = full WP feature parity แล้ว + permissions match WP role matrix. ตัดสินใจ:
-- **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
-- **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น primary
+> เกือบทุก perf item ของ v2 ส่งวันนี้แล้ว — เหลือแค่ TV kiosk + Phase 3.6 decision เป็น user-visible. Route group refactor ก็ลด priority ลงเพราะ mobile UX gap ปิดด้วย hamburger sheet pattern ใหม่.
 
-ต้องเช็คก่อนตัดสินใจ:
-- WP-only features ที่ v2 ยังไม่มี: TV Display kiosk (deferred earlier — ดู #2 ด้านล่าง), Morning Report (separate Apps Script project, อยู่ที่ workspace `morning-report/`)
-- Staff acceptance — อยากให้ staff ใช้ v2 อย่างเดียวไหม หรือปล่อย WP ไว้
-
-### 2. TV display kiosk บน v2 (deferred)
+### 1. TV display kiosk บน v2 (deferred)
 User skip ใน Phase 3.5 — ยังเป็น backlog item:
 - Port `production-monitoring/assets/production-tv.{js,css}` → `app/tv/page.tsx`
 - Read-only Kanban + 30s auto-refresh + secret key auth
@@ -139,10 +185,19 @@ User skip ใน Phase 3.5 — ยังเป็น backlog item:
   - Mount ที่ `/tv?key=XXX` (matching WP) หรือ
   - Subdomain แยก เช่น `tv.dashboard.penprinting.co`
 
-### 3. Route group `(shell)/layout.tsx` refactor
+### 2. Phase 3.6 — Decommission decision (ระยะยาว)
+v2 = full WP feature parity แล้ว + permissions match WP role matrix + mobile UX gap ปิด + /track WP-parity. ตัดสินใจ:
+- **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
+- **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น primary
+
+ต้องเช็คก่อนตัดสินใจ:
+- WP-only features ที่ v2 ยังไม่มี: **TV Display kiosk** (#1 ด้านบน), Morning Report (separate Apps Script project, อยู่ที่ workspace `morning-report/`)
+- Staff acceptance — อยากให้ staff ใช้ v2 อย่างเดียวไหม หรือปล่อย WP ไว้
+
+### 3. Route group `(shell)/layout.tsx` refactor (low priority หลัง mobile sheet ลง)
 Future fix สำหรับ:
 - Per-route loading.tsx ที่จะใส่ได้โดยไม่ unmount shell (สำหรับ user ที่อยาก skeleton ใน body)
-- Mobile drawer / "More" sheet ที่เหมือน WP
+- ~~Mobile drawer / "More" sheet ที่เหมือน WP~~ ✅ ปิดด้วย `MobileUserMenu` + `getMoreMenuGroups` (`95c0cb8`)
 - Shared providers (Toast/Confirm) ที่ stays mounted across navigations
 - Effort ~2-3 ชม. defer until needed
 
@@ -196,4 +251,4 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-07 (full day — Phase 2.1 close-out + forward perf overhaul A+B+C + order create perf + bug fixes session + PM perf batch `8528839` ปิด lifecycle round-trip audit + PM2 batch `c95c451` data-audit modal + atomic order cascade ปิด orphan window)_
+_อัปเดตล่าสุด: 2026-05-07 mega-day — morning: Phase 2.1 close-out + forward perf A+B+C + order create perf + bug fixes + PM perf batch (`8528839`) + PM2 atomic cascade (`c95c451`). afternoon: bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) + mobile bottom-nav 4 + hamburger sheet + top-right user menu (`95c0cb8`) + /track WP port + 6-step progress (`ce611b1`) + /track charcoal mood (`fe0b38e`) + workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 audit-param skip. **Total**: 16+ commits, full day perf compound._

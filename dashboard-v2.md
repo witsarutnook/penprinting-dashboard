@@ -286,12 +286,76 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | **Spec-only order edit re-read full snapshot** (2026-05-07 PM, `8528839`) | `/api/orders/update` called `loadAllFresh()` even when only spec fields changed (no cascade rename needed) | Accept `srcOrder` snapshot from client; skip `loadAllFresh` when name+dateDue unchanged. Cascade rename still triggers fresh read when name/date does change. -600ms per spec-only edit. |
 | **Order cancel/delete/promote-draft partial-failure surface** (2026-05-07 PM2, `c95c451`) | `Promise.allSettled` cascade ใน v2 ปิด race ของ N jobs แล้ว แต่ `cascade success → order status flip fail` ยังเหลือ 1 window. promote-draft ก็เหมือนกัน (alloc jobId + addJob success → status flip fail = orphan-incoming) | Apps Script v5.10.4 atomic actions ใน LockService scope เดียว: `cancelOrder`, `deleteOrderCascade`, `promoteDraft`. v2 routes try atomic first + fall through to legacy multi-call on `Unknown action` → no coordinated deploy needed. Orphan window now closed for full lifecycle. |
 | **Data-audit page was non-actionable** (2026-05-07 PM2, `c95c451`) | v2 had a "ตรวจสอบข้อมูล" link that just filtered the list — couldn't recover orphans or remove duplicates like WP could | Port WP `openDataAuditModal` + `recoverOrphanOrder` + `removeDuplicateJob` (production-monitoring.js:5440-5660) → `app/orders/data-audit-modal.tsx`. Server-computes orphans + duplicates from same loadAll snapshot (no extra round-trip). Recovery via dept/staff dropdown → POST /api/jobs/add. |
+| **React.memo with default shallow comparator stops working when parent re-renders fresh refs** (2026-05-07 afternoon, `3cb4501`) | Auto-sync ticks → parent gets fresh `jobs[]` from SSR → every Card prop ref changes → React.memo's default shallow check fires re-render on all 50 cards even when display fields are identical | Provide explicit `arePropsEqual` field-level comparator on Card (job.id, name, dept, staff, dateDue, dateIn, status, cowork ids, orderId — the fields that actually drive render). Internal context updates (BulkMode/PendingMutations) still re-render via hook subscriptions, so optimistic UI keeps working. |
+| **JobForm modal-open feedback laggy** (2026-05-07 afternoon, `3cb4501`) | Form posted, awaited Apps Script response, then closed modal → 400ms perceptible "stuck open" feel | Optimistic close: close modal on submit click + show toast progress ("กำลังบันทึก…") + `commit()` in-flight → 0ms close. Mirrors CoworkDialog pattern from PM batch. |
+| **Mobile users had no logout reachable** (2026-05-07 afternoon, `95c0cb8`) | Bottom nav showed dept items only; sidebar (with logout) was `md:hidden`. Logging out required desktop or hard cookie clear | Floating top-right `IconUser` button (`md:hidden`) → bottom sheet with avatar + name + role + /track link + logout. + bottom nav reserves rightmost slot for hamburger sheet that exposes "More" items normally hidden in `getMoreMenuGroups(role)`. |
+| **Auto-sync polled 15s every minute even on idle tabs** (2026-05-07 afternoon, `1d6e57f`) | Fixed `setInterval(15000)` → user leaves tab idle for hours → still 4 reqs/min × hours = quota burn for nothing | Smart backoff: self-rescheduling `setTimeout`. Tracks last-activity via passive pointerdown/keydown/wheel/touchstart. Schedule: 15s active → 30s after 2-10min idle → 60s after >10min idle. Pre-existing visibility-aware skip retained. ~75% Apps Script quota cut on idle tabs. |
+| **/analytics First Load JS too big from recharts** (2026-05-07 afternoon, `1d6e57f`) | recharts (~110KB) bundled with /analytics page even though only admin opens it and not on first paint | `next/dynamic({ ssr: false })` lazy-load via `app/analytics/charts-lazy.tsx`. /analytics First Load: 295KB → 181KB (-39%). Same pattern applied to OrderForm + JobForm in /board card.tsx (modal chunks fetch on first ✏️ click). |
+| **/track v2 didn't match WP look** (2026-05-07 afternoon, `ce611b1` + `fe0b38e`) | Original v2 /track was minimal text + placeholder layout — customers used to WP's 6-step timeline saw a regression | Port WP page-track-order.php look: `currentDept` returned from `/api/track/lookup` so client positions step, white card on cream BG, 6-step vertical timeline (received → graphic → print → post → ready → shipped), pill badges with 5 variants, contact box with `tel:` link. Charcoal-only accents (no blue) for minimal mood; semantic colors retained for done/cancelled/overdue/received. |
+| **Apps Script payload included audit_log on every page render** (2026-05-07 afternoon, `3cb4501`) | `loadAll()` always returned `recentAudit` for /board and friends even though only /analytics consumed it | Apps Script `loadAll(opts?: { audit?: boolean })` (load.ts) + api.ts switch threads `e.parameter.audit !== '0'`. Default unchanged for backwards compat. Vercel `lib/api.ts` `loadAll()` passes `audit=0` (saves 50-100KB per call); new `loadAllWithAudit()` for /analytics. |
 
 ---
 
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### Round 5 — Workflow speed sweep (2026-05-07 afternoon, `3cb4501`) + Apps Script v5.10.5
+6 fixes spanning hot + cold paths after the perf compound work. Ships with Apps Script v5.10.5 (audit-skip param) — v2 deploys with `audit=0` by default; backwards-compat preserved.
+
+| Fix | File | Saving |
+|---|---|---|
+| JobForm optimistic close + commit() | [app/board/card.tsx](app/board/card.tsx) | 400ms modal-open lag → 0ms close |
+| `/api/jobs/forward-undo` drops `getNextId` round-trip — passes `id: 0` for bulkForward auto-alloc | [app/api/jobs/forward-undo/route.ts](app/api/jobs/forward-undo/route.ts) | ~300ms per undo |
+| `/api/jobs/restore` accepts `srcCancelled` snapshot + `loadOrder(id)` | [app/api/jobs/restore/route.ts](app/api/jobs/restore/route.ts) | 1.2s → 400-800ms |
+| `/api/auth/{login,logout}` edge runtime | [app/api/auth/login/route.ts](app/api/auth/login/route.ts) + logout | ~150ms cold-start saved on first login of day |
+| Apps Script `loadAll({audit?:boolean})` param + Vercel `loadAll()` passes `audit=0`; new `loadAllWithAudit()` for /analytics | [load.ts](../production-monitoring/apps-script/dashboard/load.ts) + [api.ts](../production-monitoring/apps-script/dashboard/api.ts) + [lib/api.ts](lib/api.ts) | -50-100KB Apps Script payload per page on /board/orders/calendar/etc |
+| `app/board/card.tsx` `React.memo` + field-level comparator (`arePropsEqual`) | [app/board/card.tsx](app/board/card.tsx) | Auto-sync ticks: only the moved card re-renders (49/50 unchanged refs detected by explicit field check) |
+
+**Apps Script v5.10.5** — `loadAll(opts?: { audit?: boolean })` parameter; `api.ts` switch case honors `e.parameter.audit !== '0'`. Default unchanged so v2 frontend can ship before Apps Script redeploy. ✅ User pushed via push.sh + Manage deployments → live.
+
+**Patterns crystallized**:
+- React.memo with field-level comparator beats default shallow when parent re-renders fresh refs (PATTERNS §1.10 added)
+- Optimistic-modal-close pattern for any mutation that doesn't change the surrounding card layout (PATTERNS §5.9 added)
+- Edge runtime safe for routes that only use Web Crypto + cookies + fetch (auth login/logout, /api/track/lookup) (PATTERNS §1.11 added)
+- Backwards-compat param flag pattern — opt-in skip for heavy Apps Script reads, default unchanged so frontend ships before redeploy (PATTERNS §1.12 added)
+
+### /track WP port + 6-step progress + charcoal mood (2026-05-07 afternoon, `ce611b1` + `fe0b38e`)
+v2 /track restored to WP visual parity. Customers scanning QR get the same 6-step timeline they expect.
+
+**`ce611b1` — feature port**:
+- `/api/track/lookup` returns `currentDept: 'graphic'|'print'|'post'|null` so client positions current step
+- Status labels match WP exactly (กราฟิกกำลังดำเนินการ / อยู่ระหว่างพิมพ์ / ขั้นตอนหลังพิมพ์ / ฯลฯ)
+- [app/track/page.tsx](app/track/page.tsx) — cream `#f5f5f0` BG, text-only "PENPRINTING" wordmark, robots noindex
+- [app/track/client.tsx](app/track/client.tsx) full rewrite: white card rounded-20, status header in cream, 22px job name, **5-variant pill badges** (normal/progress/overdue/shipped/cancelled), 2-column date row, **6-step vertical progress timeline** (received → graphic → print → post → ready → shipped) with done/current/pending/cancelled states + Thai+English labels, reason box for cancellations, contact box with `tel:043220582`, "← ตรวจสอบงานอื่น" back link
+
+**`fe0b38e` — minimal styling pass**:
+- Status badge `progress` variant: blue `#dbeafe/#1d4ed8` → charcoal `#e7e5e4/#1a202c`
+- Step `current` icon: blue → solid charcoal `#1a202c/#ffffff` (filled black w/ white icon — bold contrast instead of hue shift)
+- Step `current` label: `#1a202c` thai bold + `#4a5568` eng
+- Contact phone link: blue → black w/ underline + 3px underline-offset
+- Kept green (done/shipped), red (cancelled/overdue), amber (received) for semantic meaning
+
+### Mobile bottom-nav refactor + hamburger sheet + top-right user menu (2026-05-07 afternoon, `95c0cb8`)
+Closes the mobile-no-logout gap that's been sitting since /board went live.
+
+| Change | File |
+|---|---|
+| Bottom nav reserves rightmost slot for "เมนู" hamburger sheet. Primary slots = 4 mobile-flagged items (สั่งงาน + กราฟฟิก + พิมพ์ + หลังพิมพ์ for admin/sales; 3 for staff who can't see สั่งงาน) | [components/bottom-nav.tsx](components/bottom-nav.tsx) + [components/nav-config.ts](components/nav-config.ts) |
+| Floating top-right circular `IconUser` button (`md:hidden`) → opens bottom sheet w/ avatar + name + role + /track link + logout | [components/mobile-user-menu.tsx](components/mobile-user-menu.tsx) (NEW) |
+| `getMoreMenuGroups(role)` helper — returns groups w/ bottom-row items stripped, preserving "การผลิต / รายการ" headings inside the sheet | [components/nav-config.ts](components/nav-config.ts) |
+| Added `IconMenu` (3 lines) and `IconExternalLink` | [lib/icons.tsx](lib/icons.tsx) |
+
+### Bundle splits + smart auto-sync backoff + edge runtime (2026-05-07 afternoon, `1d6e57f`)
+Five targeted perf wins on cold starts and idle tabs.
+
+| Change | Saving |
+|---|---|
+| Lazy-load recharts on /analytics via `next/dynamic({ ssr: false })` — new [app/analytics/charts-lazy.tsx](app/analytics/charts-lazy.tsx) | /analytics First Load JS: **295KB → 181KB (-39%)** |
+| Dynamic-import OrderForm + JobForm in [app/board/card.tsx](app/board/card.tsx) w/ conditional mount `{editOpen && <JobForm…/>}` | Modal chunks fetch on first ✏️ click instead of every /board hit |
+| Smart auto-sync backoff in [lib/auto-sync.tsx](lib/auto-sync.tsx) — replaced fixed 15s setInterval with self-rescheduling setTimeout. Schedule: 15s active / 30s after 2-10min idle / 60s after >10min idle. Activity tracked via passive pointerdown/keydown/wheel/touchstart | **~75% Apps Script quota reduction on idle tabs** |
+| Edge runtime on `/api/track/lookup` — public route, all deps Edge-compatible | ~150-300ms TTFB win on first hit of the day |
+| Deleted `app/board/bulk-forward-modal.tsx` (424 lines, 20K, no consumers) | Bundle hygiene |
 
 ### Data audit modal + atomic order cascade — orphan prevention (2026-05-07 PM2, `c95c451`)
 ปิด orphan window ของ cancel/delete/promote-draft flows ที่เคยมี partial-failure surface (cascade succeeded แต่ order status flip fail = order ค้าง 'sent' มี jobs cancelled). Atomic Apps Script v5.10.4 + data-audit modal port + fast-path-with-fallback v2 routes.
