@@ -18,6 +18,10 @@ import {
 import type { OrderSummary } from '@/lib/board';
 import type { Template } from '@/lib/types';
 
+/** Order-form "ผู้สั่งงาน" dropdown options — mirrors WP `ORDERERS` const
+ *  in production-monitoring.js:1390. Keep in sync with WP. */
+const ORDERERS = ['นุ๊ก', 'กิ๊ฟ', 'เจี๊ยบ'];
+
 interface OrderFormProps {
   open: boolean;
   onClose: () => void;
@@ -995,12 +999,16 @@ function AssignTab({
       <Section title="มอบหมายงาน">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Field label="ผู้สั่งงาน *">
-            <input type="text" value={data.orderer} onChange={(e) => patch({ orderer: e.target.value })}
-              className={inputCls} required maxLength={100} />
+            <select value={data.orderer}
+              onChange={(e) => patch({ orderer: e.target.value })}
+              className={inputCls} required>
+              <option value="">-- เลือก --</option>
+              {ORDERERS.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
           </Field>
           <Field label="มอบหมายกราฟฟิก">
             <select value={data.assignStaff}
-              onChange={(e) => patch({ assignStaff: e.target.value, forwardPrint: '' })}
+              onChange={(e) => patch({ assignStaff: e.target.value })}
               className={inputCls}>
               <option value="">-- ไม่ระบุ --</option>
               {STAFF.graphic.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -1008,7 +1016,7 @@ function AssignTab({
           </Field>
           <Field label="ส่งต่อพิมพ์">
             <select value={data.forwardPrint}
-              onChange={(e) => patch({ forwardPrint: e.target.value, assignStaff: '' })}
+              onChange={(e) => patch({ forwardPrint: e.target.value })}
               className={inputCls}>
               <option value="">-- ไม่ระบุ --</option>
               {STAFF.print.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
