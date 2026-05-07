@@ -284,12 +284,40 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | **Single-order pages re-fetched full snapshot** (2026-05-07 PM, `8528839`) | `/api/orders/raw/[id]`, `/orders/[id]/print`, `/api/track/lookup` all called `loadAll()`/`loadAllFresh()` (full Sheet snapshot, ~600ms) just to look up one row | Apps Script `getOrder` action existed but unused. Added `loadOrder(id)` wrapper in [lib/api.ts](lib/api.ts) → ~200ms single-row read. 3× faster order detail tab, ~2.7s → ~1.6s print popup fill. |
 | **Cancel/delete cascade serial across cowork jobs** (2026-05-07 PM, `8528839`) | `/api/orders/{cancel,delete}` looped `await cancelJob(jobId)` sequentially → order with N cowork jobs took N×600ms blocking | `Promise.allSettled([...cancelJob calls])` parallelizes — N→1 wall-clock. Failures still surface per-job. Atomic Apps Script `cancelOrder` action deferred (Promise.allSettled removes 80% of pain). |
 | **Spec-only order edit re-read full snapshot** (2026-05-07 PM, `8528839`) | `/api/orders/update` called `loadAllFresh()` even when only spec fields changed (no cascade rename needed) | Accept `srcOrder` snapshot from client; skip `loadAllFresh` when name+dateDue unchanged. Cascade rename still triggers fresh read when name/date does change. -600ms per spec-only edit. |
+| **Order cancel/delete/promote-draft partial-failure surface** (2026-05-07 PM2, `c95c451`) | `Promise.allSettled` cascade ใน v2 ปิด race ของ N jobs แล้ว แต่ `cascade success → order status flip fail` ยังเหลือ 1 window. promote-draft ก็เหมือนกัน (alloc jobId + addJob success → status flip fail = orphan-incoming) | Apps Script v5.10.4 atomic actions ใน LockService scope เดียว: `cancelOrder`, `deleteOrderCascade`, `promoteDraft`. v2 routes try atomic first + fall through to legacy multi-call on `Unknown action` → no coordinated deploy needed. Orphan window now closed for full lifecycle. |
+| **Data-audit page was non-actionable** (2026-05-07 PM2, `c95c451`) | v2 had a "ตรวจสอบข้อมูล" link that just filtered the list — couldn't recover orphans or remove duplicates like WP could | Port WP `openDataAuditModal` + `recoverOrphanOrder` + `removeDuplicateJob` (production-monitoring.js:5440-5660) → `app/orders/data-audit-modal.tsx`. Server-computes orphans + duplicates from same loadAll snapshot (no extra round-trip). Recovery via dept/staff dropdown → POST /api/jobs/add. |
 
 ---
 
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### Data audit modal + atomic order cascade — orphan prevention (2026-05-07 PM2, `c95c451`)
+ปิด orphan window ของ cancel/delete/promote-draft flows ที่เคยมี partial-failure surface (cascade succeeded แต่ order status flip fail = order ค้าง 'sent' มี jobs cancelled). Atomic Apps Script v5.10.4 + data-audit modal port + fast-path-with-fallback v2 routes.
+
+**Apps Script v5.10.4** (3 new actions in `production-monitoring/apps-script/dashboard/`):
+- `cancelOrder` — cascade-cancel attached jobs + flip order status='cancelled' (admin only, single LockService scope)
+- `deleteOrderCascade` — cascade-cancel + delete order row (admin only)
+- `promoteDraft` — allocate jobId + append job + flip draft→sent atomic (admin+sales)
+- Files: [write.ts](../production-monitoring/apps-script/dashboard/write.ts) (+200 lines), [api.ts](../production-monitoring/apps-script/dashboard/api.ts) (3 switch cases), [auth.ts](../production-monitoring/apps-script/dashboard/auth.ts) (`ROLE_REQUIREMENTS` updated)
+
+**v2 changes**:
+| Change | File |
+|---|---|
+| Data-audit modal (NEW) — orphan recovery + duplicate job removal | [app/orders/data-audit-modal.tsx](app/orders/data-audit-modal.tsx) |
+| Fast path with fallback — try atomic action, fall through on `Unknown action` | [app/api/orders/{cancel,delete,promote-draft}/route.ts](app/api/orders/cancel/route.ts) |
+| `PATHS_BY_ACTION` registers 3 new actions | [lib/api.ts](lib/api.ts) |
+
+**Modal sections**:
+- Orphan orders (status=sent without job/shipped/cancelled) → recovery dropdown (dept/staff) → POST `/api/jobs/add`
+- Duplicate jobs (orderId+name groups with >1 row) → older row deletable → POST `/api/jobs/delete`
+- Server-computed from same `loadAll` snapshot — no extra round-trip
+- Replaces previous passive `<Link>` filter (was non-actionable)
+
+**Orphan prevention final state**: ✅ all order lifecycle actions atomic in single lock — `createOrder`, `bulkForward`, `cancelJob`, `moveToShipped`, **`cancelOrder`**, **`deleteOrderCascade`**, **`promoteDraft`**. Remaining orphan sources: legacy data, manual Sheet edits, Apps Script outage mid-write. Data-audit modal = safety net.
+
+**Pattern crystallized**: atomic-action-with-fallback deploy pattern — Vercel can ship before Apps Script redeploy by trying the new action and falling through on `Unknown action` error → no coordinated-deploy window required (PATTERNS §1.7 added).
 
 ### Lifecycle round-trip audit — hot-path cuts (2026-05-07 PM, `8528839`)
 Audit pass บน order→ship lifecycle เจอ 7 friction points กิน 0.6-1.2s/interaction. Batch ปิดในรอบเดียว — cuts unnecessary `loadAllFresh()` reads + parallelizes cascade writes + instant pending feedback.

@@ -2,9 +2,31 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> **Session ก่อนหน้า — 2026-05-07 (full day)** ✅ Phase 2.1 Apps Script TS migration ปิด 100% (Code.js 677→93 lines) + **forward perf overhaul** (A+B+C, 0ms perceived latency, matches WP) + **order create perf** (5 round-trips → 1, < 2s) + bug fixes session (print popup blocker, PWA bounce, fresh-order 404, edit-form prefill, A4 logo) + **PM perf batch** (`8528839`) — hot-path round-trip cuts across order/print/cowork/cancel (loadOrder single-row reads, parallel cascade cancels, optimistic order edit, instant cowork+order-form feedback).
+> **Session ก่อนหน้า — 2026-05-07 (full day)** ✅ Phase 2.1 Apps Script TS migration ปิด 100% (Code.js 677→93 lines) + **forward perf overhaul** (A+B+C, 0ms perceived latency, matches WP) + **order create perf** (5 round-trips → 1, < 2s) + bug fixes session (print popup blocker, PWA bounce, fresh-order 404, edit-form prefill, A4 logo) + **PM perf batch** (`8528839`) — hot-path round-trip cuts across order/print/cowork/cancel (loadOrder single-row reads, parallel cascade cancels, optimistic order edit, instant cowork+order-form feedback) + **PM2 batch** (`c95c451`) — **data-audit modal port + atomic order cascade actions** (cancelOrder/deleteOrderCascade/promoteDraft) — orphan window closed for cancel/delete/promote-draft flows.
 
 ## ✅ เสร็จแล้วในรอบล่าสุด (2026-05-07)
+
+### Data audit modal + atomic order cascade (`c95c451`, PM2) ✅ — orphan window closed
+**ปัญหา**: order lifecycle ยังมี multi-call write paths ที่ partial-failure ได้:
+- `/api/orders/cancel` — `Promise.allSettled([...cancelJob])` + แยก call ไป update order status → ถ้า order-status flip fail หลัง cascade success = order ค้าง 'sent' มี jobs cancelled
+- `/api/orders/delete` — เหมือนกัน + delete order row
+- `/api/orders/promote-draft` — alloc jobId + addJob + update order draft→sent → ถ้า addJob success + status flip fail = orphan-incoming
+
+**ปิดทั้งหมดในรอบเดียว** — atomic Apps Script v5.10.4 + data-audit modal port + fast-path-with-fallback v2 routes:
+
+- **Apps Script v5.10.4** (`production-monitoring/apps-script/dashboard/write.ts +200`, `api.ts` +3 cases, `auth.ts` ROLE_REQUIREMENTS):
+  - `cancelOrder` — cascade-cancel attached jobs + flip order status='cancelled' ใน LockService scope เดียว (admin only)
+  - `deleteOrderCascade` — cascade-cancel + delete order row (admin only)
+  - `promoteDraft` — allocate jobId + append job + flip draft→sent atomic (admin+sales)
+- **Data-audit modal** ([app/orders/data-audit-modal.tsx](app/orders/data-audit-modal.tsx) NEW, port WP `openDataAuditModal` + `recoverOrphanOrder` + `removeDuplicateJob` from production-monitoring.js:5440-5660):
+  - Section 1: orphan orders (status=sent without job/shipped/cancelled) → recovery dropdown (dept/staff) → POST /api/jobs/add
+  - Section 2: duplicate jobs (orderId+name groups with >1 row) → older row deletable → POST /api/jobs/delete
+  - Replaces previous passive `<Link>` filter that did nothing actionable
+  - Server-computed (orphans + duplicates derived from same loadAll snapshot — no extra round-trip)
+- **v2 routes — fast path with fallback** — `/api/orders/{cancel,delete,promote-draft}` try atomic action first, fall through to multi-call legacy on `Unknown action` error → Vercel deploy could ship before Apps Script redeploy without breakage
+- **`lib/api.ts` `PATHS_BY_ACTION`** — registered cache-bust paths for cancelOrder/deleteOrderCascade/promoteDraft
+
+**Orphan prevention (final state)**: ✅ all order lifecycle actions atomic in single lock — createOrder, bulkForward, cancelJob, moveToShipped, **cancelOrder**, **deleteOrderCascade**, **promoteDraft**. Remaining orphan sources = legacy data, manual Sheet edits, Apps Script outage mid-write. Data-audit modal acts as safety net.
 
 ### Phase 2.1 Apps Script TS migration (100%) ✅
 - 4 sections สุดท้ายเป็น TS — type-check ผ่าน strict mode (`noImplicitAny` + `strictNullChecks`)
@@ -93,16 +115,11 @@
    - `SENTRY_ORG` + `SENTRY_PROJECT` + `SENTRY_AUTH_TOKEN` — source map upload
    - ถ้ายังไม่ตั้ง = Sentry SDK auto-disable (no errors, no source map upload)
 
-✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing all live)
+✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing + **v5.10.4 cancelOrder/deleteOrderCascade/promoteDraft** all live)
 
 ---
 
 ## ⏳ ที่ยังเหลือ (priority order)
-
-### 0. Atomic Apps Script `cancelOrder` / `deleteOrder` (deferred perf item)
-- ปัจจุบัน `/api/orders/{cancel,delete}` ใช้ `Promise.allSettled([...cancelJob calls])` → ลดจาก N×serial → max(~600ms parallel)
-- Future improvement: รวมเป็น Apps Script action เดียว (`cancelOrder`/`deleteOrder` ที่ทำ cancel order row + cascade jobs ใน batch lock เดียว) → ลดเหลือ 1 round-trip จริงๆ
-- Deferred เพราะ `Promise.allSettled` แก้ pain point ส่วนใหญ่แล้ว และ Apps Script side ต้อง redeploy. Pick up เมื่อ user feedback ว่ายังช้า
 
 ### 1. Phase 3.6 — Decommission decision (ระยะยาว)
 v2 = full WP feature parity แล้ว + permissions match WP role matrix. ตัดสินใจ:
@@ -179,4 +196,4 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-07 (full day — Phase 2.1 close-out + forward perf overhaul A+B+C + order create perf + bug fixes session + PM perf batch `8528839` ปิด lifecycle round-trip audit)_
+_อัปเดตล่าสุด: 2026-05-07 (full day — Phase 2.1 close-out + forward perf overhaul A+B+C + order create perf + bug fixes session + PM perf batch `8528839` ปิด lifecycle round-trip audit + PM2 batch `c95c451` data-audit modal + atomic order cascade ปิด orphan window)_
