@@ -10,7 +10,7 @@ import {
   TurnaroundChart,
   TopCustomersChart,
   DeptWorkloadChart,
-} from './charts';
+} from './charts-lazy';
 import { MonthlyReportView } from './monthly-report';
 import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';

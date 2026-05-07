@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   type BoardJob,
   type Dept,
@@ -18,7 +19,18 @@ import { useUndo } from '@/components/board/undo-context';
 import { useConfirm } from '@/components/confirm-provider';
 import { useToast } from '@/components/toast-provider';
 import { usePendingMutations } from '@/components/board/pending-mutations';
-import { OrderForm } from './order-form';
+
+// Lazy-load admin-only edit modals — saves ~50KB First Load JS for staff
+// (who never open these). Chunks only fetch when the user clicks ✏️.
+// ssr:false because dialogs need DOM access on mount.
+const OrderForm = dynamic(
+  () => import('./order-form').then((m) => ({ default: m.OrderForm })),
+  { ssr: false },
+);
+const JobForm = dynamic(
+  () => import('./job-form').then((m) => ({ default: m.JobForm })),
+  { ssr: false },
+);
 import {
   IconCheck,
   IconX,
@@ -34,7 +46,6 @@ import {
   IconSquare,
   IconLock,
 } from '@/lib/icons';
-import { JobForm } from './job-form';
 
 const VENDOR_PURPLE = '#7c3aed';
 
@@ -421,8 +432,12 @@ export function Card({
         open={coworkOpen}
         onClose={() => setCoworkOpen(false)}
       />
-      <JobForm initial={job} open={editOpen} onClose={() => setEditOpen(false)} />
-      {job.order && (
+      {/* Conditional mount — chunk only fetches the first time admin
+          clicks ✏️. Subsequent opens reuse the cached chunk. */}
+      {editOpen && (
+        <JobForm initial={job} open={editOpen} onClose={() => setEditOpen(false)} />
+      )}
+      {editOrderOpen && job.order && (
         <OrderForm
           open={editOrderOpen}
           onClose={() => setEditOrderOpen(false)}

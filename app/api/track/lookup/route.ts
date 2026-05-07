@@ -5,6 +5,13 @@ import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
 import { computeUrgency, getBangkokToday, URGENCY_LABELS, type Urgency } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
 
+// Public route — no auth, no Node-specific deps. Run on Vercel's Edge
+// runtime to skip Node.js cold starts (~150-300ms saved on the first
+// hit of the day). Customer scanning the QR on an A4 invoice gets a
+// faster TTFB. All deps are fetch + Web Crypto + cookie reads — all
+// Edge-supported.
+export const runtime = 'edge';
+
 /**
  * Public order lookup (no auth) — mirrors WP page-track-order.php.
  *
