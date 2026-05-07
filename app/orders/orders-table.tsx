@@ -7,7 +7,7 @@ import { displayDate } from '@/lib/jobs';
 import { broadcastWrite } from '@/lib/auto-sync';
 import { URGENCY_COLORS } from '@/lib/calendar';
 import {
-  IconX, IconPencil, IconTrash, IconPrinter, IconAlertCircle, IconFileText,
+  IconX, IconPencil, IconAlertTriangle, IconPrinter, IconAlertCircle, IconFileText,
   IconCheck, IconCornerUpRight, IconUsers, IconInfo, IconRefreshCw,
 } from '@/lib/icons';
 import { useToast } from '@/components/toast-provider';
@@ -39,7 +39,7 @@ interface Props {
 }
 
 /** WP-style /orders table: rows are clickable → opens a detail modal with
- *  the 5 quick-actions (สั่งซ้ำ / แก้ไข / Tracking / พิมพ์ / ลบ).
+ *  the 5 quick-actions (สั่งซ้ำ / แก้ไข / Tracking / พิมพ์ / ยกเลิก).
  *
  *  Perf note: rows are React.memo'd and the click handler comes via a
  *  stable useCallback so opening the detail modal does NOT re-render
@@ -246,38 +246,38 @@ function OrderDetailModal({
     };
   }, [onClose]);
 
-  async function deleteOrder() {
+  async function cancelOrder() {
     if (!order) return;
     const ok = await confirmDlg.confirm({
-      title: `ลบใบสั่งงาน #${order.id}?`,
-      message: `"${order.name}"\n\n⚠ ลบถาวร — กู้คืนไม่ได้!\nJob ที่ผูกอยู่ (ถ้ามี) จะถูก "ยกเลิก" อัตโนมัติพร้อมเหตุผล "ใบสั่งงานถูกลบ"`,
-      okLabel: 'ลบใบสั่ง',
-      variant: 'danger',
+      title: `ยกเลิกใบสั่งงาน #${order.id}?`,
+      message: `"${order.name}"\n\nสถานะจะเปลี่ยนเป็น "ยกเลิก" และข้อมูลใบสั่งยังคงอยู่ในระบบ\nJob ที่ผูกอยู่ (ถ้ามี) จะถูกย้ายไปรายการยกเลิกอัตโนมัติ`,
+      okLabel: 'ยกเลิกใบสั่ง',
+      variant: 'warn',
     });
     if (!ok) return;
     const id = order.id;
     const name = order.name;
     setError(null);
     setBusy('delete');
-    toast.show(`กำลังลบใบสั่ง #${id}...`);
+    toast.show(`กำลังยกเลิกใบสั่ง #${id}...`);
     onClose();
     try {
-      const res = await fetch('/api/orders/delete', {
+      const res = await fetch('/api/orders/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, cascade: true }),
+        body: JSON.stringify({ id }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data?.error || `ลบไม่สำเร็จ (HTTP ${res.status})`);
+        toast.error(data?.error || `ยกเลิกไม่สำเร็จ (HTTP ${res.status})`);
         return;
       }
-      broadcastWrite('/api/orders/delete');
+      broadcastWrite('/api/orders/cancel');
       const cascadeCount = Array.isArray(data.cancelledJobs) ? data.cancelledJobs.length : 0;
       toast.success(
         cascadeCount > 0
-          ? `ลบใบสั่ง #${id} "${name}" + ยกเลิก Job ${cascadeCount} งาน`
-          : `ลบใบสั่ง #${id} "${name}" แล้ว`,
+          ? `ยกเลิกใบสั่ง #${id} "${name}" + ยกเลิก Job ${cascadeCount} งาน`
+          : `ยกเลิกใบสั่ง #${id} "${name}" แล้ว`,
       );
       startTransition(() => router.refresh());
     } finally {
@@ -458,16 +458,16 @@ function OrderDetailModal({
             <IconPrinter size={14} />
             พิมพ์ใบสั่งงาน
           </Link>
-          {canDelete && (
+          {canDelete && order.orderStatus !== 'cancelled' && (
             <button
               type="button"
-              onClick={deleteOrder}
+              onClick={cancelOrder}
               disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
-              title="ลบใบสั่งงานถาวร — Job ที่ผูกอยู่ต้องจัดการแยก"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+              title="ยกเลิกใบสั่งงาน — สถานะเปลี่ยนเป็นยกเลิก, Job ที่ผูกอยู่ย้ายไปรายการยกเลิก"
             >
-              <IconTrash size={14} />
-              {busy === 'delete' ? 'กำลังลบ...' : 'ลบใบสั่ง'}
+              <IconAlertTriangle size={14} />
+              {busy === 'delete' ? 'กำลังยกเลิก...' : 'ยกเลิกใบสั่ง'}
             </button>
           )}
         </div>
