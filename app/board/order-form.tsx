@@ -262,17 +262,43 @@ export function OrderForm({
     return { filled: checks.filter(Boolean).length, total: checks.length };
   }, [data]);
 
+  /** True when the dashboard is launched as a PWA / installed app
+   *  (Chrome standalone, iOS Add-to-Home-Screen). In that mode
+   *  `window.open(url, '_blank')` bounces out to the default browser
+   *  instead of staying inside the PWA window — the user reported
+   *  this from a Mac-installed PWA on 2026-05-07. Detected via the
+   *  display-mode media query (Chrome / Safari / Firefox standalone)
+   *  plus iOS-Safari's legacy `navigator.standalone` boolean. */
+  function isStandalonePWA(): boolean {
+    if (typeof window === 'undefined') return false;
+    if (window.matchMedia('(display-mode: standalone)').matches) return true;
+    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
+    const nav = window.navigator as Navigator & { standalone?: boolean };
+    return nav.standalone === true;
+  }
+
   /**
-   * Open the print popup synchronously WHILE we're still in the user-trust
-   * window (so browser popup blockers don't kill it), then hand the window
-   * reference to `submit()` for the URL swap on success. Mirrors WP's
-   * `printOrder()` (production-monitoring.js:1952).
+   * Open the print page on click. Two strategies depending on launch
+   * context:
    *
-   * Without this, calling `window.open()` AFTER `await fetch()` is rejected
-   * by Chrome/Safari/Firefox as "non-user-initiated popup" and silently
-   * fails — which is exactly what the user reported (no print page).
+   * 1. **Browser tab**: pre-open `about:blank` synchronously inside the
+   *    click handler so Chrome / Safari / Firefox popup blockers don't
+   *    kill it post-await, then hand the window ref to `submit()` for
+   *    the URL swap once the order id is known. Mirrors WP's
+   *    `printOrder()` (production-monitoring.js:1952).
+   *
+   * 2. **Installed PWA** (display-mode: standalone): `window.open(_blank)`
+   *    in Chrome PWA bounces out to the browser shell. Skip the popup
+   *    and navigate the SAME window after the submit succeeds — keeps
+   *    the print page inside the PWA, matches the order-list "พิมพ์ใบสั่งงาน"
+   *    Link behaviour. User goes back via the in-app back gesture.
    */
   function handleSubmitAndPrint() {
+    if (isStandalonePWA()) {
+      // PWA: same-window navigation; submit() handles router.push to print.
+      void submit(false, 'print', null);
+      return;
+    }
     const pw = window.open('about:blank', '_blank');
     if (!pw) {
       setError('Browser ปิด popup — โปรดอนุญาต popup สำหรับเว็บนี้');
@@ -336,11 +362,16 @@ export function OrderForm({
       if (mode === 'print' && successInfo.orderId) {
         const printUrl = `/orders/${successInfo.orderId}/print`;
         if (printWindow && !printWindow.closed) {
-          // Reuse the popup we opened on the click — won't be blocked.
+          // Browser-tab path: reuse the popup we opened on the click.
           printWindow.location.href = printUrl;
+        } else if (isStandalonePWA()) {
+          // PWA path: same-window soft-navigation keeps the print view
+          // inside the installed app instead of bouncing to a browser tab.
+          router.push(printUrl);
         } else {
-          // Fallback for callers that didn't pre-open a window (force-retry
-          // from duplicate confirm, etc.). Likely blocked but worth trying.
+          // Fallback for callers that didn't pre-open a window (e.g. force-
+          // retry from duplicate confirm). Browser may block as non-user-
+          // initiated popup, but worth attempting.
           window.open(printUrl, '_blank');
         }
       }
