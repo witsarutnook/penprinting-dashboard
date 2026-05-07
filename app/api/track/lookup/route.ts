@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { loadAll, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { displayDate } from '@/lib/jobs';
 import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
-import { computeUrgency, getBangkokToday, URGENCY_LABELS, type Urgency } from '@/lib/calendar';
+import { computeUrgency, getBangkokToday, type Urgency } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
 
 // Public route — no auth, no Node-specific deps. Run on Vercel's Edge
@@ -72,8 +72,12 @@ interface TrackResult {
   dateIn: string;
   dateDue: string;
   status: 'cancelled' | 'shipped' | 'in_progress' | 'received';
+  /** Status pill label — e.g. "อยู่ระหว่างพิมพ์", "จัดส่งเรียบร้อยแล้ว". */
   statusLabel: string;
   step: string;             // "กราฟิก", "พิมพ์", "หลังพิมพ์/จัดส่ง", "ยกเลิก", "จัดส่งแล้ว"
+  /** Current dept of the active job — drives the 6-step progress UI on
+   *  the client. null when received-but-no-job-yet, shipped, or cancelled. */
+  currentDept: 'graphic' | 'print' | 'post' | null;
   daysHint: string;         // "เหลือ Xว", "ส่งวันนี้", "เกิน Xว"
   urgencyKey: Urgency | 'shipped' | 'cancelled' | 'received';
   shippedDate?: string;
@@ -159,11 +163,20 @@ export async function POST(req: Request) {
   const shippedMatch = snap.shipped.find((s) => Number(s.orderId) === Number(id));
   const cancelledMatch = snap.cancelled.find((c) => Number(c.orderId) === Number(id));
 
+  // Status label = current step name, matching WP wording exactly so the
+  // 6-step progress bar on the client is consistent with the badge.
+  const STATUS_BY_DEPT: Record<string, string> = {
+    graphic: 'กราฟิกกำลังดำเนินการ',
+    print:   'อยู่ระหว่างพิมพ์',
+    post:    'ขั้นตอนหลังพิมพ์',
+  };
+
   let status: TrackResult['status'];
   let statusLabel = '';
   let step = '';
   let daysHint = '';
   let urgencyKey: TrackResult['urgencyKey'] = 'received';
+  let currentDept: TrackResult['currentDept'] = null;
 
   if (cancelledMatch) {
     status = 'cancelled';
@@ -177,22 +190,23 @@ export async function POST(req: Request) {
     urgencyKey = 'shipped';
   } else if (jobMatch) {
     status = 'in_progress';
+    const dept = String(jobMatch.dept || '');
+    currentDept = (dept === 'graphic' || dept === 'print' || dept === 'post') ? dept : null;
     step = deptStepLabel(jobMatch.dept, jobMatch.staff);
-    statusLabel = `กำลังดำเนินการ — ${(DEPT_LABELS as Record<string, string>)[jobMatch.dept] || jobMatch.dept}`;
+    statusLabel = STATUS_BY_DEPT[dept] || 'รับใบสั่งงาน';
     const due = parseDateDMY(jobMatch.date);
     const today = getBangkokToday();
     const u = computeUrgency(due, today);
     urgencyKey = u;
     if (due) {
       const days = Math.floor((due.getTime() - today.getTime()) / 86400000);
-      if (days < 0) daysHint = `เกินกำหนด ${Math.abs(days)} วัน`;
+      if (days < 0) daysHint = `เลยกำหนด ${Math.abs(days)} วัน`;
       else if (days === 0) daysHint = 'กำหนดส่งวันนี้';
-      else daysHint = `เหลือ ${days} วัน`;
-      statusLabel += ` · ${URGENCY_LABELS[u]}`;
+      else daysHint = `เหลืออีก ${days} วัน`;
     }
   } else {
     status = 'received';
-    statusLabel = 'รับใบสั่งงานแล้ว — รอเริ่มผลิต';
+    statusLabel = 'รับใบสั่งงานแล้ว';
     step = 'รับใบสั่งงาน';
     urgencyKey = 'received';
   }
@@ -206,6 +220,7 @@ export async function POST(req: Request) {
     status,
     statusLabel,
     step,
+    currentDept,
     daysHint,
     urgencyKey,
     shippedDate: shippedMatch ? displayDate(shippedMatch.shippedDate) : undefined,

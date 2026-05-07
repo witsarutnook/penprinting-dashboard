@@ -4,12 +4,15 @@ import { TrackClient } from './client';
 export const metadata: Metadata = {
   title: 'ตรวจสอบสถานะงาน — Penprinting',
   description: 'ตรวจสอบสถานะใบสั่งงานพิมพ์ — กรอกเลขที่ใบสั่งงานและ PIN ที่ได้รับจากร้าน',
+  robots: { index: false, follow: false },
 };
 
 export const dynamic = 'force-dynamic';
 
 /** Public order tracking — customer enters orderId + PIN, sees status.
- *  No auth required. Mirrors WP page-track-order.php. */
+ *  No auth required. Mirrors WP page-track-order.php look + feel:
+ *  cream `#f5f5f0` background, text-only "PENPRINTING" wordmark,
+ *  rounded-20px white card with the form OR the 6-step progress view. */
 export default function TrackPage({
   searchParams,
 }: {
@@ -19,38 +22,30 @@ export default function TrackPage({
     <div
       style={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #f5f5f4 0%, #fafaf9 100%)',
-        padding: '24px 16px',
-        fontFamily: 'Anuphan, system-ui, sans-serif',
+        background: '#f5f5f0',
+        color: '#2d3748',
+        padding: '20px',
+        fontFamily: 'Anuphan, "Noto Sans Thai", system-ui, sans-serif',
+        WebkitFontSmoothing: 'antialiased',
       }}
     >
-      <div style={{ maxWidth: 460, margin: '0 auto' }}>
-        <header style={{ textAlign: 'center', marginBottom: 24 }}>
+      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+        <header style={{ textAlign: 'center', padding: '24px 0 20px' }}>
           <div
             style={{
-              display: 'inline-block', padding: '12px 20px',
-              background: '#1e3a8a', color: '#fff',
-              borderRadius: 12, fontWeight: 800, fontSize: 18, letterSpacing: 0.5,
+              fontSize: 24,
+              fontWeight: 700,
+              color: '#1a202c',
+              letterSpacing: 1,
             }}
           >
             PENPRINTING
           </div>
-          <h1 style={{ fontSize: 22, color: '#111', marginTop: 14, marginBottom: 4 }}>
-            ตรวจสอบสถานะงาน
-          </h1>
-          <p style={{ fontSize: 13, color: '#6b7280', margin: 0 }}>
-            กรอกเลขที่ใบสั่งงานและ PIN 4 หลัก ที่ได้รับจากทางร้าน
-          </p>
+          <div style={{ fontSize: 13, color: '#718096', marginTop: 4 }}>
+            โรงพิมพ์เพ็ญพรินติ้ง — ตรวจสอบสถานะงาน
+          </div>
         </header>
         <TrackClient initialId={searchParams.id || ''} />
-        <footer
-          style={{
-            textAlign: 'center', marginTop: 32,
-            fontSize: 11, color: '#9ca3af',
-          }}
-        >
-          โรงพิมพ์เพ็ญพรินติ้ง · penprinting.co
-        </footer>
       </div>
     </div>
   );
