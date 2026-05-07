@@ -85,11 +85,107 @@ export async function POST(req: Request) {
     photobookItems = v.cleaned;
   }
 
-  // ── Phase 1: parallelize the read + ID allocations ──────
-  // loadAllFresh, getNextOrderId, and (for non-draft) getNextId are all
-  // independent reads — the previous sequential pattern wasted ~2s per
-  // request waiting on each round-trip. Promise.all collapses them into
-  // the time of the slowest one (~1-3s vs ~3-5s before).
+  // ── Build payloads up-front so both fast and fallback paths reuse them ──
+  const pin = String(Math.floor(1000 + Math.random() * 9000));
+  // Full form snapshot stored under both `details` and `rawData` (matches WP).
+  // Photobook items: store under SINGLE field name `photobook` (auditor M14
+  // — was being saved twice, both as `photobook` AND `photobookItems` from
+  // the body spread, risking divergence on edit). Print template reads
+  // `raw.photobook`; orderFormFromRaw already accepts both shapes.
+  const formSnapshot: Record<string, unknown> = { ...body, pin, orderType };
+  if (isPB) formSnapshot.photobook = photobookItems;
+  delete formSnapshot.photobookItems;
+  delete formSnapshot.force;
+  delete formSnapshot.status;
+
+  // Order payload — `id` is filled in by Apps Script createOrder (or by
+  // the fallback path's getNextOrderId). Keeping it absent here makes the
+  // shape unambiguous: server allocates.
+  const orderPayloadBase = {
+    name,
+    customer: customer || '-',
+    dateIn,
+    dateDue: dateDue || '',
+    price: body.price ?? '',
+    assignDept,
+    assignStaff,
+    orderer,
+    status: isDraft ? 'draft' : 'sent',
+    details: formSnapshot,
+    rawData: formSnapshot,
+  };
+
+  // Initial job payload — only for non-draft. `id` and `orderId` are filled
+  // in by Apps Script createOrder.
+  const jobPayloadBase = isDraft ? null : {
+    name,
+    date: dateDue,
+    dateIn,
+    staff: assignStaff,
+    dept: assignDept,
+    status: 'pending',
+  };
+
+  // ── Fast path: single Apps Script `createOrder` action (v5.10.3+) ───
+  // One round-trip does dedupe + alloc orderId + alloc jobId + writes both
+  // sheets inside the same LockService scope. Falls back to the multi-call
+  // flow on legacy Apps Script that doesn't recognise the action.
+  try {
+    const fast = await post<{
+      ok?: boolean;
+      orderId?: number;
+      jobId?: number | null;
+      duplicates?: Array<{ id: number; name: string; customer: string; dateIn: string }>;
+      error?: string;
+    }>('createOrder', {
+      data: {
+        order: orderPayloadBase,
+        job: jobPayloadBase,
+        force: !!body.force,
+        skipDedupe: isDraft,  // drafts never dedupe
+      },
+    });
+
+    // Apps Script not yet redeployed → fall through to legacy path
+    if (fast.error && /unknown action/i.test(fast.error)) {
+      throw new Error('UNKNOWN_ACTION');
+    }
+    if (fast.error) {
+      return NextResponse.json({ error: fast.error }, { status: 400 });
+    }
+    if (fast.duplicates && fast.duplicates.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'duplicate',
+          duplicates: fast.duplicates,
+          message: `พบใบสั่งงานคล้ายกัน ${fast.duplicates.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
+        },
+        { status: 409 },
+      );
+    }
+    if (!fast.orderId) {
+      return NextResponse.json({ error: 'createOrder ไม่ได้รับ orderId กลับมา' }, { status: 502 });
+    }
+    return NextResponse.json({
+      ok: true,
+      orderId: fast.orderId,
+      jobId: fast.jobId ?? null,
+      pin,
+      orderType,
+      draft: isDraft || undefined,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg !== 'UNKNOWN_ACTION') {
+      // Real network/Apps Script error — bail.
+      return NextResponse.json({ error: `createOrder failed — ${msg}` }, { status: 502 });
+    }
+    // else fall through to legacy multi-call flow below
+  }
+
+  // ── Legacy fallback: parallel multi-call (Apps Script pre-v5.10.3) ──
+  // Kept so the route works regardless of Apps Script deploy state. Once
+  // every dashboard project is on v5.10.3+ we can delete this block.
   let snap: Awaited<ReturnType<typeof loadAllFresh>>;
   let orderId: number;
   let jobId: number | null = null;
@@ -117,8 +213,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
-  // ── Duplicate detection (against pre-fetched snapshot) ──
-  // Drafts skip — user is still drafting, may revisit. force=true bypasses.
   if (!body.force && !isDraft) {
     const nLower = name.toLowerCase();
     const cLower = customer.toLowerCase();
@@ -138,55 +232,16 @@ export async function POST(req: Request) {
       }));
     if (dups.length > 0) {
       return NextResponse.json(
-        {
-          error: 'duplicate',
-          duplicates: dups,
-          message: `พบใบสั่งงานคล้ายกัน ${dups.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
-        },
+        { error: 'duplicate', duplicates: dups, message: `พบใบสั่งงานคล้ายกัน ${dups.length} รายการ` },
         { status: 409 },
       );
     }
   }
 
-  // ── Build payloads ───────────────────────────────────────
-  const pin = String(Math.floor(1000 + Math.random() * 9000));
-  // Full form snapshot stored under both `details` and `rawData` (matches WP).
-  const formSnapshot: Record<string, unknown> = { ...body, pin, orderType };
-  // Photobook items: store under SINGLE field name `photobook` (auditor M14
-  // — was being saved twice, both as `photobook` AND `photobookItems` from
-  // the body spread, risking divergence on edit). Print template reads
-  // `raw.photobook`; orderFormFromRaw already accepts both shapes.
-  if (isPB) formSnapshot.photobook = photobookItems;
-  delete formSnapshot.photobookItems;
-  // Drop non-storage fields
-  delete formSnapshot.force;
-  delete formSnapshot.status;
-
-  const orderPayload = {
-    id: orderId,
-    name,
-    customer: customer || '-',
-    dateIn,
-    dateDue: dateDue || '',
-    price: body.price ?? '',
-    assignDept,
-    assignStaff,
-    orderer,
-    status: isDraft ? 'draft' : 'sent',
-    details: formSnapshot,
-    rawData: formSnapshot,
-  };
-
-  // ── Phase 3: parallel writes ─────────────────────────────
-  // Drafts only write the order. Non-drafts write order + initial job in
-  // parallel — both rows reference the pre-allocated IDs so neither
-  // depends on the other's response. Saves ~1-2s vs the previous serial
-  // addOrder → addJob. Same partial-success semantics as before: an
-  // orderless job or jobless order is surfaced via `partial: true` so
-  // the user can retry from the UI.
+  const orderPayloadLegacy = { ...orderPayloadBase, id: orderId };
   if (isDraft) {
     try {
-      const orderResp = await post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayload });
+      const orderResp = await post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayloadLegacy });
       if (orderResp.error) return NextResponse.json({ error: orderResp.error }, { status: 400 });
     } catch (err) {
       const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
@@ -195,52 +250,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, orderId, jobId: null, pin, orderType, draft: true });
   }
 
-  const jobPayload = {
-    id: jobId!,
-    name,
-    date: dateDue,
-    dateIn,
-    staff: assignStaff,
-    dept: assignDept,
-    status: 'pending',
-    orderId,
-  };
-
+  const jobPayloadLegacy = { ...jobPayloadBase!, id: jobId!, orderId };
   const [orderOutcome, jobOutcome] = await Promise.allSettled([
-    post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayload }),
-    post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: jobPayload }),
+    post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayloadLegacy }),
+    post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: jobPayloadLegacy }),
   ]);
-
   const orderErr = orderOutcome.status === 'rejected'
     ? (orderOutcome.reason instanceof Error ? orderOutcome.reason.message : String(orderOutcome.reason))
     : (orderOutcome.value.error || null);
   const jobErr = jobOutcome.status === 'rejected'
     ? (jobOutcome.reason instanceof Error ? jobOutcome.reason.message : String(jobOutcome.reason))
     : (jobOutcome.value.error || null);
-
   if (orderErr && jobErr) {
     return NextResponse.json({ error: `addOrder + addJob failed — ${orderErr}` }, { status: 502 });
   }
   if (orderErr) {
-    // Job written but order missing — still better than total failure; user
-    // can retry the order entry. Surface as partial so the UI shows it.
     return NextResponse.json(
-      {
-        ok: true, orderId: null, jobId, pin, partial: true,
-        warning: `Job #${jobId} สร้างแล้ว แต่ addOrder ล้มเหลว — ${orderErr}. โปรดบันทึกใบสั่งใหม่.`,
-      },
+      { ok: true, orderId: null, jobId, pin, partial: true,
+        warning: `Job #${jobId} สร้างแล้ว แต่ addOrder ล้มเหลว — ${orderErr}.` },
       { status: 200 },
     );
   }
   if (jobErr) {
     return NextResponse.json(
-      {
-        ok: true, orderId, jobId: null, pin, partial: true,
-        warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${jobErr}.`,
-      },
+      { ok: true, orderId, jobId: null, pin, partial: true,
+        warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${jobErr}.` },
       { status: 200 },
     );
   }
-
   return NextResponse.json({ ok: true, orderId, jobId, pin, orderType });
 }
