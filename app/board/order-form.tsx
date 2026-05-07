@@ -167,13 +167,17 @@ export function OrderForm({
       next.dateIn = dmyToISOInput(initial.dateIn);
       next.dateDue = dmyToISOInput(initial.dateDue);
       next.orderer = initial.orderer || defaultOrderer;
-      // Determine assign vs forward from existing
-      if (initial.assignDept === 'print') {
-        next.assignStaff = '';
-        next.forwardPrint = initial.assignStaff || '';
-      } else {
-        next.assignStaff = initial.assignStaff || '';
-        next.forwardPrint = '';
+      // Trust orderFormFromRaw's read of assignStaff + forwardPrint from
+      // rawData (both fields can be set together — graphic does the work
+      // first, then forwards to the assigned print staff after). Only
+      // fall back to the orders-sheet top-level columns when rawData is
+      // empty (legacy orders saved before the dual-field flow existed).
+      if (!next.assignStaff && !next.forwardPrint) {
+        if (initial.assignDept === 'print') {
+          next.forwardPrint = initial.assignStaff || '';
+        } else {
+          next.assignStaff = initial.assignStaff || '';
+        }
       }
       setData(next);
       setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
@@ -356,6 +360,19 @@ export function OrderForm({
     });
     if (!ok) return;
     setData(emptyOrderForm(defaultOrderer));
+  }
+
+  /** Edit-mode "ยกเลิกแก้ไข" — confirm + onClose to navigate back without
+   *  saving. Mirrors WP cancelEditMode() (production-monitoring.js:2858). */
+  async function cancelEdit() {
+    const ok = await confirmDlg.confirm({
+      title: 'ยกเลิกการแก้ไข?',
+      message: 'การเปลี่ยนแปลงทั้งหมดที่ยังไม่ได้บันทึกจะหายไป',
+      variant: 'warn',
+      okLabel: 'ยกเลิกแก้ไข',
+    });
+    if (!ok) return;
+    onClose();
   }
 
   /** Combined customer suggestions — recent orders (most-recent first) +
@@ -715,10 +732,19 @@ export function OrderForm({
               {isEdit ? 'แก้ชื่อ/วันที่ → cascade ไป jobs ที่ผูกอยู่' : 'แจ้งเตือนถ้าซ้ำกับใบสั่งที่ยังไม่ปิด'}
             </p>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={reset} disabled={busy}
-                className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50">
-                รีเซ็ต
-              </button>
+              {isEdit ? (
+                <button type="button" onClick={cancelEdit} disabled={busy}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+                  title="ยกเลิกการแก้ไข — กลับไปหน้ารายการใบสั่งงานโดยไม่บันทึก">
+                  <IconX size={14} />
+                  ยกเลิกแก้ไข
+                </button>
+              ) : (
+                <button type="button" onClick={reset} disabled={busy}
+                  className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50">
+                  รีเซ็ต
+                </button>
+              )}
               {!isEdit && (
                 <button type="button" onClick={() => submit(false, 'draft')} disabled={busy || !data.name.trim()}
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 disabled:opacity-50"

@@ -19,9 +19,34 @@ export function toISODate(input: string | null | undefined): string {
   return s;
 }
 
-/** DD/MM/YYYY → YYYY-MM-DD for prefilling <input type="date"> in edit mode. */
+/** Convert any of our stored date shapes → YYYY-MM-DD for prefilling
+ *  `<input type="date">` in edit mode. Handles:
+ *    - "" / null               → ""
+ *    - "YYYY-MM-DD"            → as-is
+ *    - "DD/MM/YYYY"            → ISO
+ *    - "Tue Apr 21 2026 ..."   → ISO via Bangkok-TZ Date parse (Sheets
+ *      auto-converts string cells to Date objects, sheetToArray then
+ *      stringifies them in this shape — without the parser fallback the
+ *      edit form's date inputs render blank).
+ */
 export function dmyToISOInput(input: string | null | undefined): string {
-  return toISODate(input);
+  if (!input) return '';
+  const s = String(input).trim();
+  if (!s) return '';
+  const iso = toISODate(s);
+  // toISODate returns input unchanged when it can't parse — detect that
+  // and try the Date parser before giving up. The HTML date input only
+  // accepts strict ISO so we have to format with leading zeros.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const dt = new Date(s);
+  if (isNaN(dt.getTime())) return '';
+  // Use en-CA which formats as YYYY-MM-DD natively, in Bangkok TZ so the
+  // calendar day matches what Sheets shows the user.
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return fmt.format(dt);
 }
 
 /** Display-format date as D/M/YYYY (no leading zeros) — matches WP screenshot.
