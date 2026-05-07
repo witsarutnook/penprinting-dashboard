@@ -30,9 +30,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
   }
 
-  let snap;
+  // Parallelize the snapshot read with the speculative job-id allocation —
+  // we need the snapshot anyway to validate, and getNextId is a lock-safe
+  // monotonic counter so allocating early just burns one id slot if the
+  // promote is rejected (acceptable trade for ~1s perceived latency).
+  let snap: Awaited<ReturnType<typeof loadAllFresh>>;
+  let speculativeJobId: number | null = null;
+  let speculativeJobIdErr: string | null = null;
   try {
-    snap = await loadAllFresh();
+    const [snapResult, idResult] = await Promise.all([
+      loadAllFresh(),
+      post<{ nextId?: number; error?: string }>('getNextId', {}).catch(
+        (err): { nextId?: number; error?: string } => ({
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      ),
+    ]);
+    snap = snapResult;
+    if (idResult.error || !idResult.nextId) {
+      speculativeJobIdErr = idResult.error || 'no id returned';
+    } else {
+      speculativeJobId = Number(idResult.nextId);
+    }
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
@@ -71,26 +90,19 @@ export async function POST(req: Request) {
     );
   }
 
-  // Allocate job id
   // Idempotency check (auditor C5): if a job already references this order
   // (e.g. addJob succeeded but updateOrder failed on a previous attempt),
-  // SKIP the addJob step and just retry updateOrder. Without this, retrying
-  // the promote-draft button would create duplicate jobs.
+  // reuse its id and SKIP the addJob step. Without this, retrying the
+  // promote-draft button would create duplicate jobs.
   const existingJob = snap.jobs.find((j) => Number(j.orderId) === id);
   let jobId: number;
   if (existingJob) {
     jobId = Number(existingJob.id);
   } else {
-    try {
-      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-      if (r.error || !r.nextId) {
-        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
-      }
-      jobId = Number(r.nextId);
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: msg }, { status: 502 });
+    if (speculativeJobIdErr || speculativeJobId == null) {
+      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${speculativeJobIdErr || 'unknown'}` }, { status: 502 });
     }
+    jobId = speculativeJobId;
 
     const jobPayload = {
       id: jobId,

@@ -105,45 +105,57 @@ export async function POST(req: Request) {
     rawData: formSnapshot,
   };
 
-  try {
-    const r = await post<{ ok?: boolean; error?: string }>('updateOrder', { data: orderPayload });
-    if (r.error) return NextResponse.json({ error: r.error }, { status: 400 });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `updateOrder failed — ${msg}` }, { status: 502 });
-  }
-
-  // Cascade rename to matching jobs
+  // ── Parallel writes: updateOrder + cascade renames ──────
+  // updateOrder writes the orders sheet; cascade updateJob calls write
+  // independent rows in the jobs sheet — they don't depend on each
+  // other's response, so Promise.all collapses N+1 sequential round-
+  // trips into the time of the slowest one. Big win when an order has
+  // multiple jobs (e.g. cowork mid-flight) AND the user changed
+  // name/dateDue.
   const oldName = String(existing.name || '');
   const nameChanged = oldName !== name;
   const dueChanged = String(existing.dateDue || '') !== dateDue;
+  const matching = (nameChanged || dueChanged)
+    ? snap.jobs.filter((j: Job) => Number(j.orderId) === id && String(j.name || '') === oldName)
+    : [];
+
+  const cascadePayloads = matching.map((j) => ({
+    id: Number(j.id),
+    name: nameChanged ? name : String(j.name),
+    date: dueChanged ? dateDue : toISODate(String(j.date || '')),
+    dateIn: toISODate(String(j.dateIn || '')),
+    staff: String(j.staff || ''),
+    dept: String(j.dept || ''),
+    status: String(j.status || 'pending'),
+    orderId: id,
+    cowork: j.cowork ?? undefined,
+  }));
+
+  const orderTask = post<{ ok?: boolean; error?: string }>('updateOrder', { data: orderPayload });
+  const cascadeTasks = cascadePayloads.map((data) =>
+    post<{ ok?: boolean; error?: string }>('updateJob', { data }),
+  );
+
+  const [orderOutcome, ...cascadeOutcomes] = await Promise.allSettled([orderTask, ...cascadeTasks]);
+
+  if (orderOutcome.status === 'rejected') {
+    const msg = orderOutcome.reason instanceof Error ? orderOutcome.reason.message : String(orderOutcome.reason);
+    return NextResponse.json({ error: `updateOrder failed — ${msg}` }, { status: 502 });
+  }
+  if (orderOutcome.value.error) {
+    return NextResponse.json({ error: orderOutcome.value.error }, { status: 400 });
+  }
+
   let cascaded = 0;
   const cascadeFailed: number[] = [];
-  if (nameChanged || dueChanged) {
-    const matching = snap.jobs.filter(
-      (j: Job) => Number(j.orderId) === id && String(j.name || '') === oldName,
-    );
-    for (const j of matching) {
-      const updated = {
-        id: Number(j.id),
-        name: nameChanged ? name : String(j.name),
-        date: dueChanged ? dateDue : toISODate(String(j.date || '')),
-        dateIn: toISODate(String(j.dateIn || '')),
-        staff: String(j.staff || ''),
-        dept: String(j.dept || ''),
-        status: String(j.status || 'pending'),
-        orderId: id,
-        cowork: j.cowork ?? undefined,
-      };
-      try {
-        const r = await post<{ ok?: boolean; error?: string }>('updateJob', { data: updated });
-        if (r.error) cascadeFailed.push(Number(j.id));
-        else cascaded++;
-      } catch {
-        cascadeFailed.push(Number(j.id));
-      }
+  cascadeOutcomes.forEach((outcome, idx) => {
+    const jobIdN = Number(cascadePayloads[idx].id);
+    if (outcome.status === 'rejected' || outcome.value.error) {
+      cascadeFailed.push(jobIdN);
+    } else {
+      cascaded++;
     }
-  }
+  });
 
   return NextResponse.json({
     ok: true, orderId: id, cascaded, cascadeFailed, nameChanged, dueChanged,
