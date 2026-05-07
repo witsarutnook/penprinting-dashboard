@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   type BoardJob,
   type Dept,
@@ -665,8 +664,9 @@ function CoworkDialog({
   open: boolean;
   onClose: () => void;
 }) {
-  const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const toast = useToast();
+  const { commit } = usePendingMutations();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -713,23 +713,32 @@ function CoworkDialog({
 
   async function submit() {
     setError(null);
-    setBusy(true);
     // WP-compatible format: string[] of print staff ids
     const cowork = Array.from(selected);
-    const res = await fetch('/api/jobs/cowork', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: job.id, cowork }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data?.error || `HTTP ${res.status}`);
-      return;
-    }
-    broadcastWrite('/api/jobs/cowork');
-    router.refresh();
+    // Close modal + fire write in background — user gets instant feedback,
+    // and the sidebar pulsing dot (via commit → useTransition) lights up
+    // until the SSR re-render lands the new cowork chip on the card.
     onClose();
+    toast.show(cowork.length > 0 ? `กำลังตั้ง co-work (${cowork.length})...` : 'กำลังล้าง co-work...');
+    try {
+      const res = await fetch('/api/jobs/cowork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: job.id, cowork }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `co-work ไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/cowork');
+      toast.success(cowork.length > 0 ? `ตั้ง co-work เรียบร้อย (${cowork.length})` : 'ล้าง co-work เรียบร้อย');
+      commit(() => {});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

@@ -49,12 +49,12 @@ export async function POST(req: Request) {
       }));
   }
 
-  // Step 1: cascade-cancel each attached job
-  const cancelledIds: number[] = [];
-  const cancelFailed: Array<{ id: number; error: string }> = [];
-  for (const j of attachedJobs) {
-    try {
-      const r = await post<{ ok?: boolean; error?: string }>('cancelJob', {
+  // Step 1: cascade-cancel each attached job IN PARALLEL — independent
+  // Sheet writes, each protected by its own LockService. Safe to fire
+  // concurrently; collapses N×600ms sequential round-trips to ~600ms.
+  const cancelOutcomes = await Promise.allSettled(
+    attachedJobs.map((j) =>
+      post<{ ok?: boolean; error?: string }>('cancelJob', {
         data: {
           id: j.id,
           name: j.name,
@@ -65,14 +65,25 @@ export async function POST(req: Request) {
           cancelledBy: `${session.role}:${session.user}`,
           cancelledAt: new Date().toISOString(),
         },
-      });
-      if (r.error) cancelFailed.push({ id: j.id, error: r.error });
-      else cancelledIds.push(j.id);
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      }),
+    ),
+  );
+
+  const cancelledIds: number[] = [];
+  const cancelFailed: Array<{ id: number; error: string }> = [];
+  cancelOutcomes.forEach((outcome, idx) => {
+    const j = attachedJobs[idx];
+    if (outcome.status === 'rejected') {
+      const reason = outcome.reason;
+      const msg = reason instanceof AppsScriptError ? reason.message
+        : reason instanceof Error ? reason.message : String(reason);
       cancelFailed.push({ id: j.id, error: msg });
+    } else if (outcome.value.error) {
+      cancelFailed.push({ id: j.id, error: outcome.value.error });
+    } else {
+      cancelledIds.push(j.id);
     }
-  }
+  });
 
   // If any cascade-cancel failed, abort the order delete to avoid an
   // inconsistent state (jobs left referencing a missing order).

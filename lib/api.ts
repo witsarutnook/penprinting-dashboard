@@ -1,5 +1,5 @@
 import 'server-only';
-import type { LoadAllResponse } from './types';
+import type { LoadAllResponse, Order } from './types';
 
 /**
  * Fetch wrapper for the legacy Apps Script API at app.penprinting.co.
@@ -87,6 +87,30 @@ export async function loadAll(): Promise<LoadAllResponse> {
 export async function loadAllFresh(): Promise<LoadAllResponse> {
   const data = await get<Partial<LoadAllResponse>>('loadAll', {}, { revalidate: 0 });
   return withDefaults(data);
+}
+
+/** Single-order lookup. Apps Script returns ~1KB instead of ~200KB.
+ *  Used for hot paths that only need one order's rawData (e.g. order detail
+ *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw). Always uncached
+ *  because consumers want the latest spec after edit. */
+export interface LoadOrderResponse {
+  order: Order | null;
+  job: Record<string, unknown> | null;
+  shipped: Record<string, unknown> | null;
+  cancelled: Record<string, unknown> | null;
+}
+export async function loadOrder(id: number | string): Promise<LoadOrderResponse> {
+  const data = await get<Partial<LoadOrderResponse>>(
+    'getOrder',
+    { orderId: String(id) },
+    { revalidate: 0 },
+  );
+  return {
+    order: data.order ?? null,
+    job: data.job ?? null,
+    shipped: data.shipped ?? null,
+    cancelled: data.cancelled ?? null,
+  };
 }
 
 /** Per-action invalidation map. After a successful write we revalidate

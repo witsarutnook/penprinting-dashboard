@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { STAFF } from '@/lib/board';
 import { bangkokTodayISO, dmyToISOInput } from '@/lib/jobs';
@@ -137,6 +137,11 @@ export function OrderForm({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessInfo | null>(null);
   const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
+  // Wraps router.refresh() so the sidebar/bottom-nav pulsing dot lights up
+  // while the new SSR snapshot streams in (matches /board mutations). User
+  // gets instant page-level feedback even when the form button itself has
+  // already enabled (e.g. while transitioning to /print or staying on page).
+  const [, startTransition] = useTransition();
 
   // Initialize on open (inline mode is always considered "open")
   useEffect(() => {
@@ -323,7 +328,22 @@ export function OrderForm({
     setBusy(true);
     const body: Record<string, unknown> = { ...data };
     if (force) body.force = true;
-    if (isEdit && initial) body.id = initial.id;
+    if (isEdit && initial) {
+      body.id = initial.id;
+      // Pass the existing-order snapshot so the server can skip
+      // `loadAllFresh()` (saves ~600ms on every edit). Server uses
+      // `srcOrder.rawData.pin` to preserve PIN, and the (oldName, oldDateDue)
+      // pair to decide whether a cascade-rename loadAllFresh is needed.
+      body.srcOrder = {
+        name: initial.name,
+        dateDue: initial.dateDue,
+        dateIn: initial.dateIn,
+        price: initial.price,
+        status: initial.status,
+        rawData: initial.rawData ?? null,
+        details: initial.details ?? null,
+      };
+    }
     if (mode === 'draft') (body as { status?: string }).status = 'draft';
 
     const path = isEdit ? '/api/orders/update' : '/api/orders/add';
@@ -348,7 +368,7 @@ export function OrderForm({
         return;
       }
       broadcastWrite(path);
-      router.refresh();
+      startTransition(() => router.refresh());
       const successInfo: SuccessInfo = {
         orderId: Number(respJson.orderId || initial?.id || 0),
         jobId: respJson.jobId == null ? null : Number(respJson.jobId),
@@ -527,7 +547,7 @@ export function OrderForm({
           createdAt: new Date().toISOString(),
         },
       ]);
-      router.refresh();
+      startTransition(() => router.refresh());
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     } finally {
@@ -557,7 +577,7 @@ export function OrderForm({
         return;
       }
       setTemplateList((list) => list.filter((t) => Number(t.id) !== Number(id)));
-      router.refresh();
+      startTransition(() => router.refresh());
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     } finally {

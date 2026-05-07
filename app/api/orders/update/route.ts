@@ -6,16 +6,36 @@ import { toISODate } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 import type { Job } from '@/lib/types';
 
+interface SrcOrderSnapshot {
+  name?: string;
+  dateDue?: string;
+  dateIn?: string;
+  price?: string | number;
+  status?: string;
+  rawData?: Record<string, unknown> | null;
+  details?: Record<string, unknown> | null;
+}
+
 /** Update an existing order — admin only. Sales can create new orders
  *  + promote drafts, but mutating an order's spec/dates/cascade is
  *  reserved for admin (matches user's permission requirement, 2026-05-06).
  *  Mirrors the add route's full WP-shape OrderFormData input. Preserves
- *  PIN, cascades name/dateDue changes to matching jobs. */
+ *  PIN, cascades name/dateDue changes to matching jobs.
+ *
+ *  Perf: when the client passes `srcOrder` (existing-order snapshot from
+ *  the edit page's prefetched data), we skip `loadAllFresh()` UNLESS
+ *  name/dateDue actually changed (cascade requires the jobs list). For the
+ *  common spec-only edit, that drops the read round-trip entirely
+ *  (~600ms saved per edit). */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
 
-  let body: Partial<OrderFormData> & { id?: number | string; price?: string | number };
+  let body: Partial<OrderFormData> & {
+    id?: number | string;
+    price?: string | number;
+    srcOrder?: SrcOrderSnapshot;
+  };
   try {
     body = await req.json();
   } catch {
@@ -64,16 +84,35 @@ export async function POST(req: Request) {
     photobookItems = v.cleaned;
   }
 
-  let snap;
-  try {
-    snap = await loadAllFresh();
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-  }
-  const existing = snap.orders.find((o) => Number(o.id) === id);
-  if (!existing) {
-    return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
+  // Resolve the existing-order shape. Prefer client-supplied `srcOrder`
+  // (passed by the edit page's prefetched OrderSummary) — that's a
+  // free read since the page already loaded with this data. Fall back to
+  // `loadAllFresh()` for callers that don't pass it (legacy / external).
+  const src = body.srcOrder;
+  const oldName = String(src?.name ?? '');
+  const oldDateDue = toISODate(String(src?.dateDue ?? ''));
+  const nameChanged = !!src && oldName !== name;
+  const dueChanged = !!src && oldDateDue !== dateDue;
+  // Cascade rename needs the full jobs list; skip the read if neither
+  // name nor dateDue changed (the common case — spec-only edits).
+  const needsCascadeRead = !src || nameChanged || dueChanged;
+
+  let snap: Awaited<ReturnType<typeof loadAllFresh>> | null = null;
+  let existing: SrcOrderSnapshot;
+  if (needsCascadeRead) {
+    try {
+      snap = await loadAllFresh();
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
+    }
+    const found = snap.orders.find((o) => Number(o.id) === id);
+    if (!found) {
+      return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
+    }
+    existing = found;
+  } else {
+    existing = src!;
   }
 
   const existingRaw = (existing.rawData && typeof existing.rawData === 'object'
@@ -89,6 +128,7 @@ export async function POST(req: Request) {
   if (isPB) formSnapshot.photobook = photobookItems;
   delete formSnapshot.photobookItems;
   delete formSnapshot.id;
+  delete formSnapshot.srcOrder;
 
   const orderPayload = {
     id,
@@ -112,10 +152,9 @@ export async function POST(req: Request) {
   // trips into the time of the slowest one. Big win when an order has
   // multiple jobs (e.g. cowork mid-flight) AND the user changed
   // name/dateDue.
-  const oldName = String(existing.name || '');
-  const nameChanged = oldName !== name;
-  const dueChanged = String(existing.dateDue || '') !== dateDue;
-  const matching = (nameChanged || dueChanged)
+  // Only need cascade payloads when name/dateDue actually changed AND
+  // we have the snapshot (read was performed).
+  const matching = (nameChanged || dueChanged) && snap
     ? snap.jobs.filter((j: Job) => Number(j.orderId) === id && String(j.name || '') === oldName)
     : [];
 

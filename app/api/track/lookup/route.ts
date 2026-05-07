@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadAll, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { displayDate } from '@/lib/jobs';
 import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
 import { computeUrgency, getBangkokToday, URGENCY_LABELS, type Urgency } from '@/lib/calendar';
@@ -119,9 +119,16 @@ export async function POST(req: Request) {
     return respond({ error: 'เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง' }, 400);
   }
 
+  // Try the cached snapshot first (60s ISR — fast for already-known orders).
+  // If not found, the order might be brand-new — created seconds ago via
+  // "พิมพ์+สั่ง" then customer scans the QR before the cache rotates.
+  // Bypass the cache once before giving up. Mirrors the print page pattern.
   let snap;
   try {
     snap = await loadAll();
+    if (!snap.orders.some((o) => String(o.id) === id)) {
+      snap = await loadAllFresh();
+    }
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);

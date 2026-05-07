@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { loadAllFresh, AppsScriptError } from '@/lib/api';
+import { loadOrder, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
 /** Fetch a single order's rawData on demand.
@@ -9,7 +9,10 @@ import { requireSession } from '@/lib/route-helpers';
  *      already see on the Kanban card detail)
  *  Gate at the lowest common denominator: requireSession() = any logged-in
  *  user. rawData carries the order's full spec (paper, plate, colors, etc.)
- *  with no internal-only fields. */
+ *  with no internal-only fields.
+ *
+ *  Perf: uses Apps Script `getOrder` (single-row read) instead of
+ *  `loadAll` (~200KB snapshot). Roughly 600ms → 200ms per modal open. */
 export async function GET(
   _req: Request,
   { params }: { params: { id: string } },
@@ -22,15 +25,15 @@ export async function GET(
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
   }
 
-  let snap;
+  let result;
   try {
-    snap = await loadAllFresh();
+    result = await loadOrder(id);
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
-  const order = snap.orders.find((o) => Number(o.id) === id);
+  const order = result.order;
   if (!order) {
     return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
   }
