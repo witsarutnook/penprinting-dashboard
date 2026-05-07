@@ -2,8 +2,15 @@ import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import QRCode from 'qrcode';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadAll, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
+
+// The pop-up after "พิมพ์+สั่ง" loads this page within ~1-2s of addOrder
+// completing. The default loadAll() has a 60s ISR cache so the brand-new
+// row often isn't visible yet → notFound() → 404. Skip ISR caching on
+// this page; an extra Apps Script round-trip is acceptable for an
+// occasional print-invoice render.
+export const dynamic = 'force-dynamic';
 import { displayDate } from '@/lib/jobs';
 import { STAFF } from '@/lib/board';
 import { type PhotobookItem } from '@/lib/photobook';
@@ -55,8 +62,15 @@ export default async function OrderPrintPage({ params }: { params: { id: string 
   let order;
   let errorMessage: string | null = null;
   try {
-    const data = await loadAll();
-    order = data.orders.find((o) => Number(o.id) === id);
+    // First try the cached snapshot — fast for already-existing orders.
+    const cached = await loadAll();
+    order = cached.orders.find((o) => Number(o.id) === id);
+    if (!order) {
+      // Brand-new order created seconds ago via "พิมพ์+สั่ง" — the 60s
+      // ISR cache is still pre-creation. Bypass it once before giving up.
+      const fresh = await loadAllFresh();
+      order = fresh.orders.find((o) => Number(o.id) === id);
+    }
   } catch (err) {
     errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
   }
