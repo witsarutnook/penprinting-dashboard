@@ -126,15 +126,72 @@ export async function POST(req: Request) {
     status: 'pending',
   };
 
-  // ── Disabled fast path (createOrder single action) ───────
-  // Re-enable after we verify why the v5.10.3 createOrder write was
-  // landing rows with empty `details` / `rawData` cells (user reported
-  // 2026-05-07: print-invoice rendered empty spec section even though
-  // submission succeeded). Apps Script-side function still exists as a
-  // forward-compat hook; the Vercel route just no longer calls it.
-  void orderPayloadBase; void jobPayloadBase;
+  // ── Fast path: single Apps Script `createOrder` action (v5.10.3+) ───
+  // One round-trip does dedupe + alloc orderId + alloc jobId + writes both
+  // sheets inside the same LockService scope. End-to-end ~1-2s vs the
+  // 2-5s parallel-multi-call fallback below. Re-enabled 2026-05-07 PM
+  // after the user diagnosed the earlier "empty spec" symptom as the
+  // edit-mode prefill bug, not a createOrder write bug.
+  //
+  // Falls through to the legacy parallel path on:
+  //   - "Unknown action" (Apps Script not yet on v5.10.3+ — defensive)
+  //   - Any AppsScriptError text containing "Unknown action" (case-insensitive)
+  try {
+    const fast = await post<{
+      ok?: boolean;
+      orderId?: number;
+      jobId?: number | null;
+      duplicates?: Array<{ id: number; name: string; customer: string; dateIn: string }>;
+      error?: string;
+    }>('createOrder', {
+      data: {
+        order: orderPayloadBase,
+        job: jobPayloadBase,
+        force: !!body.force,
+        skipDedupe: isDraft,
+      },
+    });
 
-  // ── Parallel multi-call (proven path) ───────────────────
+    if (fast.error && /unknown action/i.test(fast.error)) {
+      throw new Error('UNKNOWN_ACTION');
+    }
+    if (fast.error) {
+      return NextResponse.json({ error: fast.error }, { status: 400 });
+    }
+    if (fast.duplicates && fast.duplicates.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'duplicate',
+          duplicates: fast.duplicates,
+          message: `พบใบสั่งงานคล้ายกัน ${fast.duplicates.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
+        },
+        { status: 409 },
+      );
+    }
+    if (!fast.orderId) {
+      return NextResponse.json({ error: 'createOrder ไม่ได้รับ orderId กลับมา' }, { status: 502 });
+    }
+    return NextResponse.json({
+      ok: true,
+      orderId: fast.orderId,
+      jobId: fast.jobId ?? null,
+      pin,
+      orderType,
+      draft: isDraft || undefined,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Fall through ONLY for the "Unknown action" sentinel — every other
+    // error means createOrder failed for a real reason and we should not
+    // duplicate the work via the legacy path (would burn an extra orderId
+    // slot and might double-write).
+    if (msg !== 'UNKNOWN_ACTION' && !/unknown action/i.test(msg)) {
+      return NextResponse.json({ error: `createOrder failed — ${msg}` }, { status: 502 });
+    }
+    // else fall through to legacy multi-call flow below
+  }
+
+  // ── Legacy fallback: parallel multi-call (Apps Script pre-v5.10.3) ──
   // Order: snapshot read + alloc IDs in parallel → dedupe in memory →
   // write order + job in parallel. About 2-5s end-to-end depending on
   // Sheet latency. Same partial-success semantics as before.
