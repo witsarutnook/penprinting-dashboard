@@ -18,16 +18,17 @@ interface TrackResult {
   cancelReason?: string;
 }
 
-// Pill colors mirror WP `.badge-*` classes (page-track-order.php:276-282).
-// Variant key resolved from urgencyKey + status:
+// Minimal palette — cream + black with red/green semantic accents only.
+// Replaced WP's blue progress hue with a dark charcoal pill so the page
+// reads as muted Japanese-minimal instead of Bootstrap-blue.
 //   cancelled → cancelled (gray)
-//   shipped   → shipped   (green)
-//   overdue   → overdue   (red)
-//   in_progress / dept    → progress (blue)
-//   received / pending    → normal   (amber)
+//   shipped   → shipped   (green — success)
+//   overdue   → overdue   (red   — danger)
+//   in_progress / dept    → progress (charcoal — was blue)
+//   received / pending    → normal   (amber — kept for warmth)
 const BADGE_COLOR: Record<string, { bg: string; text: string }> = {
   normal:    { bg: '#fef3c7', text: '#b45309' },
-  progress:  { bg: '#dbeafe', text: '#1d4ed8' },
+  progress:  { bg: '#e7e5e4', text: '#1a202c' },
   overdue:   { bg: '#fee2e2', text: '#dc2626' },
   shipped:   { bg: '#dcfce7', text: '#059669' },
   cancelled: { bg: '#f3f4f6', text: '#6b7280' },
@@ -313,7 +314,9 @@ type StepState = 'done' | 'current' | 'pending' | 'cancelled';
 
 const STEP_STYLE: Record<StepState, { iconBg: string; iconColor: string; thai: string; eng: string }> = {
   done:      { iconBg: '#dcfce7', iconColor: '#059669', thai: '#1a202c', eng: '#64748b' },
-  current:   { iconBg: '#dbeafe', iconColor: '#1d4ed8', thai: '#1d4ed8', eng: '#3b82f6' },
+  // Current step: filled charcoal circle with white icon — pulls focus
+  // without a color shift. Replaces the WP blue treatment.
+  current:   { iconBg: '#1a202c', iconColor: '#ffffff', thai: '#1a202c', eng: '#4a5568' },
   pending:   { iconBg: '#f1f5f9', iconColor: '#cbd5e0', thai: '#cbd5e0', eng: '#cbd5e0' },
   cancelled: { iconBg: '#fee2e2', iconColor: '#dc2626', thai: '#dc2626', eng: '#dc2626' },
 };
@@ -568,8 +571,9 @@ const CONTACT_BOX: React.CSSProperties = {
 };
 
 const CONTACT_LINK: React.CSSProperties = {
-  color: '#046bd2',
-  textDecoration: 'none',
+  color: '#1a202c',
+  textDecoration: 'underline',
+  textUnderlineOffset: '3px',
   fontWeight: 600,
 };
 
