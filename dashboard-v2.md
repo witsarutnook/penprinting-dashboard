@@ -276,6 +276,14 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | **Login rate-limit didn't survive cold starts** (Medium) | In-memory Map per Vercel function instance → brute-forcer hitting different instances saw fresh counter | Port `attachRateCookie` pattern from `/api/track/lookup` — signed httpOnly cookie state per browser, path `/api/auth` |
 | **bulk-forward N×getNextId timing out** (Medium) | 25 items × ~300-500ms per round-trip ≈ 12s → flirting with Vercel 10s function timeout | Add `getNextIds(count)` Apps Script action — single LockService call mints N sequential ids. Backwards-compat fallback retained until Apps Script side ships. |
 | **Default Next.js favicon overrode logo** (2026-05-06) | `app/favicon.ico` from `create-next-app` scaffold persisted; Next.js emits its `<link>` first with sizes="16x16" → browsers preferred it over the new `icon.png` | Delete `app/favicon.ico`. Real logo lives at `app/icon.png` + `app/apple-icon.png`. |
+| **Print popup blocked** (2026-05-07) | `window.open()` called AFTER `await fetch()` is rejected by browsers as non-user-initiated popup — even on a click handler | Open synchronously on click with placeholder URL → swap `location.href` post-await. Card.tsx + orders detail modal pattern. |
+| **พิมพ์+สั่ง bounced out of installed PWA** (2026-05-07) | `window.open(url, '_blank')` always opens in system browser, breaking PWA UX | Detect `display-mode: standalone` + `navigator.standalone` → use `router.push(url)` for in-app navigation instead. |
+| **Print page 404 for fresh orders** (2026-05-07) | `/orders/[id]/print` used cached `loadAll()` (60s ISR window) → orders < 60s old not in snapshot → 404 | Add `export const dynamic = 'force-dynamic'` + `loadAllFresh()` fallback when id missing from cached snap. |
+| **Optimistic-UI flicker between hide + SSR data** (2026-05-07) | `unhideJob()` ran before `router.refresh()` SSR data landed → 1-2s gap where card not in optimistic state nor SSR state | Wrap `router.refresh()` in `useTransition` → defer `unhideJob()` until `isPending` flips false. Phantom card stays visible until real data arrives. |
+| **createOrder fast-path landed empty rows** (2026-05-07) | Suspected new single-call `createOrder` action → reverted (`0b762cc`). Root cause was actually edit-form prefill reading wrong field path = blank fields submitted on edit. | Fix edit prefill (`8c5f97d`) → re-enable fast path (`c38c5c1`). Lesson: don't blame the new code path; bisect carefully. |
+| **Single-order pages re-fetched full snapshot** (2026-05-07 PM, `8528839`) | `/api/orders/raw/[id]`, `/orders/[id]/print`, `/api/track/lookup` all called `loadAll()`/`loadAllFresh()` (full Sheet snapshot, ~600ms) just to look up one row | Apps Script `getOrder` action existed but unused. Added `loadOrder(id)` wrapper in [lib/api.ts](lib/api.ts) → ~200ms single-row read. 3× faster order detail tab, ~2.7s → ~1.6s print popup fill. |
+| **Cancel/delete cascade serial across cowork jobs** (2026-05-07 PM, `8528839`) | `/api/orders/{cancel,delete}` looped `await cancelJob(jobId)` sequentially → order with N cowork jobs took N×600ms blocking | `Promise.allSettled([...cancelJob calls])` parallelizes — N→1 wall-clock. Failures still surface per-job. Atomic Apps Script `cancelOrder` action deferred (Promise.allSettled removes 80% of pain). |
+| **Spec-only order edit re-read full snapshot** (2026-05-07 PM, `8528839`) | `/api/orders/update` called `loadAllFresh()` even when only spec fields changed (no cascade rename needed) | Accept `srcOrder` snapshot from client; skip `loadAllFresh` when name+dateDue unchanged. Cascade rename still triggers fresh read when name/date does change. -600ms per spec-only edit. |
 
 ---
 
@@ -283,11 +291,46 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### Forward perf overhaul — A+B (2026-05-07)
-- **Skip `loadAllFresh()` in write routes** — frontend ships `srcJob` snapshot in body for `/api/jobs/forward`, `/api/jobs/bulk-forward`, `/api/jobs/reassign`. -1 Apps Script round-trip per write. Drag-drop carries snapshot via dataTransfer `application/x-job-snapshot`.
-- **Optimistic UI on /board** — new `components/board/pending-mutations.tsx` context with `Set<jobId>` of "hidden" cards. column.tsx filters `column.jobs.filter(j => !hiddenIds.has(j.id))`. Every mutation (forward, reassign, ship, cancel, bulk-forward, drag-drop) hides instantly + closes modal + shows toast → perceived 0ms latency, matching WP UX. On failure: unhide + toast.error.
-- **Apps Script `bulkForward` server-side id alloc** — write.ts auto-allocates ids when newJob.id is missing/0 + returns `succeeded: [{oldId, newId, name}]`. Forward-compat hook (Vercel routes still allocate explicitly via getNextId for deploy-order safety).
-- Result: forward perceived latency 2.5-6s → **0ms**. Apps Script round-trips 3 → 2 (1 after future Vercel switch).
+### Lifecycle round-trip audit — hot-path cuts (2026-05-07 PM, `8528839`)
+Audit pass บน order→ship lifecycle เจอ 7 friction points กิน 0.6-1.2s/interaction. Batch ปิดในรอบเดียว — cuts unnecessary `loadAllFresh()` reads + parallelizes cascade writes + instant pending feedback.
+
+| Fix | File | Saving |
+|---|---|---|
+| `loadOrder(id)` wrapper for Apps Script `getOrder` action | [lib/api.ts](lib/api.ts) | single-row read ~200ms vs full snapshot ~600ms |
+| Order detail "สเปคงาน" tab | [app/api/orders/raw/[id]/route.ts](app/api/orders/raw/[id]/route.ts) | 3× faster (loadOrder instead of loadAll) |
+| "พิมพ์+สั่ง" popup fill | [app/orders/[id]/print/page.tsx](app/orders/[id]/print/page.tsx) | ~2.7s → ~1.6s (loadOrder + drop loadAll→loadAllFresh fallback) |
+| Track lookup fresh-bypass | [app/api/track/lookup/route.ts](app/api/track/lookup/route.ts) | QR scan within 60s of order create no longer 404s (matches print page pattern) |
+| Order spec-only edit | [app/api/orders/update/route.ts](app/api/orders/update/route.ts) | -600ms when name+dateDue unchanged — accepts `srcOrder` snapshot from client; skips `loadAllFresh` |
+| Order cancel cascade | [app/api/orders/cancel/route.ts](app/api/orders/cancel/route.ts) | N×600ms sequential → ~600ms parallel via `Promise.allSettled` |
+| Order delete cascade | [app/api/orders/delete/route.ts](app/api/orders/delete/route.ts) | Same as above — big win for orders with cowork-attached jobs |
+| Order-form submit feedback | [app/board/order-form.tsx](app/board/order-form.tsx) | `useTransition`-wrapped `router.refresh()` lights up sidebar/bottom-nav pulsing dot |
+| CoworkDialog instant feedback | [app/board/card.tsx](app/board/card.tsx) | close modal on click + toast progress + `commit()` — no more waiting with modal open |
+
+**Pattern crystallized**: client-supplied snapshots > server re-reads (matches forward/reassign/bulk-forward — see PATTERNS §1.5). Atomic Apps Script `cancelOrder`/`deleteOrder` deferred — `Promise.allSettled` already removes the main pain point.
+
+### Forward perf overhaul — A+B+C (2026-05-07)
+- **`f9262a4`** — perf: skip `loadAllFresh()` in write routes (A) — frontend ships `srcJob` snapshot in body for `/api/jobs/forward`, `/api/jobs/bulk-forward`, `/api/jobs/reassign`. -1 Apps Script round-trip per write. Drag-drop carries snapshot via dataTransfer `application/x-job-snapshot`. Apps Script `bulkForward` auto-allocates ids when newJob.id is missing/0 + returns `succeeded: [{oldId, newId, name}]` (forward-compat hook).
+- **`649005c`** + **`f715a42`** — perf: optimistic UI on /board (B) — new `components/board/pending-mutations.tsx` context with `Set<jobId>` of "hidden" cards. column.tsx filters `column.jobs.filter(j => !hiddenIds.has(j.id))`. Every mutation (forward, reassign, ship, cancel, bulk-forward, drag-drop) hides instantly + closes modal + shows toast. **Phantom-card injection** in destination column shows the card immediately at the new staff before SSR data lands. **Defer phantom cleanup** until `useTransition`-wrapped `router.refresh()` completes — eliminates the 1-2s flicker between optimistic state clearing and SSR data arriving.
+- Result: forward perceived latency 2.5-6s → **0ms** matching WP UX. Apps Script round-trips 3 → 2.
+
+### Order create perf — single-call action (2026-05-07)
+- **`3ad9f01`** — perf: parallelize order create / update / promote-draft round-trips — `Promise.all` for the order + initial-job pair (~1.5s saved on cold path).
+- **`a184254`** — perf: single-call `createOrder` Apps Script action — 1 round-trip vs 5 (under 2s end-to-end). New action in `write.ts` allocates orderId + initial jobId atomically + writes both rows in one batch. Vercel `/api/orders/add` now ships full payload in one POST.
+- **`0b762cc`** — revert: temporarily disabled createOrder fast path after observing rows landing with empty details (later traced to edit-form prefill bug `8c5f97d`, NOT createOrder).
+- **`c38c5c1`** — perf: re-enabled createOrder fast path after edit-form fix verified — order create back under 2s consistently.
+
+### Order form / edit fixes (2026-05-07)
+- **`2cb2863`** — fix: order-form orderer dropdown + drop assignStaff/forwardPrint mutual exclusion. Both fields now independently editable (matches WP behavior).
+- **`8c5f97d`** — fix: order edit — date prefill bug (was reading wrong field path → blank), dual assign+forward fields preserved across edits, cancel button on edit page.
+- **`c542d98`** — fix: replace PP placeholder with real Penprinting logo on A4 invoice.
+
+### Print + PWA UX (2026-05-07)
+- **`2a984ab`** — fix: open print popup synchronously on click (bypass popup blocker). `window.open()` AFTER `await fetch()` is rejected as non-user-initiated → open synchronously with placeholder URL, then swap `location.href` post-await.
+- **`6667d87`** — fix: print page 404 — bypass loadAll cache for fresh orders. New orders < 60s old were 404'd by ISR cache. Added `dynamic = 'force-dynamic'` + `loadAllFresh()` fallback so print page always sees latest sheet data.
+- **`5fd241f`** — fix: พิมพ์+สั่ง stays inside installed PWA — detect standalone via `display-mode: standalone` + `navigator.standalone` → use `router.push` instead of `window.open(_blank)` which bounces out to system Chrome.
+
+### Order cancel UX (2026-05-07)
+- **`79a8caf`** — feat: replace ลบใบสั่ง with ยกเลิกใบสั่ง in /orders detail modal. Cancel preserves the order row + cascades cancellation to active jobs (matches WP /orders behavior). Hard delete still available via /cancelled page admin restore + Apps Script editor only.
 
 ### Phase 2.1 Apps Script TS migration — close-out (2026-05-07)
 - 4 sections moved to TS: [auth.ts](../production-monitoring/apps-script/dashboard/auth.ts), [load.ts](../production-monitoring/apps-script/dashboard/load.ts), [write.ts](../production-monitoring/apps-script/dashboard/write.ts), [api.ts](../production-monitoring/apps-script/dashboard/api.ts)

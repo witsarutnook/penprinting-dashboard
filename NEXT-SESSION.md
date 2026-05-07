@@ -2,43 +2,59 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> **Session ก่อนหน้า — 2026-05-07 AM+late** Phase 2.1 ปิดครบ + **forward perf overhaul** (A+B+C) — ลบ `loadAllFresh` round-trip + Apps Script alloc id ภายใน + optimistic UI. Forward path: 3 round-trips → 1, perceived latency 2.5-6s → **0ms**.
+> **Session ก่อนหน้า — 2026-05-07 (full day)** ✅ Phase 2.1 Apps Script TS migration ปิด 100% (Code.js 677→93 lines) + **forward perf overhaul** (A+B+C, 0ms perceived latency, matches WP) + **order create perf** (5 round-trips → 1, < 2s) + bug fixes session (print popup blocker, PWA bounce, fresh-order 404, edit-form prefill, A4 logo) + **PM perf batch** (`8528839`) — hot-path round-trip cuts across order/print/cowork/cancel (loadOrder single-row reads, parallel cascade cancels, optimistic order edit, instant cowork+order-form feedback).
 
 ## ✅ เสร็จแล้วในรอบล่าสุด (2026-05-07)
 
-### Forward perf overhaul (matches WP UX)
-**ปัญหา**: ส่งงานต่อใน v2 บล็อค UI 2.5-6 วินาที (vs WP รู้สึก instant) — สาเหตุคือ 3 sequential Apps Script round-trips: `loadAllFresh` → `getNextId` → `bulkForward`
+### Phase 2.1 Apps Script TS migration (100%) ✅
+- 4 sections สุดท้ายเป็น TS — type-check ผ่าน strict mode (`noImplicitAny` + `strictNullChecks`)
+- [auth.ts](../production-monitoring/apps-script/dashboard/auth.ts) (96 lines) — HMAC + role gate
+- [load.ts](../production-monitoring/apps-script/dashboard/load.ts) (168 lines) — `loadAll`, `loadOrder`, `loadRecentAudit`
+- [write.ts](../production-monitoring/apps-script/dashboard/write.ts) (280+ lines) — 12 mutations + `bulkForward` server-side id alloc + `createOrder` action
+- [api.ts](../production-monitoring/apps-script/dashboard/api.ts) (159 lines) — `doGet`, `doPost`
+- `Code.js` 677 → **93 lines** (-86%); only constants + section markers
+- ✅ User redeploy แล้ว via push.sh + Manage deployments
 
-**A. Skip `loadAllFresh()`** — Vercel routes รับ `srcJob` snapshot จาก client (frontend มีอยู่แล้วบน screen), ไม่ต้อง round-trip ขอ source data ก่อน:
-- [/api/jobs/forward](app/api/jobs/forward/route.ts) — รับ srcJob ใน body
-- [/api/jobs/bulk-forward](app/api/jobs/bulk-forward/route.ts) — รับ items[].srcJob
-- [/api/jobs/reassign](app/api/jobs/reassign/route.ts) — รับ srcJob (cowork ส่งมาด้วยเลยป้องกันหาย)
+### Forward perf overhaul (A+B+C) ✅
+**ปัญหา**: ส่งงานต่อ v2 บล็อค UI 2.5-6 วินาที (vs WP instant). 3 sequential Apps Script round-trips: `loadAllFresh` → `getNextId` → `bulkForward`.
 
-**C. Apps Script `bulkForward` alloc ids ภายใน** ([write.ts](../production-monitoring/apps-script/dashboard/write.ts)) — ถ้า `newJob.id` ว่าง/0/undefined → server เรียก `getNextIds(N)` ภายใต้ batch lock เดียวกัน + return `succeeded: [{oldId, newId, name}]`. Forward-compat hook — Vercel routes ปัจจุบันยัง alloc id ผ่าน `getNextId`/`getNextIds` ก่อน เพื่อ deploy-order-safe (ดู Pending actions ด้านล่าง).
+- **A. Skip `loadAllFresh()`** — `/api/jobs/{forward,bulk-forward,reassign}` รับ `srcJob` snapshot จาก client. Drag-drop ส่งผ่าน dataTransfer `application/x-job-snapshot`.
+- **C. Apps Script `bulkForward` auto-alloc** — newJob.id ว่าง/0 → `getNextIds(N)` ภายใน batch lock + return `succeeded: [{oldId, newId, name}]`.
+- **B. Optimistic UI** — [pending-mutations.tsx](components/board/pending-mutations.tsx) context เก็บ `Set<jobId>` "ซ่อน". Card หายจาก source col ทันที + phantom card injection ใน destination col + defer cleanup จนกว่า `useTransition`-wrapped `router.refresh()` จะเสร็จ. Failure → unhide + toast.error.
 
-**B. Optimistic UI บน /board** — [pending-mutations.tsx](components/board/pending-mutations.tsx) context เก็บ `Set<jobId>` ที่ "ซ่อน":
-- คลิกส่งต่อ → `hideJob(id)` ทันที + ปิด modal + toast "กำลังส่งต่อ → X..."
-- Card หายจาก source col ทันที (`column.tsx` filter `column.jobs.filter(j => !hiddenIds.has(j.id))`)
-- fetch async; success → toast.success + router.refresh + unhide; failure → unhide + toast.error
-- ครอบคลุม: Card forward modal, Card action sheet (forward+reassign+ship+cancel), drag-drop reassign+forward, BulkForwardModal, BulkActionsBar floating bar
-
-**ผลลัพธ์**:
 | | ก่อน | หลัง | WP |
 |---|---|---|---|
-| Apps Script round-trips | 3 | **2** | 2 |
-| Perceived UI latency | 2.5-6s | **0ms** (B optimistic) | 0ms |
+| Apps Script round-trips | 3 | 2 | 2 |
+| Perceived UI latency | 2.5-6s | **0ms** | 0ms |
 | Atomicity | ✅ | ✅ | ❌ (delete+add race) |
 
-> หลัง user เปลี่ยน Vercel routes ให้ใช้ Apps Script auto-alloc (drop `getNextId` calls) ใน session ถัดไป → 1 round-trip. ตอนนี้ทำ deploy-order-safe ก่อน.
+### Order create perf (5 round-trips → 1, < 2s) ✅
+- **`a184254`** — single-call `createOrder` Apps Script action — allocates orderId + initial jobId atomically + writes both rows in one batch
+- **`3ad9f01`** — parallelize order create / update / promote-draft round-trips (`Promise.all`)
+- **`0b762cc`** → **`c38c5c1`** — temporarily reverted createOrder fast path after suspecting empty-row regression; root cause was edit-form prefill bug `8c5f97d` instead. Re-enabled after fix.
 
-### Phase 2.1 Apps Script TS migration (100%)
-- ย้าย 4 sections สุดท้ายเป็น TS — type-check ผ่าน strict mode (`noImplicitAny` + `strictNullChecks`)
-- [auth.ts](../production-monitoring/apps-script/dashboard/auth.ts) (96 lines) — `hmacSha256Hex`, `verifyToken`, `tokenInfo`, `tokenRole` + `VALID_ROLES`, `ROLE_REQUIREMENTS`
-- [load.ts](../production-monitoring/apps-script/dashboard/load.ts) (168 lines) — `loadAll`, `loadOrder`, `loadRecentAudit` + shared `parseJsonOr` helper
-- [write.ts](../production-monitoring/apps-script/dashboard/write.ts) (252 → 280+ lines) — `addJob`, `updateJob`, `deleteJob`, `moveToShipped`, `addOrder`, `updateOrder`, `deleteOrder`, `setCowork`, `restoreJob`, `cancelJob`, `saveAll`, `bulkForward` (+ server-side id alloc + succeeded[])
-- [api.ts](../production-monitoring/apps-script/dashboard/api.ts) (159 lines) — `doGet`, `doPost`
-- `Code.js` ลด 677 → 93 บรรทัด (-86%); now only `SS_ID` + `SHEET_*` + `*_HEADERS` + section markers
-- TS cross-file globals work via `*.ts` include glob (no imports needed at runtime — V8 cross-file scope)
+### Order form / edit + UX fixes ✅
+- **`8c5f97d`** — order edit: date prefill bug, dual assign+forward fields, cancel button on edit page
+- **`2cb2863`** — order-form: orderer dropdown + drop assignStaff/forwardPrint mutual exclusion (matches WP)
+- **`c542d98`** — replace PP placeholder with real Penprinting logo on A4 invoice
+- **`2a984ab`** — print popup synchronous open (bypass popup blocker)
+- **`6667d87`** — print page bypass loadAll cache for fresh orders (`force-dynamic` + `loadAllFresh`)
+- **`5fd241f`** — พิมพ์+สั่ง stays inside installed PWA (display-mode standalone detection)
+- **`79a8caf`** — ลบใบสั่ง → ยกเลิกใบสั่ง ใน /orders detail modal
+
+### Hot-path round-trip cuts ✅ (PM, `8528839`)
+**ปัญหา**: lifecycle audit ของ order→ship เจอ 7 friction points ที่กิน 0.6-1.2s/interaction. แก้ทั้ง batch — cuts unnecessary `loadAllFresh()` reads + parallelizes cascade writes + ให้ instant pending feedback บน operations ที่บล็อก UI เงียบๆ.
+
+| Fix | ที่อยู่ | Saving |
+|---|---|---|
+| `loadOrder(id)` wrapper บน Apps Script `getOrder` | [lib/api.ts](lib/api.ts) | single-row read ~200ms vs full snapshot ~600ms |
+| Order detail "สเปคงาน" tab | [app/api/orders/raw/[id]/route.ts](app/api/orders/raw/[id]/route.ts) | 3× faster (loadOrder vs loadAll) |
+| "พิมพ์+สั่ง" popup fill | [app/orders/[id]/print/page.tsx](app/orders/[id]/print/page.tsx) | ~2.7s → ~1.6s (loadOrder + drop loadAll fallback) |
+| Track lookup fresh-bypass | [app/api/track/lookup/route.ts](app/api/track/lookup/route.ts) | QR scan within 60s no longer 404s (matches print page pattern) |
+| Order spec-only edit | [app/api/orders/update/route.ts](app/api/orders/update/route.ts) | -600ms when name+dateDue unchanged (`srcOrder` snapshot from client) |
+| Order cancel/delete cascade | [app/api/orders/{cancel,delete}/route.ts](app/api/orders/cancel/route.ts) | N×600ms → max(~600ms) via `Promise.allSettled` |
+| Order-form submit feedback | [app/board/order-form.tsx](app/board/order-form.tsx) | sidebar pulsing dot lights up via `useTransition`-wrapped `router.refresh()` |
+| CoworkDialog UX | [app/board/card.tsx](app/board/card.tsx) | close modal on click + toast progress + commit() — no waiting with modal open |
 
 ## ✅ เสร็จแล้วในรอบก่อน (2026-05-06 PM)
 
@@ -70,25 +86,23 @@
 
 ## ⚠️ Pending user actions
 
-1. **v2 deploy** — `git push` ฝั่ง penprinting-dashboard → Vercel auto-deploys. Vercel-side ทั้ง A+B + forward-compat backstop เป็นเอกเทศ — ใช้งานได้กับ Apps Script เก่าและใหม่ (Vercel routes alloc id ก่อนยัง)
-2. **Apps Script redeploy** (optional, forward-compat สำหรับ session ถัดไป):
-   ```bash
-   cd "production-monitoring/apps-script/dashboard"
-   ./push.sh
-   ```
-   แล้ว Apps Script editor → **Manage deployments → Edit existing → New version**.
-   - เปิดใช้ `bulkForward` auto-alloc + `succeeded[]` array (forward-compat hook) — Vercel routes ตอนนี้ยังไม่ใช้, แต่จะ drop `getNextId` calls ใน session ถัดไป (round-trips 2 → 1)
-   - **Backwards-compat**: ถ้า client ส่ง newJob.id มา = ใช้ id นั้น (พฤติกรรมเดิมที่ Vercel ส่งอยู่)
-   - ⚠️ Smoke test หลัง deploy: forward 1 จอบ + bulk-forward 5 จอบ + drag-drop forward + reassign + ship + cancel + forward undo (admin)
+1. **Verify `createOrder` fast path on next photobook order** — fast path re-enabled (`c38c5c1`) หลังแก้ edit-form prefill. ถ้า order รอบหน้ายัง land ด้วย details ครบ → mark createOrder fully validated, ปิดเรื่องนี้. ถ้าเจอ empty rows อีก → revert (`0b762cc` pattern) + investigate (อย่าด่วนสรุปว่าเป็น createOrder อีก, อาจมี edit-form bug อื่นซ่อน)
 
 2. **Vercel env vars สำหรับ Sentry** (optional, ค้างจาก 2026-05-06):
    - `NEXT_PUBLIC_SENTRY_DSN` — error capture activate
    - `SENTRY_ORG` + `SENTRY_PROJECT` + `SENTRY_AUTH_TOKEN` — source map upload
    - ถ้ายังไม่ตั้ง = Sentry SDK auto-disable (no errors, no source map upload)
 
+✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing all live)
+
 ---
 
 ## ⏳ ที่ยังเหลือ (priority order)
+
+### 0. Atomic Apps Script `cancelOrder` / `deleteOrder` (deferred perf item)
+- ปัจจุบัน `/api/orders/{cancel,delete}` ใช้ `Promise.allSettled([...cancelJob calls])` → ลดจาก N×serial → max(~600ms parallel)
+- Future improvement: รวมเป็น Apps Script action เดียว (`cancelOrder`/`deleteOrder` ที่ทำ cancel order row + cascade jobs ใน batch lock เดียว) → ลดเหลือ 1 round-trip จริงๆ
+- Deferred เพราะ `Promise.allSettled` แก้ pain point ส่วนใหญ่แล้ว และ Apps Script side ต้อง redeploy. Pick up เมื่อ user feedback ว่ายังช้า
 
 ### 1. Phase 3.6 — Decommission decision (ระยะยาว)
 v2 = full WP feature parity แล้ว + permissions match WP role matrix. ตัดสินใจ:
@@ -165,4 +179,4 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-07 AM (Phase 2.1 close-out: Auth + Load + Write + API → TS, Code.js 677→93 lines)_
+_อัปเดตล่าสุด: 2026-05-07 (full day — Phase 2.1 close-out + forward perf overhaul A+B+C + order create perf + bug fixes session + PM perf batch `8528839` ปิด lifecycle round-trip audit)_
