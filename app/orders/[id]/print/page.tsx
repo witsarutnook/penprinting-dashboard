@@ -161,23 +161,18 @@ export default async function OrderPrintPage({ params }: { params: { id: string 
             }}
           >
             <div style={{ padding: '8px 10px', background: '#fff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                <div
-                  style={{
-                    width: 44, height: 44, background: ACCENT, color: '#fff',
-                    borderRadius: 6, display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', fontWeight: 800, fontSize: 18,
-                  }}
-                >
-                  PP
-                </div>
-                <div>
-                  <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: '0.5px', lineHeight: 1 }}>
-                    PENPRINTING
-                  </div>
-                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>
-                    โรงพิมพ์เพ็ญพรินติ้ง
-                  </div>
+              <div style={{ marginBottom: 6 }}>
+                {/* Real Penprinting wordmark + pen-in-circle. SVG already
+                    contains "PENPRINTING" so the placeholder PP block + the
+                    PENPRINTING text row that sat next to it are gone. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/penprinting-logo.svg"
+                  alt="Penprinting"
+                  style={{ height: 44, width: 'auto', display: 'block' }}
+                />
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>
+                  โรงพิมพ์เพ็ญพรินติ้ง
                 </div>
               </div>
               <div
