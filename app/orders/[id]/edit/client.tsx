@@ -54,7 +54,19 @@ export function OrderEditClient({
       }
       broadcastWrite('/api/orders/promote-draft');
       setSuccess({ jobId: Number(data.jobId) });
-      setTimeout(() => router.push('/board?dept=post'), 1500);
+      // Force the current router cache to drop its pre-promote snapshot so
+      // the upcoming /board navigation lands on fresh data instead of the
+      // stale ISR copy. Without this, the new card briefly appeared (server
+      // re-rendered after the action's revalidatePath) then vanished on
+      // the first auto-sync tick that hit the still-warm fetch cache, and
+      // only came back after the 60s ISR window rotated. Pairing the
+      // refresh with the navigation closes that flicker window.
+      router.refresh();
+      // Land on the unfiltered board — the new job goes to the order's
+      // assignDept (often 'graphic' for photobook), so a `?dept=post`
+      // filter would hide it on arrival and create the same disappearance
+      // illusion. Show all so the user sees their just-promoted card.
+      setTimeout(() => router.push('/board'), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
     } finally {
