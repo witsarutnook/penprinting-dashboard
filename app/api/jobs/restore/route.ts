@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, loadOrder, AppsScriptError } from '@/lib/api';
+import { post, loadAll, loadAllFresh, loadOrder, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 
@@ -43,37 +43,53 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing job id' }, { status: 400 });
   }
 
-  // Resolve the cancelled-row fields. Prefer the client snapshot; fall
-  // back to a full loadAllFresh for callers that don't pass it (legacy
-  // / external scripts hitting the route directly).
-  let cjName: string;
-  let cjDept: string;
-  let cjStaff: string;
-  let cjOrderId: number | null;
-
+  // Resolve the cancelled-row fields. Always read the actual row from
+  // the Sheet so name/dept/staff/orderId reflect ground truth — auditor
+  // H3 (2026-05-08): previously trusted client-supplied src verbatim,
+  // which let a buggy client send a real `id` but mismatched name/dept,
+  // appending a fresh row with arbitrary content.
+  //
+  // Perf: when src is provided we use the cached `loadAll()` (60s ISR)
+  // so we still avoid the ~600ms loadAllFresh cost in the common case.
+  // Cache miss falls back to fresh read. Without src we go straight to
+  // loadAllFresh (legacy / external callers).
   const src = body.srcCancelled;
-  if (src && src.name && src.dept && src.staff) {
-    cjName = String(src.name);
-    cjDept = String(src.dept);
-    cjStaff = String(src.staff);
-    cjOrderId = src.orderId ? Number(src.orderId) : null;
-  } else {
-    let snap;
+  let snap;
+  try {
+    snap = src && src.name ? await loadAll() : await loadAllFresh();
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
+  }
+  let cj = snap.cancelled.find((c) => Number(c.id) === id);
+  // Cache might be stale for newly-cancelled rows — retry fresh.
+  if (!cj && src && src.name) {
     try {
       snap = await loadAllFresh();
+      cj = snap.cancelled.find((c) => Number(c.id) === id);
     } catch (err) {
       const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
     }
-    const cj = snap.cancelled.find((c) => Number(c.id) === id);
-    if (!cj) {
-      return NextResponse.json({ error: `ไม่พบรายการยกเลิก id=${id}` }, { status: 404 });
-    }
-    cjName = String(cj.name || '');
-    cjDept = String(cj.dept || '');
-    cjStaff = String(cj.staff || '');
-    cjOrderId = cj.orderId ? Number(cj.orderId) : null;
   }
+  if (!cj) {
+    return NextResponse.json({ error: `ไม่พบรายการยกเลิก id=${id}` }, { status: 404 });
+  }
+  // If client supplied src, sanity-check that the snapshot matches —
+  // otherwise the client is out of sync (or buggy) and we shouldn't
+  // restore a row whose real content the user can't see.
+  if (src && src.name && String(src.name).trim() !== String(cj.name || '').trim()) {
+    return NextResponse.json(
+      {
+        error: `ข้อมูลที่ส่งมาไม่ตรงกับ row id=${id} ใน Sheet — refresh หน้า /cancelled แล้วลองใหม่`,
+      },
+      { status: 409 },
+    );
+  }
+  const cjName = String(cj.name || '');
+  const cjDept = String(cj.dept || '');
+  const cjStaff = String(cj.staff || '');
+  const cjOrderId = cj.orderId ? Number(cj.orderId) : null;
 
   // Reattach to parent order (if any) to recover due/in dates. Use the
   // single-row `loadOrder` instead of dragging in the full snapshot.

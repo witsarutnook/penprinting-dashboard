@@ -124,6 +124,19 @@ export async function POST(req: Request) {
       if (r.ok && r.jobId) {
         return NextResponse.json({ ok: true, jobId: r.jobId, orderId: id });
       }
+      // Auditor H2 (2026-05-08): if the atomic action returned ok=true
+      // without a jobId, treat that as a server-side regression instead
+      // of falling through. Falling through would burn the speculative
+      // jobId AGAIN via legacy `addJob` and create a second job for the
+      // same order. Apps Script v5.10.4+ always returns jobId on success;
+      // a missing jobId means a future Apps Script change skipped the
+      // field. Surface the bug rather than silently double-writing.
+      if (r.ok && !r.jobId) {
+        return NextResponse.json(
+          { error: 'promoteDraft return success แต่ไม่มี jobId — Apps Script regression, อย่าใช้งานต่อจนกว่าจะแก้' },
+          { status: 502 },
+        );
+      }
       if (r.error && !/Unknown action/i.test(r.error)) {
         return NextResponse.json({ error: r.error }, { status: 400 });
       }

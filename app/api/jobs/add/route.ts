@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
+import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import {
   toISODate,
@@ -48,6 +48,34 @@ export async function POST(req: Request) {
       { error: `ผู้รับงาน "${staffId}" ไม่ตรงกับแผนก "${dept}"` },
       { status: 400 },
     );
+  }
+
+  // Idempotency guard (auditor H1, 2026-05-08): when caller supplies an
+  // orderId, reject if an active (non-cancelled) job already references
+  // it. This closes the orphan-recovery double-tap window in the data-
+  // audit modal — admin clicks "สร้าง Job" twice quickly before the
+  // optimistic UI hides the row, otherwise we'd append two jobs for the
+  // same orderId. Uses loadAllFresh (no cache) so the second call sees
+  // the first call's row even within the same 60s ISR window.
+  const orderIdNum = body.orderId ? Number(body.orderId) : null;
+  if (orderIdNum && Number.isFinite(orderIdNum)) {
+    try {
+      const snap = await loadAllFresh();
+      const existing = snap.jobs.find((j) => Number(j.orderId) === orderIdNum);
+      if (existing) {
+        return NextResponse.json(
+          {
+            error: `ใบสั่งงาน #${orderIdNum} มี Job #${existing.id} ผูกอยู่แล้ว — ` +
+              `ไม่สามารถสร้างซ้ำได้ ถ้าต้องการเพิ่มงานอีกใบให้ใช้ "ส่งงานต่อ" บนการ์ดเดิม`,
+            existingJobId: Number(existing.id),
+          },
+          { status: 409 },
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `ตรวจสอบงานซ้ำไม่ได้ — ${msg}` }, { status: 502 });
+    }
   }
 
   // Atomic id allocation via Apps Script getNextId (LockService-protected).

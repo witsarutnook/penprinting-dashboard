@@ -192,17 +192,29 @@ export async function POST(req: Request) {
     status = 'in_progress';
     const dept = String(jobMatch.dept || '');
     currentDept = (dept === 'graphic' || dept === 'print' || dept === 'post') ? dept : null;
-    step = deptStepLabel(jobMatch.dept, jobMatch.staff);
-    statusLabel = STATUS_BY_DEPT[dept] || 'รับใบสั่งงาน';
-    const due = parseDateDMY(jobMatch.date);
-    const today = getBangkokToday();
-    const u = computeUrgency(due, today);
-    urgencyKey = u;
-    if (due) {
-      const days = Math.floor((due.getTime() - today.getTime()) / 86400000);
-      if (days < 0) daysHint = `เลยกำหนด ${Math.abs(days)} วัน`;
-      else if (days === 0) daysHint = 'กำหนดส่งวันนี้';
-      else daysHint = `เหลืออีก ${days} วัน`;
+    if (currentDept) {
+      // Standard happy path — known dept drives both badge + 6-step UI.
+      step = deptStepLabel(jobMatch.dept, jobMatch.staff);
+      statusLabel = STATUS_BY_DEPT[dept];
+      const due = parseDateDMY(jobMatch.date);
+      const today = getBangkokToday();
+      const u = computeUrgency(due, today);
+      urgencyKey = u;
+      if (due) {
+        const days = Math.floor((due.getTime() - today.getTime()) / 86400000);
+        if (days < 0) daysHint = `เลยกำหนด ${Math.abs(days)} วัน`;
+        else if (days === 0) daysHint = 'กำหนดส่งวันนี้';
+        else daysHint = `เหลืออีก ${days} วัน`;
+      }
+    } else {
+      // Auditor M4 (2026-05-08): job.dept is empty/unknown (e.g. archive
+      // ingestion oddity, manual Sheet edit). Don't show "overdue" red
+      // alongside an empty 6-step timeline — the customer would see a
+      // contradiction (urgent + nothing-in-progress). Force a benign
+      // "received" state so badge + steps stay internally consistent.
+      step = 'รับใบสั่งงาน';
+      statusLabel = 'รับใบสั่งงานแล้ว';
+      urgencyKey = 'received';
     }
   } else {
     status = 'received';

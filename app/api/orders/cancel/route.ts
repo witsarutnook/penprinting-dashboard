@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
+import { allSettledLimit } from '@/lib/concurrency';
 
 /**
  * Soft-cancel an order — admin only. Replacement for the previous hard-
@@ -87,12 +88,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `ใบสั่งงาน #${id} ถูกยกเลิกอยู่แล้ว` }, { status: 400 });
   }
 
-  // Step 1: cascade-cancel attached jobs IN PARALLEL.
+  // Step 1: cascade-cancel attached jobs with bounded concurrency.
   // Apps Script handles each cancelJob as an independent Sheet write
-  // protected by its own LockService, so firing them concurrently is
-  // safe — collapses N sequential round-trips (each ~600ms) into the
-  // time of the slowest one. Big win for orders with multiple cowork-
-  // attached jobs.
+  // protected by its own LockService — safe to fire concurrently — but
+  // each holds the lock for ~600ms. Firing 8+ in parallel can push the
+  // 9th past Apps Script's `LockService.waitLock(10000)` window.
+  // Cap at 3 (auditor M5, 2026-05-08): keeps most of the parallelism
+  // win while bounding the lock-wait queue. This path is dormant when
+  // the atomic v5.10.4+ Apps Script is live; only fires on outage /
+  // pre-redeploy preview deploys.
   const attachedJobs = snap.jobs
     .filter((j) => Number(j.orderId) === id)
     .map((j) => ({
@@ -102,8 +106,8 @@ export async function POST(req: Request) {
       name: String(j.name || ''),
     }));
 
-  const cancelOutcomes = await Promise.allSettled(
-    attachedJobs.map((j) =>
+  const cancelOutcomes = await allSettledLimit(
+    attachedJobs.map((j) => () =>
       post<{ ok?: boolean; error?: string }>('cancelJob', {
         data: {
           id: j.id,
@@ -117,6 +121,7 @@ export async function POST(req: Request) {
         },
       }),
     ),
+    3,
   );
 
   const cancelledIds: number[] = [];

@@ -105,9 +105,19 @@ export function useAutoSync(): void {
     // interval — `setInterval` would lock to whichever value was current
     // at start. Using setTimeout means the moment activity arrives, the
     // NEXT scheduled tick uses the new (faster) interval.
+    //
+    // Auditor M7 (2026-05-08): unmount-during-tick guard. The cleanup
+    // path runs `clearTimeout(timer)` but if React tears down between
+    // the setTimeout fire (callback invoked) and the line that reassigns
+    // `timer`, the callback would queue a fresh setTimeout that the
+    // cleanup never sees, leaking one orphan tick. Tiny window — but the
+    // `unmounted` flag makes it impossible.
     let timer: ReturnType<typeof setTimeout>;
+    let unmounted = false;
     function tick() {
+      if (unmounted) return;
       maybeRefresh();
+      if (unmounted) return;
       timer = setTimeout(tick, pollIntervalMs());
     }
     timer = setTimeout(tick, pollIntervalMs());
@@ -157,6 +167,7 @@ export function useAutoSync(): void {
     }
 
     return () => {
+      unmounted = true;
       clearTimeout(timer);
       document.removeEventListener('pointerdown', markActive);
       document.removeEventListener('keydown', markActive);

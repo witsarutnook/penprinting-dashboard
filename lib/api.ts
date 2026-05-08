@@ -132,7 +132,9 @@ export async function loadOrder(id: number | string): Promise<LoadOrderResponse>
  *  instant instead of triggering a fresh Apps Script roundtrip.
  *
  *  Page → data dependency:
- *  - /board     uses jobs + orders (cowork) + audit (undo)
+ *  - /board     uses jobs + orders (cowork). Audit data dropped 2026-05-07
+ *               (round 5) — undo flow uses client-side snapshots, not Sheet
+ *               audit log. loadAll() passes audit=0 for /board reads.
  *  - /orders    uses jobs (current step) + orders + shipped (status) + cancelled (status)
  *  - /shipped   uses shipped + orders (display name)
  *  - /cancelled uses cancelled

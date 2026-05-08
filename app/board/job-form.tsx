@@ -33,8 +33,14 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
   const [dept, setDept] = useState<Dept>('graphic');
   const [staff, setStaff] = useState('');
   const [orderId, setOrderId] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Auditor M2 (2026-05-08): submit-in-flight guard. The optimistic-close
+  // refactor (3cb4501) closes the modal immediately on submit, but if
+  // the user double-taps faster than the close animation we'd POST
+  // twice — `/api/jobs/add` has no idempotency on (name, dept, staff)
+  // for orderless jobs so we'd end up with duplicate rows. Ref-based
+  // guard so re-renders don't reset it; cleared on `open` toggle.
+  const submittedRef = useRef(false);
 
   // (Re)initialize fields whenever the modal opens.
   useEffect(() => {
@@ -55,7 +61,7 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
       setOrderId('');
     }
     setError(null);
-    setBusy(false);
+    submittedRef.current = false;
   }, [open, initial, defaultDept, defaultStaff]);
 
   // Open/close native dialog in sync with prop.
@@ -102,6 +108,11 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Re-entry guard (auditor M2). If a previous submit is in flight
+    // (modal mid-close), drop the second call entirely — toast already
+    // showed "กำลังบันทึก" so the UX feels right.
+    if (submittedRef.current) return;
+    submittedRef.current = true;
     setError(null);
     // Snapshot the values BEFORE closing the modal — once `open` flips,
     // the useEffect resets state, so reading `name`/`dateDue` etc inside
@@ -263,17 +274,15 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
             <button
               type="button"
               onClick={onClose}
-              disabled={busy}
-              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200 disabled:opacity-50"
+              className="px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200"
             >
               ยกเลิก
             </button>
             <button
               type="submit"
-              disabled={busy}
-              className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-dark disabled:opacity-50"
+              className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-dark"
             >
-              {busy ? 'กำลังบันทึก...' : isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มงาน'}
+              {isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มงาน'}
             </button>
           </div>
         </footer>

@@ -73,8 +73,12 @@ export default async function OrdersListPage({
   return (
     <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
+      {/* Auditor M6 (2026-05-08): reserve pr-12 on mobile so the floating
+          MobileUserMenu (top-2 right-2 w-9) doesn't overlap the title on
+          narrow widths (iPhone SE 320px). Desktop has plenty of room +
+          a sidebar instead, so the reservation is mobile-only. */}
       <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
+        <div className="pl-4 pr-12 sm:pl-6 sm:pr-6 py-3 flex items-center gap-2">
           <h1 className="text-xl font-bold text-stone-900">รายการใบสั่งงาน</h1>
         </div>
       </header>

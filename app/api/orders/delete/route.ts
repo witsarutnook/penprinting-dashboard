@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
+import { allSettledLimit } from '@/lib/concurrency';
 
 /** Permanently delete an order — admin only.
  *  Cascade: any active job(s) referencing this order are auto-cancelled
@@ -82,11 +83,14 @@ export async function POST(req: Request) {
       }));
   }
 
-  // Step 1: cascade-cancel each attached job IN PARALLEL — independent
-  // Sheet writes, each protected by its own LockService. Safe to fire
-  // concurrently; collapses N×600ms sequential round-trips to ~600ms.
-  const cancelOutcomes = await Promise.allSettled(
-    attachedJobs.map((j) =>
+  // Step 1: cascade-cancel each attached job with bounded concurrency.
+  // Cap at 3 (auditor M5, 2026-05-08) — same reasoning as orders/cancel:
+  // each cancelJob holds an Apps Script lock ~600ms; firing many at
+  // once risks tail timeouts past the 10s waitLock window. Dormant
+  // path (atomic v5.10.4+ deleteOrderCascade is the default) but kept
+  // safe for outage / preview-deploy fallback.
+  const cancelOutcomes = await allSettledLimit(
+    attachedJobs.map((j) => () =>
       post<{ ok?: boolean; error?: string }>('cancelJob', {
         data: {
           id: j.id,
@@ -100,6 +104,7 @@ export async function POST(req: Request) {
         },
       }),
     ),
+    3,
   );
 
   const cancelledIds: number[] = [];
