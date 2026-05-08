@@ -1,53 +1,55 @@
 'use client';
 
 import * as Sentry from '@sentry/nextjs';
+import { useEffect } from 'react';
 
 /**
- * Manually initializes the Sentry browser SDK.
+ * Manually initializes the Sentry browser SDK from a `useEffect`.
  *
- * History (2026-05-08): @sentry/nextjs v10 dropped auto-detection of the
- * `sentry.client.config.ts` convention, and Next.js 14 doesn't load the
- * `instrumentation-client.ts` convention either (that's Next.js 15.3+).
- * Both files exist in the repo at various points in history but neither
- * one actually fires `Sentry.init()` on this stack — events never leave
- * the browser.
+ * History (2026-05-08):
+ * 1. Started with `instrumentation-client.ts` (Next.js 15.3+ convention).
+ *    Next.js 14 silently ignored it — Sentry.init never ran. Fixed in 212bb7a.
+ * 2. Tried `sentry.client.config.ts` (legacy convention). @sentry/nextjs v10
+ *    dropped auto-loading of this file — also never ran. Fixed in f299dc9.
+ * 3. Tried module-level `Sentry.init()` in this 'use client' file. The DSN
+ *    literal made it into `layout-*.js` chunk (verified via Sources search)
+ *    but the module's top-level side effect never executed at runtime —
+ *    `window.__SENTRY__[version]` had only default scopes, no `acs`, no
+ *    client. Likely a Next.js 14 + 'use client' module evaluation quirk.
+ * 4. Final approach (this file): call `Sentry.init` from `useEffect`.
+ *    React guarantees the effect fires after first mount — DSN is read,
+ *    init configures the SDK, global error handlers attach. Trade-off:
+ *    errors thrown during initial render aren't captured (rare on a
+ *    staff dashboard; the server-side Sentry catches API errors anyway).
  *
- * The reliable workaround is to call `Sentry.init` from a 'use client'
- * module imported in `app/layout.tsx`. Module-level code in a client
- * component runs ONCE per browser session, the first time the layout
- * component renders. The `getClient()` guard makes a re-import (e.g.
- * during dev hot reload or Strict Mode double-render) idempotent.
- *
- * Disabled when DSN is missing so dev / preview / fork builds without
- * the env var don't ship a half-broken Sentry to the console.
+ * Disabled when DSN is missing so dev / preview / fork builds don't ship
+ * a half-broken Sentry to the console.
  */
 
 const DSN = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
-if (typeof window !== 'undefined' && DSN && !Sentry.getClient()) {
-  Sentry.init({
-    dsn: DSN,
-    // Internal staff app — low traffic, light sampling is fine.
-    tracesSampleRate: 0.1,
-    release: process.env.NEXT_PUBLIC_APP_VERSION || undefined,
-    environment: process.env.NEXT_PUBLIC_VERCEL_ENV || 'development',
-    // Filter out noise from browser extensions (crypto wallets etc.) that
-    // inject scripts into every page and fight over `window.ethereum`.
-    // Their errors aren't ours to fix and would flood the issues list.
-    ignoreErrors: [
-      /window\.ethereum/i,
-      /redefine property/i,
-      /Failed to assign ethereum proxy/i,
-      /Backpack couldn't override/i,
-      /Invalid property descriptor/i,
-      /Cannot redefine property/i,
-    ],
-  });
-}
-
-/** Render-nothing component — its only job is to be a 'use client' hook
- *  point so the module-level Sentry.init runs once per browser session.
- *  Mount it inside the root layout's <body>. */
 export function SentryInit(): null {
+  useEffect(() => {
+    if (!DSN) return;
+    if (Sentry.getClient()) return; // idempotent — re-mounts in dev / Strict Mode
+    Sentry.init({
+      dsn: DSN,
+      // Internal staff app — low traffic, light sampling is fine.
+      tracesSampleRate: 0.1,
+      release: process.env.NEXT_PUBLIC_APP_VERSION || undefined,
+      environment: process.env.NEXT_PUBLIC_VERCEL_ENV || 'development',
+      // Filter out noise from browser extensions (crypto wallets etc.)
+      // that inject scripts into every page and fight over `window.ethereum`.
+      // Their errors aren't ours to fix and would flood the issues list.
+      ignoreErrors: [
+        /window\.ethereum/i,
+        /redefine property/i,
+        /Failed to assign ethereum proxy/i,
+        /Backpack couldn't override/i,
+        /Invalid property descriptor/i,
+        /Cannot redefine property/i,
+      ],
+    });
+  }, []);
   return null;
 }
