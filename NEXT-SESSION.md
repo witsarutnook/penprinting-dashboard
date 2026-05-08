@@ -2,11 +2,17 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> **Session ก่อนหน้า — 2026-05-08 (audit close-out batch 5)** ✅ ปิด 9 findings (3 High + 5 Medium + 1 doc) ใน 1 commit `57ca976` หลัง audit รอบใหม่หา regression จาก mega-day. createOrder fast path validated เรียบร้อยจาก photobook order รอบใหม่ (pending action #1 ปิด). Sentry SDK ติดครบใน repo แล้ว, รอ user ตั้ง 4 env vars ใน Vercel. งานหลักที่เหลือ: Phase 3.6 decision (no blocker — TV kiosk เลื่อน, Morning Report cron แยก).
+> **🔥 Tomorrow (2026-05-09) plan: Phase 3.6 Path A — RETIRE WP** — user committed end of 2026-05-08 session. ดู Section "Phase 3.6 Path A — Retire WP runbook" ด้านล่าง
+>
+> **Session 2026-05-08 (audit batch 5 + Sentry full setup)** ✅ ปิด 9 audit findings (3 High + 5 Medium + 1 doc) ใน `57ca976`. createOrder fast path validated. Sentry **end-to-end working** หลังขุด 5 layers ของ silent failure (instrumentation-client.ts ignored, sentry.client.config.ts dropped in v10, top-level 'use client' module side effect skipped, Vercel Sensitive flag blocking NEXT_PUBLIC inline, finally useEffect path works). Final Sentry commit `7e6fbfa`. มี issue ขึ้น Sentry dashboard, sourcemaps upload, tunnel /monitoring 200.
 >
 > **Session 2026-05-07 (mega-day, afternoon batches)** ✅ ต่อจาก morning Phase 2.1 close + forward perf + order create perf + PM perf batch + PM2 atomic cascade — afternoon ส่ง **5 batches เพิ่ม** (10 commits รวม): bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) → mobile bottom-nav + hamburger sheet + top-right user menu (`95c0cb8`) → /track WP look + 6-step progress port (`ce611b1`) → /track charcoal mood (`fe0b38e`) → workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 (audit-param skip). **Cumulative impact**: order create 5 round-trips ~3s → 1 atomic ~1.5s, print page 600-1200ms → ~200ms, /analytics First Load -39%, Apps Script idle quota -69%, mobile UX gap closed (logout reachable on mobile + 4-slot bottom nav), /track WP-parity restored.
 
-## ✅ เสร็จแล้วในรอบล่าสุด — Audit close-out batch 5 (2026-05-08, `57ca976`)
+## ✅ เสร็จแล้วในรอบล่าสุด — 2026-05-08 mega-day (audit + Sentry + 3 bugs)
+
+7+ commits + Apps Script helpers.ts fix:
+
+### 1. Audit close-out batch 5 (`57ca976` + `dc24167`)
 
 11 files +213/-57 — 3 High + 5 Medium + 1 doc fix ครบใน 1 commit:
 
@@ -30,7 +36,62 @@
 - M3 JobForm stale toast — cosmetic
 - L1-L4 — low impact
 
-Type-check ผ่าน + production build OK. Vercel auto-deploy.
+### 2. Sentry observability — end-to-end working
+
+**5 layers of silent failure** ขุดเจอตามลำดับ (5 commits + 1 Vercel env config + 1 Apps Script no-op):
+
+| Layer | ปัญหา | Fix commit |
+|---|---|---|
+| 1 | `instrumentation-client.ts` — Next.js 15.3+ convention; Next.js 14 silently ignores | `212bb7a` rename → `sentry.client.config.ts` |
+| 2 | `sentry.client.config.ts` — @sentry/nextjs v10 dropped auto-load | `f299dc9` manual init from `app/layout.tsx` |
+| 3 | Top-level code in 'use client' module ไม่รัน — Next.js 14 quirk | `076586d` switch to `useEffect` init |
+| 4 | `NEXT_PUBLIC_SENTRY_DSN` Sensitive flag in Vercel — Sensitive vars ไม่ inline เข้า client bundle | (config UI) uncheck Sensitive + add Production env |
+| 5 | Default debugging logs noisy — clean up | `7e6fbfa` drop debug logs |
+
+**Final state**: SDK init from `components/sentry-init.tsx` via `useEffect` in `app/layout.tsx`. Sourcemaps upload (Node + Edge + Client × 100+ files). Tunnel route `/monitoring` ผ่าน. `ignoreErrors` filter wallet extension noise. Server + Edge Sentry pre-existing config ก็ยังทำงาน.
+
+**Verify ผ่าน**: throw → POST /monitoring → 200, issue ขึ้น Sentry dashboard, stack trace map กลับเป็น TS file ไม่ใช่ minified hash.
+
+**Lesson** (`feedback_use_diagnose_skill.md`): จุด 5 layers ที่ "ดูเหมือนทำงาน" (build pass, sourcemaps upload สำเร็จ) แต่ runtime พังเงียบ — ใช้ `/diagnose` skill (mattpocock) เป็น loop ตอน debug bug แบบนี้ครั้งหน้า. User feedback: "ที่หลังเจอบักใช้ /diagnose ช่วยประกอบตลอดนะ".
+
+### 3. Photobook spec tab fix (`682fd0e`)
+
+ก่อน — photobook order spec แสดง printing fields ที่ไม่เกี่ยว (plateSize, billColors, paperCover, coatGloss, ฯลฯ) เพราะ v2 OrderForm seed ทั้ง printing schema แล้วค่อย flip orderType=photobook.
+
+หลัง — photobook spec ใช้ whitelist `PHOTOBOOK_VISIBLE_KEYS = ['notes', 'orderer']`:
+- `app/orders/orders-table.tsx` SpecSection (modal /orders)
+- `app/board/card.tsx` DetailsTable + new PhotobookItemsTable component (Kanban card detail)
+- Photobook items render ใน violet-themed table แยก, รายละเอียดงาน table ตามด้วย notes + orderer
+
+### 4. Promote-draft flicker fix (`5db20f5`)
+
+User report: หลังกด "ส่งเข้าระบบ" จาก draft → Job ขึ้น Kanban → หายไปสักพักใหญ่ๆ → กลับมา. ใน /orders แสดง "มอบหมายแล้ว" ตลอด.
+
+Root cause มี 2:
+1. Redirect hard-code `/board?dept=post` แต่ default `assignDept='graphic'` → Job ไปอยู่ graphic column, filter post ซ่อนหมด
+2. ไม่มี `router.refresh()` ก่อน redirect → Router Cache ของ tab ปัจจุบันยังถือ snapshot เก่า → auto-sync tick แรก hit warm cache → flicker
+
+Fix: ลบ `?dept=post` filter (land บน unfiltered /board) + `router.refresh()` ก่อน setTimeout navigate.
+
+⏳ **รอ user retest** — ทดสอบ draft → ส่ง → ดู Job คงอยู่บน Kanban ไม่หาย
+
+### 5. Date corruption fix (Vercel `25e28c0` + Apps Script helpers.ts)
+
+User report: orders ที่ผ่าน promoteDraft / cancelOrder แสดง dateIn/dateDue เป็น `"2026-05-07T17:00:00.000Z"` (literal quotes ครอบ ISO string) ใน /orders แทน DD/MM/YYYY format.
+
+**Root cause** — Apps Script `objectToRow()` helper:
+```ts
+if (typeof val === 'object') return JSON.stringify(val);
+```
+`typeof new Date() === 'object'` matches → Date double-stringified → cell stored as quoted ISO string. ทุกครั้งที่ promoteDraft/cancelOrder อ่าน row + write back ทับ → corrupt date columns.
+
+**Fix two-pronged**:
+- **Apps Script** `production-monitoring/apps-script/dashboard/helpers.ts` — เพิ่ม `if (val instanceof Date) return val;` guard ก่อน catch-all object branch. Apps Script writes Date back as Date cell. ป้องกัน corruption ในอนาคต. ✅ user pushed via push.sh + redeployed
+- **Vercel** `lib/jobs.ts` displayDate — strip outer double quotes ก่อน regex parse. Recover existing corrupted display โดยไม่ต้องเขียน repair script.
+
+หลังนี้ orders ที่ผ่าน atomic action ใหม่จะ Date format ถูก. Cell ที่ corrupt อยู่จะ display ปกติผ่าน Vercel rescue, แล้วทุกครั้งที่ status flip จะ overwrite เป็น Date object สะอาดเอง.
+
+Type-check ผ่าน + production build OK ทุก commit. Vercel auto-deploy.
 
 ## ✅ เสร็จแล้วใน Afternoon batches (2026-05-07)
 
@@ -189,35 +250,80 @@ Type-check ผ่าน + production build OK. Vercel auto-deploy.
 
 ## ⚠️ Pending user actions
 
-1. **Vercel env vars สำหรับ Sentry** (optional, ค้างจาก 2026-05-06):
-   - `NEXT_PUBLIC_SENTRY_DSN` — error capture activate
-   - `SENTRY_ORG` + `SENTRY_PROJECT` + `SENTRY_AUTH_TOKEN` — source map upload
-   - ถ้ายังไม่ตั้ง = Sentry SDK auto-disable (no errors, no source map upload)
+_(none open — ทุกอย่าง deploy ครบแล้วตอนปิด session 2026-05-08)_
 
 ✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing + **v5.10.4 cancelOrder/deleteOrderCascade/promoteDraft** + **v5.10.5 audit-param skip** — all live)
 
 ✅ **Validated 2026-05-08**: `createOrder` fast path — photobook order รอบใหม่ land ด้วย details ครบ. ปิดเรื่องนี้ — fast path เป็น default พ.ร้อม fallback ไม่ต้อง revert
 
+✅ **Done 2026-05-08**: Sentry 4 env vars ตั้งครบใน Vercel (`NEXT_PUBLIC_SENTRY_DSN` + `SENTRY_ORG=penprinting-coltd` + `SENTRY_PROJECT=penprinting-dashboard` + `SENTRY_AUTH_TOKEN`). Production + Preview + Development. NEXT_PUBLIC ตัวไม่ Sensitive (สำคัญ — Vercel ไม่ inline Sensitive vars เข้า client bundle). Verify end-to-end ผ่าน — issue "Sentry real test" ขึ้น dashboard, /monitoring tunnel POST 200, sourcemaps upload ครบ 3 runtimes.
+
+✅ **Done 2026-05-08**: Apps Script `helpers.ts` (`objectToRow` Date guard) — user pushed via push.sh + redeployed. Date corruption ใน promoteDraft / cancelOrder paths กันแล้วถาวร. existing corrupted cells จะ auto-clean เมื่อ status flip ครั้งต่อไป.
+
 ---
 
 ## ⏳ ที่ยังเหลือ (priority order)
 
-> เกือบทุก perf item ของ v2 ส่งวันนี้แล้ว — เหลือแค่ Phase 3.6 decision เป็น strategic choice. ทุกอย่างอื่นเป็น defer/low-priority.
+### 1. 🔥 Phase 3.6 — Path A RETIRE WP (พรุ่งนี้ 2026-05-09)
 
-### 1. Phase 3.6 — Decommission decision (ระยะยาว)
-v2 = full WP feature parity แล้ว (ยกเว้น TV kiosk ซึ่ง user ไม่ได้ใช้แล้ว) + permissions match WP role matrix + mobile UX gap ปิด + /track WP-parity. ตัดสินใจ:
-- **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
-- **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น primary
+**User committed** end of 2026-05-08 session. ไม่มี blocker — TV ตัดออก, Morning Report cron แยก, perf parity ครบ, atomic actions ครบ, Sentry observability ผ่าน.
 
-ต้องเช็คก่อนตัดสินใจ:
-- ~~TV Display kiosk~~ ✅ ตัดออก (user ไม่ใช้ — confirmed 2026-05-08)
-- Morning Report (separate Apps Script project, อยู่ที่ workspace `morning-report/`) — ไม่ใช่ blocker (cron แยกอยู่แล้ว)
-- Staff acceptance — อยากให้ staff ใช้ v2 อย่างเดียวไหม หรือปล่อย WP ไว้
+**Runbook** (เรียงตามลำดับ; ทำใน 1 session ได้):
 
-### 2. TV display kiosk (deferred — not in active use, 2026-05-08)
+1. **Pre-flight** — confirm v2 stability วันนี้:
+   - Sentry no fresh errors (ดู dashboard 24h)
+   - /board / /orders / /analytics / /calendar / /archive / /track ทดสอบครบ
+   - Promote draft + cancel + delete + cowork + bulk-forward ทดสอบ
+2. **Backup WP** — full DB dump + theme files via HostAtom panel (precaution)
+3. **Add custom domain to Vercel**:
+   - Vercel project `penprinting-dashboard` → Settings → Domains
+   - Add `app.penprinting.co`
+   - Vercel จะ auto-detect existing DNS + แสดง CNAME target
+4. **DNS switch ที่ HostAtom**:
+   - DNS → `app.penprinting.co` A record `203.170.190.20` → **เปลี่ยนเป็น CNAME** `cname.vercel-dns.com`
+   - หรือ delete A + add CNAME (ขึ้นกับ HostAtom UI)
+   - TTL ลด 300 ก่อน switch เพื่อ propagate เร็ว
+5. **Wait for propagation** (~5-15 นาที) — ตรวจ `dig app.penprinting.co` หรือ https://www.whatsmydns.net/
+6. **Verify Vercel takes over**:
+   - https://app.penprinting.co → ควร redirect ไป /login (Next.js)
+   - ลอง /board /orders /track ทำงานปกติ
+7. **Update internal references** (กัน hard-coded link ใน code/docs):
+   - Sheet ของ orders/jobs ที่อ้างถึง `app.penprinting.co/production-monitoring/...` ใน QR code/print template
+   - WP-side LINE webhook URLs (Cloudflare Worker secret) — ยังอยู่ที่ HostAtom แต่ไม่ใช้แล้ว
+8. **Communicate to staff**:
+   - LINE OA broadcast: "ตั้งแต่ <date> ใช้ dashboard.penprinting.co เป็นหลัก. app.penprinting.co จะ redirect ไปอัตโนมัติ"
+   - Staff training session 30 นาที ถ้าจำเป็น
+9. **Deprecate `production-monitoring/` repo**:
+   - Move WP page templates + assets เป็น read-only archive
+   - Apps Script Dashboard project: ยังใช้อยู่ — Apps Script เป็น backend ของทั้ง WP และ v2 → **ห้ามลบ Apps Script**
+   - Apps Script LINE Webhook + Cloudflare Worker: ยังต้องใช้ (LINE OA `/track` command) → keep
+10. **Monitor 1 สัปดาห์** — Sentry + Vercel logs + LINE OA feedback. ถ้ามี issue rollback DNS กลับ HostAtom IP ได้
+
+**Risk** (rank by likelihood):
+- **HIGH**: WP-only feature ที่ดูแลโดย staff แต่ไม่ได้ระบุ → blocker ตอน switch (ลด: ทำ checklist ก่อน + announce 1 วันล่วงหน้า)
+- **MED**: Internal QR codes ใน orders printed paper อ้าง app.penprinting.co — DNS switch ทำให้ใช้ได้ปกติ (Vercel ก็ตอบ /track) แต่ quick check pattern แล้ว
+- **LOW**: HostAtom email service (mail/pop/smtp.penprinting.co) อยู่ root domain ต่างกัน → ไม่ affected
+
+**Decision points** ระหว่างทาง:
+- ถ้า DNS propagate ช้าเกิน 30 นาที → ตรวจ HostAtom NS settings
+- ถ้า Vercel SSL ไม่ active หลัง 5 นาที → manually trigger ใน Vercel domain UI
+
+### 2. Bug 4 — Modal load slow (`/api/orders/raw/[id]`) — defer แต่ต้องจัดการ
+
+User report 2026-05-08: เปิด detail modal จาก /orders โหลดช้ามาก (เห็น "กำลังโหลดสเปคงาน..." ค้างนาน).
+
+Root cause: Apps Script `loadOrder` (in `production-monitoring/apps-script/dashboard/load.ts`) ไม่ใช่ "single-row read" จริง — มัน `sheetToArray()` ทุก sheet (orders + jobs + shipped + cancelled) แล้วลูป find by id. Cost ≈ `loadAll()`. + Vercel `loadOrder()` revalidate:0 → roundtrip ทุกครั้ง.
+
+**Fix idea** (apps-script + vercel):
+- Apps Script: rewrite `getOrder` ใช้ `TextFinder` + `getRange(row, 1, 1, headers.length).getValues()[0]` — single-row read จริงๆ. Save ~400-800ms per call.
+- Vercel: เพิ่ม optional `revalidate` param ใน `loadOrder()` → `/api/orders/raw/[id]` ใช้ `revalidate: 60` (60s ISR) — modal opens ซ้ำๆ บน same order ใช้ cache. Acceptable เพราะ rawData ไม่เปลี่ยนบ่อย.
+
+Effort ~2 hours. ถ้าทำหลัง Path A retire WP → ก็ยังคงต้อง deploy Apps Script + Vercel.
+
+### 3. TV display kiosk (deferred — not in active use, 2026-05-08)
 User confirm ยังไม่มี use case จริงสำหรับ TV kiosk ใน v2. Backlog item — ถ้ากลับมาจะ port `production-monitoring/assets/production-tv.{js,css}` → `app/tv/page.tsx` (read-only Kanban + 30s auto-refresh + secret key auth + dark 3-column mosaic). ลด priority ต่ำสุดในรายการ.
 
-### 3. Route group `(shell)/layout.tsx` refactor (low priority หลัง mobile sheet ลง)
+### 4. Route group `(shell)/layout.tsx` refactor (low priority หลัง mobile sheet ลง)
 Future fix สำหรับ:
 - Per-route loading.tsx ที่จะใส่ได้โดยไม่ unmount shell (สำหรับ user ที่อยาก skeleton ใน body)
 - ~~Mobile drawer / "More" sheet ที่เหมือน WP~~ ✅ ปิดด้วย `MobileUserMenu` + `getMoreMenuGroups` (`95c0cb8`)
@@ -274,6 +380,6 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-08 — audit close-out batch 5 (`57ca976`): 9 fixes ปิด (3 High + 5 Medium + 1 doc) ใน commit เดียว 11 ไฟล์, type-check + build ผ่าน. createOrder fast path validated (pending action #1 ปิด). Sentry SDK ติดครบ รอ env vars ใน Vercel. Phase 3.6 ขึ้นมาเป็น priority 1 (ไม่มี blocker — TV เลื่อน, Morning Report cron แยก)._
+_อัปเดตล่าสุด: 2026-05-08 mega-day — audit batch 5 (`57ca976` + `dc24167`) + Sentry 5-layer journey end-to-end (`212bb7a` → `f299dc9` → `076586d` → `5b851a5` → `7e6fbfa`) + photobook spec fix (`682fd0e`) + promote-draft flicker (`5db20f5`) + date corruption two-pronged fix (Vercel `25e28c0` + Apps Script helpers.ts pushed by user). 11 commits + 1 Apps Script deploy. Sentry observability live. Bug 4 modal slow deferred. Tomorrow: 🔥 **Phase 3.6 Path A — RETIRE WP** (user committed)._
 
 _2026-05-07 mega-day — morning: Phase 2.1 close-out + forward perf A+B+C + order create perf + bug fixes + PM perf batch (`8528839`) + PM2 atomic cascade (`c95c451`). afternoon: bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) + mobile bottom-nav 4 + hamburger sheet + top-right user menu (`95c0cb8`) + /track WP port + 6-step progress (`ce611b1`) + /track charcoal mood (`fe0b38e`) + workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 audit-param skip. **Total**: 16+ commits, full day perf compound._
