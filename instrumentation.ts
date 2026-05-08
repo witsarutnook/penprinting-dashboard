@@ -4,10 +4,10 @@
  * Sentry config, then exposes `onRequestError` so server errors thrown during
  * the request lifecycle get captured.
  *
- * Client-side init lives in `sentry.client.config.ts` (auto-detected by
- * the Sentry webpack plugin on Next.js 14). The Next.js 15.3+ alternative
- * `instrumentation-client.ts` does NOT load on 14 — kept here as a reminder
- * for future Next.js upgrade.
+ * Client-side init lives in `components/sentry-init.tsx`, mounted from
+ * `app/layout.tsx`. Neither `instrumentation-client.ts` (Next.js 15.3+
+ * convention) nor `sentry.client.config.ts` (deprecated in @sentry/nextjs
+ * v10) auto-loads on this stack — see the comment in sentry-init.tsx.
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {

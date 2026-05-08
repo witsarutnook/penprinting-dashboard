@@ -1,5 +1,6 @@
 import { Anuphan, Inter } from 'next/font/google';
 import { defaultMetadata } from '@/lib/seo';
+import { SentryInit } from '@/components/sentry-init';
 import './globals.css';
 
 const anuphan = Anuphan({
@@ -26,6 +27,7 @@ export default function RootLayout({
       <body
         className={`${anuphan.variable} ${inter.variable} font-sans antialiased`}
       >
+        <SentryInit />
         {children}
       </body>
     </html>
