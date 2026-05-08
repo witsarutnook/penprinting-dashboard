@@ -2,9 +2,37 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
-> **Session ก่อนหน้า — 2026-05-07 (mega-day, afternoon batches)** ✅ ต่อจาก morning Phase 2.1 close + forward perf + order create perf + PM perf batch + PM2 atomic cascade — afternoon ส่ง **5 batches เพิ่ม** (10 commits รวม): bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) → mobile bottom-nav + hamburger sheet + top-right user menu (`95c0cb8`) → /track WP look + 6-step progress port (`ce611b1`) → /track charcoal mood (`fe0b38e`) → workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 (audit-param skip). **Cumulative impact**: order create 5 round-trips ~3s → 1 atomic ~1.5s, print page 600-1200ms → ~200ms, /analytics First Load -39%, Apps Script idle quota -69%, mobile UX gap closed (logout reachable on mobile + 4-slot bottom nav), /track WP-parity restored.
+> **Session ก่อนหน้า — 2026-05-08 (audit close-out batch 5)** ✅ ปิด 9 findings (3 High + 5 Medium + 1 doc) ใน 1 commit `57ca976` หลัง audit รอบใหม่หา regression จาก mega-day. createOrder fast path validated เรียบร้อยจาก photobook order รอบใหม่ (pending action #1 ปิด). Sentry SDK ติดครบใน repo แล้ว, รอ user ตั้ง 4 env vars ใน Vercel. งานหลักที่เหลือ: Phase 3.6 decision (no blocker — TV kiosk เลื่อน, Morning Report cron แยก).
+>
+> **Session 2026-05-07 (mega-day, afternoon batches)** ✅ ต่อจาก morning Phase 2.1 close + forward perf + order create perf + PM perf batch + PM2 atomic cascade — afternoon ส่ง **5 batches เพิ่ม** (10 commits รวม): bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) → mobile bottom-nav + hamburger sheet + top-right user menu (`95c0cb8`) → /track WP look + 6-step progress port (`ce611b1`) → /track charcoal mood (`fe0b38e`) → workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 (audit-param skip). **Cumulative impact**: order create 5 round-trips ~3s → 1 atomic ~1.5s, print page 600-1200ms → ~200ms, /analytics First Load -39%, Apps Script idle quota -69%, mobile UX gap closed (logout reachable on mobile + 4-slot bottom nav), /track WP-parity restored.
 
-## ✅ เสร็จแล้วในรอบล่าสุด — Afternoon batches (2026-05-07)
+## ✅ เสร็จแล้วในรอบล่าสุด — Audit close-out batch 5 (2026-05-08, `57ca976`)
+
+11 files +213/-57 — 3 High + 5 Medium + 1 doc fix ครบใน 1 commit:
+
+**High (correctness/safety):**
+- **H1 orphan-recovery double-tap** (`/api/jobs/add`) — เพิ่ม idempotency: ถ้า body มี orderId, fetch loadAllFresh + reject 409 ถ้ามี active job ผูกอยู่แล้ว. Closes data-audit modal duplicate-job window
+- **H2 promoteDraft fall-through double-write** (`/api/orders/promote-draft`) — reject `{ok:true}` without jobId เป็น 502 (Apps Script regression) แทน fall-through ที่จะ burn speculative jobId อีกครั้ง
+- **H3 restore trust-client** (`/api/jobs/restore`) — always read row from Sheet (cached `loadAll` + fresh fallback) + verify `src.name === cj.name` ก่อน restore. ใช้ 409 ถ้า mismatch
+
+**Medium (UX/perf/safety):**
+- **M2 JobForm submit re-entry** — `submittedRef` guard, ลบ dead `busy` state
+- **M4 /track currentDept null** — collapse เป็น 'received' state (no contradictory urgency badge)
+- **M5 cascade fallback concurrency cap** — `allSettledLimit(3)` แทน unbounded `Promise.allSettled` + new `lib/concurrency.ts` zero-dep helper
+- **M6 MobileUserMenu overlap** — `/orders` sticky header reserves `pr-12` on mobile
+- **M7 auto-sync setTimeout race** — `unmounted` flag ใน self-rescheduling chain
+
+**Doc:**
+- **M8 stale comment** — `lib/api.ts` PATHS_BY_ACTION comment ปรับให้สะท้อน round 5 (board ไม่อ่าน audit แล้ว)
+
+**Defer (per audit recommendation):**
+- M1 Card memo deep compare — รอ profiler data ก่อน
+- M3 JobForm stale toast — cosmetic
+- L1-L4 — low impact
+
+Type-check ผ่าน + production build OK. Vercel auto-deploy.
+
+## ✅ เสร็จแล้วใน Afternoon batches (2026-05-07)
 
 ### Round 5 — Workflow speed sweep (`3cb4501`) ✅ — 6 fixes hot + cold paths
 - **JobForm optimistic close + commit() pattern** — modal closes instantly on submit, toast carries in-flight state (matches CoworkDialog). Was 400ms modal-open lag.
@@ -161,38 +189,33 @@
 
 ## ⚠️ Pending user actions
 
-1. **Verify `createOrder` fast path on next photobook order** — fast path re-enabled (`c38c5c1`) หลังแก้ edit-form prefill. ถ้า order รอบหน้ายัง land ด้วย details ครบ → mark createOrder fully validated, ปิดเรื่องนี้. ถ้าเจอ empty rows อีก → revert (`0b762cc` pattern) + investigate (อย่าด่วนสรุปว่าเป็น createOrder อีก, อาจมี edit-form bug อื่นซ่อน)
-
-2. **Vercel env vars สำหรับ Sentry** (optional, ค้างจาก 2026-05-06):
+1. **Vercel env vars สำหรับ Sentry** (optional, ค้างจาก 2026-05-06):
    - `NEXT_PUBLIC_SENTRY_DSN` — error capture activate
    - `SENTRY_ORG` + `SENTRY_PROJECT` + `SENTRY_AUTH_TOKEN` — source map upload
    - ถ้ายังไม่ตั้ง = Sentry SDK auto-disable (no errors, no source map upload)
 
 ✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing + **v5.10.4 cancelOrder/deleteOrderCascade/promoteDraft** + **v5.10.5 audit-param skip** — all live)
 
+✅ **Validated 2026-05-08**: `createOrder` fast path — photobook order รอบใหม่ land ด้วย details ครบ. ปิดเรื่องนี้ — fast path เป็น default พ.ร้อม fallback ไม่ต้อง revert
+
 ---
 
 ## ⏳ ที่ยังเหลือ (priority order)
 
-> เกือบทุก perf item ของ v2 ส่งวันนี้แล้ว — เหลือแค่ TV kiosk + Phase 3.6 decision เป็น user-visible. Route group refactor ก็ลด priority ลงเพราะ mobile UX gap ปิดด้วย hamburger sheet pattern ใหม่.
+> เกือบทุก perf item ของ v2 ส่งวันนี้แล้ว — เหลือแค่ Phase 3.6 decision เป็น strategic choice. ทุกอย่างอื่นเป็น defer/low-priority.
 
-### 1. TV display kiosk บน v2 (deferred)
-User skip ใน Phase 3.5 — ยังเป็น backlog item:
-- Port `production-monitoring/assets/production-tv.{js,css}` → `app/tv/page.tsx`
-- Read-only Kanban + 30s auto-refresh + secret key auth
-- Dark theme, big fonts, 3-column mosaic
-- ต้องเลือกว่า:
-  - Mount ที่ `/tv?key=XXX` (matching WP) หรือ
-  - Subdomain แยก เช่น `tv.dashboard.penprinting.co`
-
-### 2. Phase 3.6 — Decommission decision (ระยะยาว)
-v2 = full WP feature parity แล้ว + permissions match WP role matrix + mobile UX gap ปิด + /track WP-parity. ตัดสินใจ:
+### 1. Phase 3.6 — Decommission decision (ระยะยาว)
+v2 = full WP feature parity แล้ว (ยกเว้น TV kiosk ซึ่ง user ไม่ได้ใช้แล้ว) + permissions match WP role matrix + mobile UX gap ปิด + /track WP-parity. ตัดสินใจ:
 - **Path A**: Switch DNS `app.penprinting.co` → Vercel + retire WP, deprecate `production-monitoring/` repo
 - **Path B**: Coexist ต่อ — WP เป็น write fallback / staff app, v2 เป็น primary
 
 ต้องเช็คก่อนตัดสินใจ:
-- WP-only features ที่ v2 ยังไม่มี: **TV Display kiosk** (#1 ด้านบน), Morning Report (separate Apps Script project, อยู่ที่ workspace `morning-report/`)
+- ~~TV Display kiosk~~ ✅ ตัดออก (user ไม่ใช้ — confirmed 2026-05-08)
+- Morning Report (separate Apps Script project, อยู่ที่ workspace `morning-report/`) — ไม่ใช่ blocker (cron แยกอยู่แล้ว)
 - Staff acceptance — อยากให้ staff ใช้ v2 อย่างเดียวไหม หรือปล่อย WP ไว้
+
+### 2. TV display kiosk (deferred — not in active use, 2026-05-08)
+User confirm ยังไม่มี use case จริงสำหรับ TV kiosk ใน v2. Backlog item — ถ้ากลับมาจะ port `production-monitoring/assets/production-tv.{js,css}` → `app/tv/page.tsx` (read-only Kanban + 30s auto-refresh + secret key auth + dark 3-column mosaic). ลด priority ต่ำสุดในรายการ.
 
 ### 3. Route group `(shell)/layout.tsx` refactor (low priority หลัง mobile sheet ลง)
 Future fix สำหรับ:
@@ -251,4 +274,6 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-07 mega-day — morning: Phase 2.1 close-out + forward perf A+B+C + order create perf + bug fixes + PM perf batch (`8528839`) + PM2 atomic cascade (`c95c451`). afternoon: bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) + mobile bottom-nav 4 + hamburger sheet + top-right user menu (`95c0cb8`) + /track WP port + 6-step progress (`ce611b1`) + /track charcoal mood (`fe0b38e`) + workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 audit-param skip. **Total**: 16+ commits, full day perf compound._
+_อัปเดตล่าสุด: 2026-05-08 — audit close-out batch 5 (`57ca976`): 9 fixes ปิด (3 High + 5 Medium + 1 doc) ใน commit เดียว 11 ไฟล์, type-check + build ผ่าน. createOrder fast path validated (pending action #1 ปิด). Sentry SDK ติดครบ รอ env vars ใน Vercel. Phase 3.6 ขึ้นมาเป็น priority 1 (ไม่มี blocker — TV เลื่อน, Morning Report cron แยก)._
+
+_2026-05-07 mega-day — morning: Phase 2.1 close-out + forward perf A+B+C + order create perf + bug fixes + PM perf batch (`8528839`) + PM2 atomic cascade (`c95c451`). afternoon: bundle splits + smart auto-sync backoff + edge runtime (`1d6e57f`) + mobile bottom-nav 4 + hamburger sheet + top-right user menu (`95c0cb8`) + /track WP port + 6-step progress (`ce611b1`) + /track charcoal mood (`fe0b38e`) + workflow speed sweep round 5 (`3cb4501`) + Apps Script v5.10.5 audit-param skip. **Total**: 16+ commits, full day perf compound._
