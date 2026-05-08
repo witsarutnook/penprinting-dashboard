@@ -588,6 +588,16 @@ const SPEC_HIDDEN_KEYS = new Set([
   'cowork', 'assignDept', 'assignStaff', 'forwardPrint', 'sizeUnit', 'qtyUnit',
 ]);
 
+// For photobook orders the spec tab uses a WHITELIST instead of the
+// printing-flavoured blacklist above. Reason: v2 OrderForm seeds the
+// whole printing schema (plate / billColors / paperCover / coatGloss / ...)
+// then flips orderType=photobook on top, so a photobook order's rawData
+// carries dozens of irrelevant printing fields. The photobook items
+// already render in their own table — the only generic fields a
+// photobook customer cares about here are the freeform notes and who
+// placed the order.
+const PHOTOBOOK_VISIBLE_KEYS = new Set(['notes', 'orderer']);
+
 interface PhotobookItem {
   size?: string;
   binding?: string;
@@ -610,13 +620,16 @@ function SpecSection({ raw }: { raw: RawData }) {
   const qtyUnit = String(raw.qtyUnit || '').trim();
 
   const entries = Object.entries(raw).filter(([k, v]) => {
-    if (SPEC_HIDDEN_KEYS.has(k)) return false;
+    // Empty / falsy filters always apply.
     if (v === null || v === undefined) return false;
     if (typeof v === 'string' && v.trim() === '') return false;
     if (typeof v === 'boolean' && v === false) return false;
     if (Array.isArray(v) && v.length === 0) return false;
     if (Array.isArray(v) && v.every((x) => !x)) return false;
-    return true;
+    // Mode-aware key filter: photobook = whitelist (printing fields hide),
+    // normal = the legacy blacklist of header / system keys.
+    if (isPhotobook) return PHOTOBOOK_VISIBLE_KEYS.has(k);
+    return !SPEC_HIDDEN_KEYS.has(k);
   });
 
   // Pretty value formatting — pair size with sizeUnit, qty with qtyUnit, etc.

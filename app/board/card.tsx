@@ -999,13 +999,44 @@ function DetailContent({
 
         {tab === 'spec' && (
           <>
-            {job.order?.details && Object.keys(job.order.details).length > 0 ? (
-              <Section title="รายละเอียดงาน">
-                <DetailsTable details={job.order.details} />
-              </Section>
-            ) : (
-              <p className="text-sm text-stone-400 text-center py-4">ไม่มีสเปคงาน</p>
-            )}
+            {(() => {
+              const details = job.order?.details;
+              const raw = (job.order?.rawData ?? null) as Record<string, unknown> | null;
+              const isPhotobook =
+                String(raw?.orderType || details?.orderType || '') === 'photobook';
+              const pbItemsRaw = (Array.isArray(details?.photobook)
+                ? details!.photobook
+                : Array.isArray(details?.photobookItems)
+                  ? details!.photobookItems
+                  : Array.isArray(raw?.photobook)
+                    ? raw!.photobook
+                    : Array.isArray(raw?.photobookItems)
+                      ? raw!.photobookItems
+                      : []) as unknown[];
+              const photobookItems: PhotobookItemShape[] = pbItemsRaw
+                .filter((x) => x && typeof x === 'object')
+                .map((x) => x as PhotobookItemShape);
+              const hasDetails = !!details && Object.keys(details).length > 0;
+              if (!hasDetails && photobookItems.length === 0) {
+                return <p className="text-sm text-stone-400 text-center py-4">ไม่มีสเปคงาน</p>;
+              }
+              return (
+                <>
+                  {isPhotobook && photobookItems.length > 0 && (
+                    <Section title={`Photobook (${photobookItems.length} เล่ม)`}>
+                      <div className="px-1.5 py-1.5">
+                        <PhotobookItemsTable items={photobookItems} />
+                      </div>
+                    </Section>
+                  )}
+                  {hasDetails && (
+                    <Section title="รายละเอียดงาน">
+                      <DetailsTable details={details!} isPhotobook={isPhotobook} />
+                    </Section>
+                  )}
+                </>
+              );
+            })()}
 
             {cowork.length > 0 && (
               <Section title="Co-work — ผู้ร่วมพิมพ์">
@@ -1555,12 +1586,69 @@ const DETAIL_LABELS: Record<string, string> = {
   photobook: 'รายการ Photobook',
 };
 
-function DetailsTable({ details }: { details: Record<string, unknown> }) {
+// For photobook orders the spec table only shows notes + orderer — printing
+// fields (plate / billColors / coatGloss / etc.) are seeded by OrderForm but
+// meaningless for photobook. Mirrors PHOTOBOOK_VISIBLE_KEYS in
+// app/orders/orders-table.tsx so card detail and orders modal stay aligned.
+const PHOTOBOOK_DETAIL_VISIBLE_KEYS = new Set(['notes', 'orderer']);
+
+interface PhotobookItemShape {
+  size?: string;
+  binding?: string;
+  qty?: string;
+  special?: string;
+}
+
+function PhotobookItemsTable({ items }: { items: PhotobookItemShape[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50/30 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-violet-100/50 text-xs text-violet-700">
+          <tr>
+            <th className="text-left px-3 py-1.5 font-medium w-10">#</th>
+            <th className="text-left px-3 py-1.5 font-medium">ขนาด</th>
+            <th className="text-left px-3 py-1.5 font-medium">เข้าเล่ม</th>
+            <th className="text-right px-3 py-1.5 font-medium w-16">จำนวน</th>
+            <th className="text-left px-3 py-1.5 font-medium">คำสั่งพิเศษ</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-violet-100">
+          {items.map((it, i) => (
+            <tr key={i}>
+              <td className="px-3 py-1.5 tabular-nums text-stone-500">{i + 1}</td>
+              <td className="px-3 py-1.5 text-stone-900">{it.size || '—'}</td>
+              <td className="px-3 py-1.5 text-stone-700">{it.binding || '—'}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-stone-900 font-medium">
+                {it.qty || '—'}
+              </td>
+              <td className="px-3 py-1.5 text-stone-600">{it.special || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DetailsTable({
+  details,
+  isPhotobook = false,
+}: {
+  details: Record<string, unknown>;
+  isPhotobook?: boolean;
+}) {
   // Filter empty + sort with known keys first
-  const entries = Object.entries(details).filter(([, v]) => {
+  const entries = Object.entries(details).filter(([k, v]) => {
     if (v === null || v === undefined) return false;
     if (typeof v === 'string' && v.trim() === '') return false;
     if (typeof v === 'boolean') return v === true; // hide false flags
+    if (Array.isArray(v) && v.length === 0) return false;
+    if (Array.isArray(v) && v.every((x) => !x)) return false;
+    // Photobook items render in PhotobookItemsTable, not here.
+    if (k === 'photobook' || k === 'photobookItems') return false;
+    // Mode-aware: photobook = whitelist (notes / orderer only); normal = all.
+    if (isPhotobook) return PHOTOBOOK_DETAIL_VISIBLE_KEYS.has(k);
     return true;
   });
   if (entries.length === 0) return <div className="px-3 py-2 text-sm text-stone-400">—</div>;
