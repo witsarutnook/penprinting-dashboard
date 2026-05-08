@@ -60,8 +60,17 @@ export function dmyToISOInput(input: string | null | undefined): string {
  *  Returns "—" for empty/invalid. */
 export function displayDate(input: string | null | undefined): string {
   if (!input) return '—';
-  const s = String(input).trim();
+  let s = String(input).trim();
   if (!s) return '—';
+  // Strip JSON-stringify quote artifacts. Apps Script `objectToRow` had a
+  // bug that double-stringified Date objects into '"2026-05-07T17:00:00.000Z"'
+  // when re-writing rows in promoteDraft / cancelOrder paths (fixed
+  // 2026-05-08). Older orders already touched by those flows have date
+  // cells that begin and end with literal double quotes; unwrap them so
+  // the regex below matches normally and the user sees a clean date.
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    s = s.slice(1, -1).trim();
+  }
   let d: number, m: number, y: number;
   const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
