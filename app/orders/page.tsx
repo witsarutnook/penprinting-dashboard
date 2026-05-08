@@ -203,6 +203,13 @@ async function OrdersData({
       : {});
     const pin = String(rawData.pin || detailsRecord.pin || '');
 
+    // Merge rawData ⊕ details so the modal sees the full spec inline
+    // without a /api/orders/raw roundtrip — same data source as the
+    // Kanban card detail (which renders straight from `job.order.details`).
+    // rawData wins on key collisions because the v2 OrderForm writes
+    // there first; details is a legacy / fallback shape.
+    const inlineRaw: Record<string, unknown> = { ...detailsRecord, ...rawData };
+
     return {
       id: Number(o.id),
       name: String(o.name || ''),
@@ -218,6 +225,7 @@ async function OrdersData({
       jobUrgency,
       jobUrgencyLabel,
       isOrphan,
+      rawData: Object.keys(inlineRaw).length > 0 ? inlineRaw : null,
     };
   });
 

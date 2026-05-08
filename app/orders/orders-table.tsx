@@ -31,6 +31,13 @@ export interface OrderRow {
   jobUrgency: string;
   jobUrgencyLabel: string;
   isOrphan: boolean;
+  /** Full spec payload, served inline from the page-level loadAll snapshot
+   *  so the detail modal's "สเปคงาน" tab can render instantly without a
+   *  separate `/api/orders/raw/<id>` roundtrip. Mirrors how the Kanban
+   *  card detail uses `job.order.details` straight from the same snap.
+   *  When this is missing or empty (legacy rows / fallback), the modal
+   *  falls back to lazy-fetching the raw payload. */
+  rawData?: Record<string, unknown> | null;
 }
 
 interface Props {
@@ -199,15 +206,23 @@ function OrderDetailModal({
   const [rawLoading, setRawLoading] = useState(false);
   const [rawError, setRawError] = useState<string | null>(null);
 
-  // Reset state + lazy-load full spec when modal opens for a new order.
-  // /api/orders/raw/[id] returns the same rawData shape that's shown on
-  // the Kanban card detail's "สเปคงาน" tab — single source of truth so
-  // /orders + /board surface identical info.
+  // Inline-first spec hydration. The /orders page now passes the full
+  // rawData straight from its loadAll snapshot (matches how /board card
+  // detail uses `job.order.details`), so the modal renders instantly
+  // without a /api/orders/raw/[id] roundtrip. When rawData is missing
+  // (e.g. an order that was edited in another tab and the row was
+  // promoted to OrderRow without a fresh snap), we fall back to the
+  // lazy fetch path so behaviour is preserved.
   useEffect(() => {
     if (!order) return;
     setTab('info');
-    setRawData(null);
     setRawError(null);
+    if (order.rawData && Object.keys(order.rawData).length > 0) {
+      setRawData(order.rawData as RawData);
+      setRawLoading(false);
+      return;
+    }
+    setRawData(null);
     setRawLoading(true);
     let cancelled = false;
     fetch(`/api/orders/raw/${order.id}`)
