@@ -11,7 +11,8 @@ import { IconAlertCircle, IconSearch } from '@/lib/icons';
 import { DEPT_LABELS, type Dept } from '@/lib/board';
 import { distinctYears, filterByYearMonth, THAI_MONTHS_FULL } from '@/lib/list-helpers';
 import { PageSizeBar } from '@/components/page-size-bar';
-import { resolvePerPage } from '@/lib/page-size';
+import { PaginationBar } from '@/components/pagination-bar';
+import { resolvePerPage, resolvePage, paginate, clampPage } from '@/lib/page-size';
 import { CancelledClient, RestoreButton } from './client';
 
 export const metadata: Metadata = {
@@ -23,6 +24,7 @@ interface SearchParams {
   year?: string;
   month?: string;
   per?: string;
+  page?: string;
 }
 
 interface ResolvedFilters {
@@ -30,6 +32,7 @@ interface ResolvedFilters {
   year: number;
   month: number;
   perPage: number;
+  page: number;
 }
 
 export default async function CancelledPage({ searchParams }: { searchParams: SearchParams }) {
@@ -42,9 +45,10 @@ export default async function CancelledPage({ searchParams }: { searchParams: Se
     year: Number(searchParams.year) || 0,
     month: Number(searchParams.month) || 0,
     perPage: resolvePerPage(searchParams.per),
+    page: resolvePage(searchParams.page),
   };
 
-  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}`;
+  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}|${filters.page}`;
 
   return (
     <DashboardShell user={session.user} role={session.role}>
@@ -154,58 +158,60 @@ async function CancelledData({ filters }: { filters: ResolvedFilters }) {
           </p>
         </div>
       ) : (
-        <>
-          <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={Math.min(filtered.length, filters.perPage)} />
-          <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
-            <table className="w-full text-sm min-w-[860px]">
-              <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium w-14">#</th>
-                  <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
-                  <th className="text-left px-3 py-2 font-medium">แผนก</th>
-                  <th className="text-left px-3 py-2 font-medium">ยกเลิกโดย</th>
-                  <th className="text-right px-3 py-2 font-medium">วันที่ยกเลิก</th>
-                  <th className="text-left px-3 py-2 font-medium">เหตุผล</th>
-                  <th className="text-right px-3 py-2 font-medium w-24">การจัดการ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {filtered.slice(0, filters.perPage).map((c) => (
-                  <tr key={c.id} className="hover:bg-red-50/30">
-                    <td className="px-3 py-2 tabular-nums text-stone-500">#{c.id}</td>
-                    <td className="px-3 py-2 font-medium text-red-700 line-through decoration-red-300">
-                      {c.name}
-                    </td>
-                    <td className="px-3 py-2 text-stone-600">
-                      {DEPT_LABELS[c.dept as Dept] || c.dept || '—'}
-                    </td>
-                    <td className="px-3 py-2 text-stone-600">{c.cancelledBy || '—'}</td>
-                    <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">
-                      {displayDateTime(c.cancelledAt)}
-                    </td>
-                    <td className="px-3 py-2 text-stone-600 max-w-[18rem] truncate" title={c.reason}>
-                      {c.reason || '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <RestoreButton
-                        id={c.id}
-                        name={c.name}
-                        dept={c.dept}
-                        staff={c.staff}
-                        orderId={c.orderId}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length > filters.perPage && (
-              <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-                แสดง {filters.perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัดให้แคบลง
+        (() => {
+          const safePage = clampPage(filters.page, filtered.length, filters.perPage);
+          const visible = paginate(filtered, safePage, filters.perPage);
+          return (
+            <>
+              <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={visible.length} />
+              <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
+                <table className="w-full text-sm min-w-[860px]">
+                  <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium w-14">#</th>
+                      <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
+                      <th className="text-left px-3 py-2 font-medium">แผนก</th>
+                      <th className="text-left px-3 py-2 font-medium">ยกเลิกโดย</th>
+                      <th className="text-right px-3 py-2 font-medium">วันที่ยกเลิก</th>
+                      <th className="text-left px-3 py-2 font-medium">เหตุผล</th>
+                      <th className="text-right px-3 py-2 font-medium w-24">การจัดการ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {visible.map((c) => (
+                      <tr key={c.id} className="hover:bg-red-50/30">
+                        <td className="px-3 py-2 tabular-nums text-stone-500">#{c.id}</td>
+                        <td className="px-3 py-2 font-medium text-red-700 line-through decoration-red-300">
+                          {c.name}
+                        </td>
+                        <td className="px-3 py-2 text-stone-600">
+                          {DEPT_LABELS[c.dept as Dept] || c.dept || '—'}
+                        </td>
+                        <td className="px-3 py-2 text-stone-600">{c.cancelledBy || '—'}</td>
+                        <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">
+                          {displayDateTime(c.cancelledAt)}
+                        </td>
+                        <td className="px-3 py-2 text-stone-600 max-w-[18rem] truncate" title={c.reason}>
+                          {c.reason || '—'}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <RestoreButton
+                            id={c.id}
+                            name={c.name}
+                            dept={c.dept}
+                            staff={c.staff}
+                            orderId={c.orderId}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </div>
-        </>
+              <PaginationBar total={filtered.length} perPage={filters.perPage} page={safePage} className="pt-2" />
+            </>
+          );
+        })()
       )}
     </>
   );

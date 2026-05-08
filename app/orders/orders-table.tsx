@@ -13,6 +13,8 @@ import {
 import { useToast } from '@/components/toast-provider';
 import { useConfirm } from '@/components/confirm-provider';
 import { PageSizeBar } from '@/components/page-size-bar';
+import { PaginationBar } from '@/components/pagination-bar';
+import { paginate, clampPage } from '@/lib/page-size';
 
 export interface OrderRow {
   id: number;
@@ -36,6 +38,8 @@ interface Props {
   role: 'admin' | 'sales' | 'staff';
   /** Default 20. Server passes this from `?per=20|50|100` URL param. */
   perPage?: number;
+  /** 1-based page index from `?page=` URL param. Default 1. */
+  page?: number;
 }
 
 /** WP-style /orders table: rows are clickable → opens a detail modal with
@@ -44,11 +48,16 @@ interface Props {
  *  Perf note: rows are React.memo'd and the click handler comes via a
  *  stable useCallback so opening the detail modal does NOT re-render
  *  500 rows. Without this, a row-click on /orders feels noticeably laggy. */
-export function OrdersTable({ rows, role, perPage = 20 }: Props) {
+export function OrdersTable({ rows, role, perPage = 20, page = 1 }: Props) {
   const [activeId, setActiveId] = useState<number | null>(null);
   const active = rows.find((r) => r.id === activeId) || null;
   const onRowClick = useCallback((id: number) => setActiveId(id), []);
-  const visible = rows.slice(0, perPage);
+  // Clamp the requested page against the current filtered total so users
+  // who narrow the filter while sitting on page 5 don't render a blank
+  // table — they snap back to the last valid page instead.
+  const safePage = clampPage(page, rows.length, perPage);
+  const visible = paginate(rows, safePage, perPage);
+  const startIdx = (safePage - 1) * perPage;
 
   return (
     <>
@@ -70,16 +79,13 @@ export function OrdersTable({ rows, role, perPage = 20 }: Props) {
           </thead>
           <tbody className="divide-y divide-stone-100">
             {visible.map((o, idx) => (
-              <OrderRowMemo key={o.id} order={o} idx={idx} onClick={onRowClick} />
+              <OrderRowMemo key={o.id} order={o} idx={startIdx + idx} onClick={onRowClick} />
             ))}
           </tbody>
         </table>
-        {rows.length > visible.length && (
-          <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-            แสดง {visible.length} จาก {rows.length} รายการ — ปรับจำนวนหรือใช้ตัวกรองด้านบน
-          </div>
-        )}
       </div>
+
+      <PaginationBar total={rows.length} perPage={perPage} page={safePage} className="pt-2" />
 
       <OrderDetailModal
         order={active}

@@ -12,7 +12,7 @@ import { computeUrgency, getBangkokToday, URGENCY_LABELS } from '@/lib/calendar'
 import { parseDateDMY } from '@/lib/analytics';
 import { OrdersClient } from './client';
 import { OrdersTable, type OrderRow } from './orders-table';
-import { resolvePerPage } from '@/lib/page-size';
+import { resolvePerPage, resolvePage } from '@/lib/page-size';
 import { DataAuditButton, type OrphanOrder, type DuplicateGroup } from './data-audit-modal';
 import Link from 'next/link';
 
@@ -26,6 +26,7 @@ interface SearchParams {
   from?: string;  // YYYY-MM-DD วันที่รับ from
   to?: string;    // YYYY-MM-DD วันที่รับ to
   per?: string;   // page size — 20 / 50 / 100 (default 20)
+  page?: string;  // 1-based page index (default 1)
 }
 
 const STATUS_FILTERS = [
@@ -42,6 +43,10 @@ interface ResolvedFilters {
   fromIso: string;
   toIso: string;
   perPage: number;
+  /** 1-based page index requested via `?page=`. Final clamping against
+   *  `Math.ceil(filtered.length / perPage)` happens inside OrdersTable
+   *  once the filter pipeline has produced its visible row count. */
+  page: number;
 }
 
 export default async function OrdersListPage({
@@ -64,11 +69,12 @@ export default async function OrdersListPage({
     fromIso: (searchParams.from || '').trim(),
     toIso: (searchParams.to || '').trim(),
     perPage: resolvePerPage(searchParams.per),
+    page: resolvePage(searchParams.page),
   };
 
   // Suspense key — re-renders body when filters change without holding the
   // prior result on screen.
-  const dataKey = `${filters.query}|${filters.statusFilter}|${filters.fromIso}|${filters.toIso}|${filters.perPage}`;
+  const dataKey = `${filters.query}|${filters.statusFilter}|${filters.fromIso}|${filters.toIso}|${filters.perPage}|${filters.page}`;
 
   return (
     <DashboardShell user={session.user} role={session.role}>
@@ -334,7 +340,7 @@ async function OrdersData({
           </p>
         </div>
       ) : (
-        <OrdersTable rows={filtered} role={session.role} perPage={filters.perPage} />
+        <OrdersTable rows={filtered} role={session.role} perPage={filters.perPage} page={filters.page} />
       )}
     </>
   );

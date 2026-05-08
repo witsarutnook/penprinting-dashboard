@@ -10,7 +10,8 @@ import { AutoSync } from '@/lib/auto-sync';
 import { IconTruck, IconSearch, IconFolder } from '@/lib/icons';
 import { distinctYears, filterByYearMonth, dateMonthLabel, THAI_MONTHS_FULL } from '@/lib/list-helpers';
 import { PageSizeBar } from '@/components/page-size-bar';
-import { resolvePerPage } from '@/lib/page-size';
+import { PaginationBar } from '@/components/pagination-bar';
+import { resolvePerPage, resolvePage, paginate, clampPage } from '@/lib/page-size';
 import Link from 'next/link';
 import { ShippedClient } from './client';
 
@@ -23,6 +24,7 @@ interface SearchParams {
   year?: string;
   month?: string;
   per?: string;
+  page?: string;
 }
 
 interface ResolvedFilters {
@@ -30,6 +32,7 @@ interface ResolvedFilters {
   year: number;
   month: number;
   perPage: number;
+  page: number;
 }
 
 export default async function ShippedPage({ searchParams }: { searchParams: SearchParams }) {
@@ -42,9 +45,10 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
     year: Number(searchParams.year) || 0,
     month: Number(searchParams.month) || 0,
     perPage: resolvePerPage(searchParams.per),
+    page: resolvePage(searchParams.page),
   };
 
-  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}`;
+  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}|${filters.page}`;
 
   return (
     <DashboardShell user={session.user} role={session.role}>
@@ -169,47 +173,49 @@ async function ShippedData({ filters }: { filters: ResolvedFilters }) {
       ) : filtered.length === 0 ? (
         <EmptyState filtered={!!(filters.query || filters.year || filters.month)} />
       ) : (
-        <>
-          <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={Math.min(filtered.length, filters.perPage)} />
-          <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
-            <table className="w-full text-sm min-w-[760px]">
-              <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium w-14">#</th>
-                  <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
-                  <th className="text-left px-3 py-2 font-medium">ลูกค้า</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">วันที่จัดส่ง</th>
-                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">เดือน</th>
-                  <th className="text-left px-3 py-2 font-medium">สถานะ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {filtered.slice(0, filters.perPage).map((s) => (
-                  <tr key={s.id} className="hover:bg-emerald-50/30">
-                    <td className="px-3 py-2 tabular-nums text-stone-500">#{s.id}</td>
-                    <td className="px-3 py-2 font-medium text-stone-900">{s.name}</td>
-                    <td className="px-3 py-2 text-stone-600">{s.customer || '—'}</td>
-                    <td className="px-3 py-2 text-right text-stone-700 tabular-nums whitespace-nowrap">
-                      {displayDate(s.shippedDate)}
-                    </td>
-                    <td className="px-3 py-2 text-stone-500 whitespace-nowrap">{s.monthLabel}</td>
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        จัดส่งแล้ว
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length > filters.perPage && (
-              <div className="px-4 py-2 bg-stone-50 text-xs text-stone-500 text-center">
-                แสดง {filters.perPage} จาก {filtered.length} — ปรับจำนวนข้างบนหรือใช้ตัวกรองเพื่อจำกัด
+        (() => {
+          const safePage = clampPage(filters.page, filtered.length, filters.perPage);
+          const visible = paginate(filtered, safePage, filters.perPage);
+          return (
+            <>
+              <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={visible.length} />
+              <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
+                <table className="w-full text-sm min-w-[760px]">
+                  <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium w-14">#</th>
+                      <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
+                      <th className="text-left px-3 py-2 font-medium">ลูกค้า</th>
+                      <th className="text-right px-3 py-2 font-medium whitespace-nowrap">วันที่จัดส่ง</th>
+                      <th className="text-left px-3 py-2 font-medium whitespace-nowrap">เดือน</th>
+                      <th className="text-left px-3 py-2 font-medium">สถานะ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {visible.map((s) => (
+                      <tr key={s.id} className="hover:bg-emerald-50/30">
+                        <td className="px-3 py-2 tabular-nums text-stone-500">#{s.id}</td>
+                        <td className="px-3 py-2 font-medium text-stone-900">{s.name}</td>
+                        <td className="px-3 py-2 text-stone-600">{s.customer || '—'}</td>
+                        <td className="px-3 py-2 text-right text-stone-700 tabular-nums whitespace-nowrap">
+                          {displayDate(s.shippedDate)}
+                        </td>
+                        <td className="px-3 py-2 text-stone-500 whitespace-nowrap">{s.monthLabel}</td>
+                        <td className="px-3 py-2">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            จัดส่งแล้ว
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </div>
-        </>
+              <PaginationBar total={filtered.length} perPage={filters.perPage} page={safePage} className="pt-2" />
+            </>
+          );
+        })()
       )}
     </>
   );

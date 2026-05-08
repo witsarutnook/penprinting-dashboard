@@ -29,6 +29,10 @@ export function PageSizeBar({
           onChange={(e) => {
             const url = new URL(window.location.href);
             url.searchParams.set('per', e.target.value);
+            // Drop ?page when per-page changes — staying on page 5 of the
+            // OLD per-page count would land on a past-end page in the new
+            // pagination, rendering an empty table.
+            url.searchParams.delete('page');
             window.location.assign(url.toString());
           }}
           className="px-2 py-1 border border-stone-200 rounded-md text-xs bg-white tabular-nums focus:outline-none focus:border-accent"
