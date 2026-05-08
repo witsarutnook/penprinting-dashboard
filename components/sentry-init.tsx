@@ -6,21 +6,28 @@ import { useEffect } from 'react';
 /**
  * Manually initializes the Sentry browser SDK from a `useEffect`.
  *
- * History (2026-05-08):
- * 1. Started with `instrumentation-client.ts` (Next.js 15.3+ convention).
- *    Next.js 14 silently ignored it — Sentry.init never ran. Fixed in 212bb7a.
- * 2. Tried `sentry.client.config.ts` (legacy convention). @sentry/nextjs v10
- *    dropped auto-loading of this file — also never ran. Fixed in f299dc9.
- * 3. Tried module-level `Sentry.init()` in this 'use client' file. The DSN
- *    literal made it into `layout-*.js` chunk (verified via Sources search)
- *    but the module's top-level side effect never executed at runtime —
- *    `window.__SENTRY__[version]` had only default scopes, no `acs`, no
- *    client. Likely a Next.js 14 + 'use client' module evaluation quirk.
- * 4. Final approach (this file): call `Sentry.init` from `useEffect`.
- *    React guarantees the effect fires after first mount — DSN is read,
- *    init configures the SDK, global error handlers attach. Trade-off:
- *    errors thrown during initial render aren't captured (rare on a
- *    staff dashboard; the server-side Sentry catches API errors anyway).
+ * History (2026-05-08): five layers of silent failure on the way to
+ * working Sentry on this stack — each looked correct in isolation:
+ *
+ * 1. `instrumentation-client.ts` — Next.js 15.3+ convention; Next.js 14
+ *    silently ignores it. Build still uploaded sourcemaps so it looked OK.
+ * 2. `sentry.client.config.ts` — legacy convention; @sentry/nextjs v10
+ *    dropped auto-loading. File sat at root but webpack plugin no longer
+ *    threaded it into the client entry.
+ * 3. Module-level `Sentry.init()` in this 'use client' file — DSN literal
+ *    made it into the `layout-*.js` chunk (verified via Sources search)
+ *    but the top-level side effect never ran at runtime. Likely a quirk
+ *    of how Next.js 14 evaluates 'use client' modules.
+ * 4. `NEXT_PUBLIC_SENTRY_DSN` marked Sensitive in Vercel — Vercel doesn't
+ *    inline Sensitive vars into the client bundle, so DSN was undefined
+ *    in the browser even after rebuild. Sourcemap upload still worked
+ *    because that's a server-side step using `SENTRY_AUTH_TOKEN`.
+ * 5. (this file): call `Sentry.init` from `useEffect`. React guarantees
+ *    the effect fires after first mount; DSN reads, init runs, default
+ *    integrations attach (`BrowserApiErrors`, `GlobalHandlers`, etc.).
+ *    Trade-off: errors thrown during initial render aren't captured
+ *    client-side. Rare on this staff dashboard; the server Sentry
+ *    instance catches API errors regardless.
  *
  * Disabled when DSN is missing so dev / preview / fork builds don't ship
  * a half-broken Sentry to the console.
@@ -28,18 +35,10 @@ import { useEffect } from 'react';
 
 const DSN = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
-// Module-eval debug — survives until we know init works
-// eslint-disable-next-line no-console
-console.log('[Sentry][debug] module loaded, DSN:', DSN ? `present (${DSN.slice(0, 30)}…)` : 'MISSING');
-
 export function SentryInit(): null {
   useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log('[Sentry][debug] useEffect fired, DSN:', DSN ? 'present' : 'MISSING', 'existing client:', Sentry.getClient() ? 'YES' : 'NO');
     if (!DSN) return;
     if (Sentry.getClient()) return; // idempotent — re-mounts in dev / Strict Mode
-    // eslint-disable-next-line no-console
-    console.log('[Sentry][debug] calling Sentry.init...');
     Sentry.init({
       dsn: DSN,
       // Internal staff app — low traffic, light sampling is fine.
@@ -58,8 +57,6 @@ export function SentryInit(): null {
         /Cannot redefine property/i,
       ],
     });
-    // eslint-disable-next-line no-console
-    console.log('[Sentry][debug] Sentry.init returned, client:', Sentry.getClient());
   }, []);
   return null;
 }
