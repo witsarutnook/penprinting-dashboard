@@ -104,19 +104,30 @@ export async function loadAllFresh(): Promise<LoadAllResponse> {
 
 /** Single-order lookup. Apps Script returns ~1KB instead of ~200KB.
  *  Used for hot paths that only need one order's rawData (e.g. order detail
- *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw). Always uncached
- *  because consumers want the latest spec after edit. */
+ *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw).
+ *
+ *  `revalidate` defaults to 0 — write-path callers (restore, promote, etc.)
+ *  must read fresh state. Read-path callers that just want the spec for
+ *  display can pass a small TTL (e.g. 30s) to avoid hammering Apps Script
+ *  on repeat modal opens. After 2026-05-08's diagnose-Bug-4 work the
+ *  Apps Script `getOrder` action does a TextFinder single-row read
+ *  (~400-600ms instead of 3-4s) so the cost of revalidate=0 is bounded
+ *  even without ISR — the cache is still worth it for the modal-reopen
+ *  pattern users actually have. */
 export interface LoadOrderResponse {
   order: Order | null;
   job: Record<string, unknown> | null;
   shipped: Record<string, unknown> | null;
   cancelled: Record<string, unknown> | null;
 }
-export async function loadOrder(id: number | string): Promise<LoadOrderResponse> {
+export async function loadOrder(
+  id: number | string,
+  opts: { revalidate?: number } = {},
+): Promise<LoadOrderResponse> {
   const data = await get<Partial<LoadOrderResponse>>(
     'getOrder',
     { orderId: String(id) },
-    { revalidate: 0 },
+    { revalidate: opts.revalidate ?? 0 },
   );
   return {
     order: data.order ?? null,

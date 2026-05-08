@@ -27,7 +27,13 @@ export async function GET(
 
   let result;
   try {
-    result = await loadOrder(id);
+    // 30s ISR — modal opens often hit the same order repeatedly (user
+    // browses the orders list and reopens to glance at spec). The
+    // revalidatePath('/orders') call from PATHS_BY_ACTION after order
+    // edits invalidates the page cache that ultimately feeds back into
+    // here, so 30s of staleness is the worst case if a user edits and
+    // immediately reopens — acceptable for spec-display.
+    result = await loadOrder(id, { revalidate: 30 });
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
