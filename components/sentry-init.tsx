@@ -28,10 +28,18 @@ import { useEffect } from 'react';
 
 const DSN = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
+// Module-eval debug — survives until we know init works
+// eslint-disable-next-line no-console
+console.log('[Sentry][debug] module loaded, DSN:', DSN ? `present (${DSN.slice(0, 30)}…)` : 'MISSING');
+
 export function SentryInit(): null {
   useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log('[Sentry][debug] useEffect fired, DSN:', DSN ? 'present' : 'MISSING', 'existing client:', Sentry.getClient() ? 'YES' : 'NO');
     if (!DSN) return;
     if (Sentry.getClient()) return; // idempotent — re-mounts in dev / Strict Mode
+    // eslint-disable-next-line no-console
+    console.log('[Sentry][debug] calling Sentry.init...');
     Sentry.init({
       dsn: DSN,
       // Internal staff app — low traffic, light sampling is fine.
@@ -50,6 +58,8 @@ export function SentryInit(): null {
         /Cannot redefine property/i,
       ],
     });
+    // eslint-disable-next-line no-console
+    console.log('[Sentry][debug] Sentry.init returned, client:', Sentry.getClient());
   }, []);
   return null;
 }
