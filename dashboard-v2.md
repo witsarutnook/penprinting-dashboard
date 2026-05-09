@@ -300,6 +300,26 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Phase 3.6 cutover — WP retired (2026-05-09 afternoon, DNS switch + 2 bonus fixes)
+
+**WP retire complete via DNS switch.**
+- HostAtom DNS: A `203.170.190.20` → CNAME `cname.vercel-dns.com.` (TTL 300)
+- Vercel custom domain `app.penprinting.co` added to `penprinting-dashboard` project
+- SSL active immediately, HTTP 307 → /login confirmed via curl
+- All 4 resolvers (HostAtom NS1+NS2, Google, Cloudflare) propagate ภายใน ~1 นาที
+
+**Cushion**: [next.config.mjs](next.config.mjs) — `/production-monitoring*` → `/board` permanent redirect. กัน staff bookmark 404 ระหว่าง split-brain ~1 ชม. (cached A record ของ resolvers ทั่วโลก ค่อยๆ expire). Verified via `curl -I /production-monitoring/foo/bar` → 308 → /board ✓.
+
+**HostAtom DNS UI gotcha**: relative CNAME value (e.g. `cname.vercel-dns.com`) auto-appends zone → `cname.vercel-dns.com.penprinting.co.` (NXDOMAIN). Fix: trailing dot ใน value (`cname.vercel-dns.com.`). เจอครั้งนี้ user save 2 รอบ. **Pattern → memory if recurring**.
+
+**Bonus 1 — perf bug `e88f386`**: user reported "order create ดูช้ามาก" — static code analysis (no instrumentation needed) เจอใน [lib/api.ts:160](lib/api.ts) PATHS_BY_ACTION map ขาด entry สำหรับ `createOrder` action (fast-path ตั้งแต่ 2026-05-07 commit `a184254`). ทุก atomic action อื่น (`cancelOrder`, `deleteOrderCascade`, `promoteDraft`, `bulkForward`) อยู่ครบ. Effect: หลัง POST /api/orders/add success → router.refresh() returns CACHED snapshot (60s ISR cache, ไม่มี revalidatePath call) → user เห็นใหม่ใน 15-60s แทน ~1.5s. Fix 1 บรรทัด — เพิ่ม `createOrder: ['/board', '/orders', '/orders/new', '/calendar', '/analytics']` (union ของ addOrder + addJob path lists). Verified ใน production after deploy.
+
+**Bonus 2 — quota threshold tune**: morning quota alert 8:44 AM 🟡 ที่ 3080ms = false alarm จาก Apps Script cold-start. Static analysis แสดงว่า `loadOrder` ทำ TextFinder × 4 sheets + N+1 row reads = ~2s warm baseline + ~1s cold-start overhead. Bump `responseTimeWarn` 3000→5000ms / `responseTimeCritical` 10000→15000ms — cold-start friendly + ยังจับ real regression ที่ ≥5s. Pushed via clasp + Manage deployments → New version v5.10.6.
+
+**Logging**: AUDIT-BACKLOG ปิด createOrder bug. monitoring.md (WP doc) marked archived. Tech-Roadmap-Status Phase 3.6 ✅. CLAUDE.md hosting table updated. Marketing site CLAUDE.md redirects updated.
+
+**Pattern → memory candidate**: user-reported perf bug — try static analysis first (read PATHS_BY_ACTION + cache stack) before adding instrumentation. ถ้า code path เห็นชัด (เช่น missing map entry) แก้ได้เลยโดยไม่ต้อง measure จริง
+
 ### Phase 3.6 prep day — Retire WP code-side prep (2026-05-09 morning)
 Code-side prep ครบสำหรับ DNS-switch retire WordPress legacy. แก้ทั้งหมด 9 hard-coded WP refs across 3 projects, type-check + production build ผ่าน.
 
