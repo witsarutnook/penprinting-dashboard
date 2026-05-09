@@ -8,8 +8,9 @@
 2. **[NEXT-SESSION.md](NEXT-SESSION.md)** ⭐ — pick-up-here doc สำหรับ session ใหม่ (เสร็จแล้วอะไร/เหลืออะไร/decisions ที่ผ่านมา)
 3. **[PATTERNS.md](PATTERNS.md)** — Reusable patterns ที่ค้นพบใน v2 (Apps Script, permissions, URL state, icons, forms, auto-sync, things-not-to-do)
 4. **[AUDIT-BACKLOG.md](AUDIT-BACKLOG.md)** — running audit findings tracker (rounds + closed batches)
-5. **[Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md)** ใน workspace root — สถานะ migration phases ภาพรวม
-6. **[../production-monitoring/monitoring.md](../production-monitoring/monitoring.md)** — WP source of truth + **shared infrastructure** (Sheet schema, security model, recurring lessons)
+5. **[migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md)** — DB migration roadmap (planned, not started)
+6. **[Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md)** ใน workspace root — สถานะ migration phases ภาพรวม
+7. **[../production-monitoring/monitoring.md](../production-monitoring/monitoring.md)** — WP source of truth + **shared infrastructure** (Sheet schema, security model, recurring lessons)
 
 ## Stack
 - **Next.js 14** (App Router) + TypeScript + Tailwind 3

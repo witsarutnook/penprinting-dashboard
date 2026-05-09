@@ -407,6 +407,34 @@ Future fix สำหรับ:
 - Shared providers (Toast/Confirm) ที่ stays mounted across navigations
 - Effort ~2-3 ชม. defer until needed
 
+### 4. 🗄 Database migration — Vercel Postgres (planned 2026-05-09, not started)
+**Decision**: Vercel Postgres (Powered by Neon) — รวมใน Pro plan, single dashboard, schema portable to Supabase ภายหลังถ้าต้องการ realtime.
+
+**Full plan**: [`migration-plan-vercel-postgres.md`](migration-plan-vercel-postgres.md) — schema design + 4 migration phases + risk mitigation + speed comparison + alternatives.
+
+**ห้าม migrate proactively.** รอ trigger:
+- Order volume 400+ active (currently 123)
+- Apps Script daily script time > 4 hr (currently ~30-60 min)
+- UrlFetchApp daily > 50K calls
+- Multi-user real-time edit need
+- Real-time KPI / TV display return
+
+**Quick-win starter (ก่อน commit เต็ม)**: 2-hour PoC mirror audit_log → Postgres, measure real timing vs Sheet. Low risk (audit append-only), high signal value.
+
+**Expected**: 5-50x faster reads, 10-30x faster writes. Effort: 4-6 weeks part-time / 2-3 weeks focused.
+
+### 5. Tier B leftover Pro features (~3 ชม.)
+- **Morning Report cron migration** — separate Apps Script project ต้องเพิ่ม doPost handler + auth (1 hr) → ตอนนี้ยังเป็น Apps Script time trigger 8 AM Bangkok
+- **Vercel KV rate limit** `/api/audit` + `/api/orders/raw` — DDoS protection + Apps Script quota safety (1.5 hr) → ต้อง create KV store ใน Vercel UI ก่อน
+
+### 6. Perf optimization backlog
+- TextFinder pattern apply ใน `production-monitoring/apps-script/dashboard/write.ts` (-500ms-1.5s ต่อ write action)
+- Bundle analysis sweep `/board` 18.4KB chunk — find duplicate icon SVG / unused code
+- Apps Script quota dashboard ใน `/analytics` page (Properties Service counter + sparkline)
+
+### 7. Spawned tasks
+- Morning Report `ICON_BASE` (`penprinting.co/icons/`) broken — icons live ที่ `_shared/icons/` ไม่ expose ผ่าน HTTP. Fix: copy ไป `penprinting-web/public/icons/` + push (Vercel auto-deploys)
+
 ---
 
 ## 📚 Where to dig
