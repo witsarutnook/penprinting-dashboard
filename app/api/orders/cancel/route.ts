@@ -3,6 +3,8 @@ import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { allSettledLimit } from '@/lib/concurrency';
 
+export const maxDuration = 30;
+
 /**
  * Soft-cancel an order — admin only. Replacement for the previous hard-
  * delete UX (user feedback 2026-05-07: "เอาเป็นแค่ ยกเลิกพอ"). The

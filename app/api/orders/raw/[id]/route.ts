@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { loadOrder, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
+export const maxDuration = 30;
+
 /** Fetch a single order's rawData on demand.
  *  Consumers:
  *    - /orders/new "ดึงงานล่าสุดของลูกค้านี้" button (admin/sales)

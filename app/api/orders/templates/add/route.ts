@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
+export const maxDuration = 30;
+
 /** Save a new order-form template (preset) — admin + sales. */
 export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);

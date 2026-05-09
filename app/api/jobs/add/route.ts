@@ -9,6 +9,8 @@ import {
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 
+export const maxDuration = 30;
+
 /**
  * Add a new job — admin + sales only (matches WP `PERM.canCreate`).
  *

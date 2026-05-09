@@ -4,6 +4,8 @@ import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
 
+export const maxDuration = 30;
+
 /**
  * Promote a draft order into the active queue — admin + sales.
  *

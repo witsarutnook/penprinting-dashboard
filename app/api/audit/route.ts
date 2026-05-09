@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAuditByTarget, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
+export const maxDuration = 30;
+
 /** Fetch audit timeline for a single job/order on demand.
  *  Consumers:
  *    - /board card detail "ประวัติ" tab

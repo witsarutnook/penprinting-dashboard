@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
+export const maxDuration = 30;
+
 /** Delete an order-form template by id — admin + sales. */
 export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);

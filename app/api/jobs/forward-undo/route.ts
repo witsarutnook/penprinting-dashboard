@@ -3,6 +3,8 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 
+export const maxDuration = 30;
+
 /**
  * Reverse a recent forward — admin only, 10-second window enforced client-side
  * via the undo toast (server doesn't gate by time, only by role).

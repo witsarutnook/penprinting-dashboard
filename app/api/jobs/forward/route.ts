@@ -4,6 +4,8 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
 
+export const maxDuration = 30;
+
 /**
  * Forward (ส่งต่องาน) — all roles can forward (matches WP `canWorkflow` = true).
  * RESTRICTED_TARGETS (outsource, diecut_out) are admin only — gated by

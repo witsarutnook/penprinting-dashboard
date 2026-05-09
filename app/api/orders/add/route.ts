@@ -5,6 +5,8 @@ import { STAFF, type Dept } from '@/lib/board';
 import { toISODate, bangkokTodayISO } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 
+export const maxDuration = 30;
+
 /**
  * Create a new order — admin + sales. Accepts the full WP-shape OrderFormData
  * (mirrors gatherFormData() at production-monitoring.js:1595).

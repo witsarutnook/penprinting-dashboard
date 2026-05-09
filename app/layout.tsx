@@ -1,4 +1,6 @@
 import { Anuphan, Inter } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import { defaultMetadata } from '@/lib/seo';
 import { SentryInit } from '@/components/sentry-init';
 import './globals.css';
@@ -29,6 +31,8 @@ export default function RootLayout({
       >
         <SentryInit />
         {children}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

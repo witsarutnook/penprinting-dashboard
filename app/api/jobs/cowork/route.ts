@@ -3,6 +3,8 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF } from '@/lib/board';
 
+export const maxDuration = 30;
+
 /**
  * Set the co-work list (collaborators) for a job — all roles, mirrors WP
  * `setCowork`. Co-work is a workflow attachment (designer asks another for

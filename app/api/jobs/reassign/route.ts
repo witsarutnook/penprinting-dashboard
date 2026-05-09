@@ -5,6 +5,8 @@ import { toISODate } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { RESTRICTED_TARGETS } from '@/lib/forward';
 
+export const maxDuration = 30;
+
 /**
  * Reassign a job to a different staff WITHIN THE SAME DEPT — all roles.
  *

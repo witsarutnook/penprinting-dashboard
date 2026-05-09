@@ -3,6 +3,8 @@ import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { allSettledLimit } from '@/lib/concurrency';
 
+export const maxDuration = 30;
+
 /** Permanently delete an order — admin only.
  *  Cascade: any active job(s) referencing this order are auto-cancelled
  *  with reason "ใบสั่งงานถูกลบ" so the Kanban doesn't end up with orphan

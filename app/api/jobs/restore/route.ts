@@ -3,6 +3,8 @@ import { post, loadAll, loadAllFresh, loadOrder, AppsScriptError } from '@/lib/a
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 
+export const maxDuration = 30;
+
 interface SrcCancelled {
   name?: string;
   dept?: string;

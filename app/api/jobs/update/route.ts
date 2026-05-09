@@ -4,6 +4,8 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate, validateJobInput, type JobPayload } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 
+export const maxDuration = 30;
+
 /**
  * Update an existing job — admin only on dashboard v2 (per user preference 2026-05-06).
  * Staff/sales can still reassign via WP drag-drop; here in v2 the modal route is locked.

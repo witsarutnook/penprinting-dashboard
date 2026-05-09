@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession, formatThaiDate } from '@/lib/route-helpers';
 
+export const maxDuration = 30;
+
 /**
  * Cancel a job — admin only (matches WP ROLE_REQUIREMENTS.cancelJob = ['admin']).
  *

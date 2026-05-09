@@ -6,6 +6,8 @@ import { toISODate } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 import type { Job } from '@/lib/types';
 
+export const maxDuration = 30;
+
 interface SrcOrderSnapshot {
   name?: string;
   dateDue?: string;

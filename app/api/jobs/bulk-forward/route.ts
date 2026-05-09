@@ -4,6 +4,8 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
 
+export const maxDuration = 30;
+
 /**
  * Bulk forward — all roles, 1-25 jobs per request (mirrors WP `BULK_FORWARD_MAX`
  * and Apps Script 30s execution limit).

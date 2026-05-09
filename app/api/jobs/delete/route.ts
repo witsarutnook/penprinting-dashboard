@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 
+export const maxDuration = 30;
+
 /**
  * Delete a job — admin only on dashboard v2 (per user preference 2026-05-06).
  * Apps Script `deleteJob` is open to all roles (WP relies on it for drag-drop
