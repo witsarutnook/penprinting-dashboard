@@ -1,7 +1,17 @@
 import { withSentryConfig } from '@sentry/nextjs';
 
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+  // Soften Phase 3.6 cutover (2026-05-09) — staff with /production-monitoring/*
+  // bookmarks resolved to Vercel (post DNS switch) would 404 since v2 has no
+  // /production-monitoring path. Redirect to /board (canonical landing).
+  async redirects() {
+    return [
+      { source: '/production-monitoring', destination: '/board', permanent: true },
+      { source: '/production-monitoring/:path*', destination: '/board', permanent: true },
+    ];
+  },
+};
 
 // Wrap with Sentry. The plugin still works without a DSN at runtime —
 // instrumentation hooks short-circuit early — and skips source-map
