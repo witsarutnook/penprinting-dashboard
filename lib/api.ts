@@ -137,6 +137,46 @@ export async function loadOrder(
   };
 }
 
+/** Single-target audit timeline — chronological entries where targetId
+ *  matches jobId OR orderId. Used by v2 history tab in /board card detail
+ *  + /orders detail modal. Apps Script v5.10.7+ adds the action; pre-5.10.7
+ *  Apps Script returns "Unknown action" → empty timeline (graceful).
+ *
+ *  Why a separate route: loadAll() with audit=1 ships the whole 500-row
+ *  audit_log payload (~50-100KB) just so we can filter to ~5-20 rows for
+ *  one job. On-demand fetch keeps /board + /orders snapshot small. */
+export interface AuditEntry {
+  timestamp: string;
+  role: string;
+  action: string;
+  targetId: string;
+  summary: string;
+}
+export async function getAuditByTarget(
+  jobId: number | string | null | undefined,
+  orderId: number | string | null | undefined,
+  opts: { revalidate?: number } = {},
+): Promise<{ entries: AuditEntry[] }> {
+  const params: Record<string, string> = {};
+  if (jobId != null && String(jobId).trim()) params.jobId = String(jobId);
+  if (orderId != null && String(orderId).trim()) params.orderId = String(orderId);
+  if (!params.jobId && !params.orderId) return { entries: [] };
+  try {
+    const data = await get<{ entries?: AuditEntry[] }>(
+      'getAuditByTarget',
+      params,
+      { revalidate: opts.revalidate ?? 30 },
+    );
+    return { entries: data.entries || [] };
+  } catch (err) {
+    // Graceful for pre-5.10.7 Apps Script — empty timeline rather than throw
+    if (err instanceof AppsScriptError && /unknown action/i.test(err.message)) {
+      return { entries: [] };
+    }
+    throw err;
+  }
+}
+
 /** Per-action invalidation map. After a successful write we revalidate
  *  ONLY the paths whose data shape actually changes — pages outside this
  *  set keep their warm 60s ISR cache, so navigating to them feels

@@ -8,13 +8,14 @@ import { broadcastWrite } from '@/lib/auto-sync';
 import { URGENCY_COLORS } from '@/lib/calendar';
 import {
   IconX, IconPencil, IconAlertTriangle, IconPrinter, IconAlertCircle, IconFileText,
-  IconCheck, IconCornerUpRight, IconUsers, IconInfo, IconRefreshCw,
+  IconCheck, IconCornerUpRight, IconUsers, IconRefreshCw,
 } from '@/lib/icons';
 import { useToast } from '@/components/toast-provider';
 import { useConfirm } from '@/components/confirm-provider';
 import { PageSizeBar } from '@/components/page-size-bar';
 import { PaginationBar } from '@/components/pagination-bar';
 import { paginate, clampPage } from '@/lib/page-size';
+import { HistoryTab } from '@/components/history-tab';
 
 export interface OrderRow {
   id: number;
@@ -413,14 +414,10 @@ function OrderDetailModal({
           )}
 
           {tab === 'history' && (
-            <div className="text-center py-8 space-y-3">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-stone-100 text-stone-400 mx-auto">
-                <IconInfo size={20} />
-              </div>
-              <p className="text-sm text-stone-500">
-                ประวัติงาน (audit log) อยู่ระหว่างพัฒนา
-              </p>
-            </div>
+            // /orders modal exposes only order id (jobId not on OrderRow type).
+            // Mirrors WP `buildJobTimeline(o.id, o.id)` — entries with
+            // targetId === orderId cover the order-level lifecycle.
+            <HistoryTab orderId={order.id} />
           )}
 
           {error && (

@@ -19,6 +19,7 @@ import { useUndo } from '@/components/board/undo-context';
 import { useConfirm } from '@/components/confirm-provider';
 import { useToast } from '@/components/toast-provider';
 import { usePendingMutations } from '@/components/board/pending-mutations';
+import { HistoryTab } from '@/components/history-tab';
 
 // Lazy-load admin-only edit modals — saves ~50KB First Load JS for staff
 // (who never open these). Chunks only fetch when the user clicks ✏️.
@@ -37,7 +38,6 @@ import {
   IconPencil,
   IconAlertTriangle,
   IconAlertCircle,
-  IconInfo,
   IconCornerUpRight,
   IconRefreshCw,
   IconUser,
@@ -1061,14 +1061,7 @@ function DetailContent({
         )}
 
         {tab === 'history' && (
-          <div className="text-center py-8 space-y-3">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-stone-100 text-stone-400 mx-auto">
-              <IconInfo size={20} />
-            </div>
-            <p className="text-sm text-stone-500">
-              ประวัติงาน (audit log) อยู่ระหว่างพัฒนา
-            </p>
-          </div>
+          <HistoryTab jobId={job.id} orderId={job.orderId} />
         )}
       </div>
 
