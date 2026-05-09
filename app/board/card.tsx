@@ -1060,9 +1060,13 @@ function DetailContent({
           </>
         )}
 
-        {tab === 'history' && (
+        {/* Always-mount + display toggle = prefetch audit when modal opens.
+         *  HistoryTab fires its fetch on mount; by the time user clicks the
+         *  ประวัติ tab, entries are already loaded. ~500ms saved per click
+         *  with zero cost to pages that don't open this card. */}
+        <div style={{ display: tab === 'history' ? 'block' : 'none' }}>
           <HistoryTab jobId={job.id} orderId={job.orderId} />
-        )}
+        </div>
       </div>
 
       {/* Action footer */}

@@ -413,12 +413,15 @@ function OrderDetailModal({
             </>
           )}
 
-          {tab === 'history' && (
-            // /orders modal exposes only order id (jobId not on OrderRow type).
-            // Mirrors WP `buildJobTimeline(o.id, o.id)` — entries with
-            // targetId === orderId cover the order-level lifecycle.
+          {/* Always-mount + display toggle = prefetch audit when modal opens.
+           *  HistoryTab fires fetch on mount; user reads info/spec tab while
+           *  audit loads in background → ประวัติ click feels instant.
+           *  /orders modal exposes only order id (jobId not on OrderRow type).
+           *  Mirrors WP `buildJobTimeline(o.id, o.id)` — entries with
+           *  targetId === orderId cover the order-level lifecycle. */}
+          <div style={{ display: tab === 'history' ? 'block' : 'none' }}>
             <HistoryTab orderId={order.id} />
-          )}
+          </div>
 
           {error && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
