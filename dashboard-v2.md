@@ -300,6 +300,28 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### History tab v2 port — Apps Script v5.10.7 (2026-05-09 evening, `51e8df5` + `1093a6d`)
+
+ปิด last "🚧 อยู่ระหว่างพัฒนา" placeholder ใน /board card detail + /orders modal. WP `renderJobHistoryTab` (production-monitoring.js:1066) port ครบเป็น React.
+
+**Backend** (Apps Script v5.10.7):
+- New action `getAuditByTarget(jobId, orderId)` ใน [load.ts](../production-monitoring/apps-script/dashboard/load.ts) — filter audit_log Sheet for entries matching either id, return chronological list (cap 200). Pure JS filter on full sheet — for ~889-row sheet ~50ms. Wired into doGet ([api.ts](../production-monitoring/apps-script/dashboard/api.ts)).
+
+**Vercel**:
+- New route [app/api/audit/route.ts](app/api/audit/route.ts) — GET `?jobId=X&orderId=Y`, any logged-in user, 30s ISR cache.
+- New helper [lib/api.ts](lib/api.ts) `getAuditByTarget()` — graceful fallback when Apps Script pre-5.10.7 (returns empty timeline instead of throwing on "Unknown action").
+
+**UI** ([components/history-tab.tsx](components/history-tab.tsx)):
+- Mirror WP — vertical timeline, action icon, Thai label, DD/MM HH:MM timestamp, summary, role-by-line.
+- Action map covers all atomic actions (`createOrder`, `cancelOrder`, `deleteOrderCascade`, `promoteDraft`, `bulkForward`) + legacy multi-call.
+- Loading / error / empty states match modal stone-tone palette.
+
+**Trade-off vs `/spec` tab** (user-driven follow-up): `/spec` reads `job.order.details` inline from loadAll snap (0ms) because details ARE in every order row. Audit lives in separate Sheet that v2 explicitly skips on /board+/orders loadAll (round 5 saves 50-100KB/page). Couldn't get true 0ms inline without either (a) adding audit back to loadAll = undo round 5 win, (b) per-job audit attach in Apps Script = larger refactor.
+
+**Compromise (`1093a6d`)**: prefetch on modal open. HistoryTab always mounts (display:none until ประวัติ tab active), useEffect fires fetch when modal opens. User reads info/spec for ~3-5s while audit loads in background → click ประวัติ feels instant. +1 Apps Script call per modal open, no pageload payload cost.
+
+**Pattern → memory candidate**: prefetch-on-mount-with-display-toggle for tabs that need data but aren't first-clicked. Cleaner than lifting fetch to parent + prop drilling.
+
 ### Phase 3.6 cutover — WP retired (2026-05-09 afternoon, DNS switch + 2 bonus fixes)
 
 **WP retire complete via DNS switch.**
