@@ -172,7 +172,10 @@ const PATHS_BY_ACTION: Record<string, readonly string[]> = {
   addOrder:      ['/board', '/orders', '/orders/new', '/analytics'],
   updateOrder:   ['/board', '/orders', '/orders/new', '/analytics'],
   deleteOrder:   ['/board', '/orders', '/cancelled', '/analytics'],
-  // v5.10.4 atomic actions — same surface area as multi-call legacy flows
+  // v5.10.3+ atomic actions — same surface area as multi-call legacy flows
+  // (the legacy fallback path uses addOrder + addJob in parallel, so the
+  // union of those two lists is what createOrder needs to bust)
+  createOrder:        ['/board', '/orders', '/orders/new', '/calendar', '/analytics'],
   cancelOrder:        ['/board', '/orders', '/cancelled', '/calendar', '/analytics'],
   deleteOrderCascade: ['/board', '/orders', '/cancelled', '/analytics'],
   promoteDraft:       ['/board', '/orders', '/orders/new', '/calendar', '/analytics'],
