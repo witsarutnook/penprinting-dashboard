@@ -300,6 +300,30 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Tier B Pro features — Vercel Cron migration 2/4 (2026-05-09 night, `d0ec15d` + Apps Script v5.10.8)
+
+ย้าย 2 cron จาก Apps Script time triggers → Vercel Cron. Apps Script script time -50% + observable cron logs.
+
+**Apps Script side** (v5.10.8):
+- `api.ts` doPost cases: `runQuotaCheck` + `runBackup`
+- `auth.ts` ROLE_REQUIREMENTS: both admin-only (cron uses admin service token)
+
+**Vercel side**:
+- `app/api/cron/quota-check/route.ts` — daily 8 AM Bangkok (1 AM UTC), `0 1 * * *`
+- `app/api/cron/r2-backup/route.ts` — Sunday 3 AM Bangkok (Sat 20:00 UTC), `0 20 * * 6`
+- `vercel.json` — Vercel Cron schedule
+- Auth: `Authorization: Bearer ${CRON_SECRET}` (Vercel auto-injects)
+
+**Gotcha**: CRON_SECRET ไม่ได้ auto-generate ใน account นี้ — manual create เป็น Sensitive env var (43-char random) → force redeploy without build cache → cron Run Now → 200 OK + LINE message arrives.
+
+**Sensitive flag rule** (clarified vs Sentry case): server-only secrets (CRON_SECRET, APPS_SCRIPT_TOKEN, DASHBOARD_AUTH_SECRET) → ✅ Sensitive. NEXT_PUBLIC_* (must inline to client bundle) → ❌ NOT Sensitive.
+
+**Cutover**: Apps Script Manage Deployments → Edit existing → New version v5.10.8. Verify Vercel cron via Run Now. Delete Apps Script time triggers `dailyQuotaCheck` + `backupSheet` (kept other triggers like auto-archive intact).
+
+**Deferred for next session:**
+- Morning Report cron migration — separate Apps Script project ("Morning report") doesn't have HTTP doPost handler yet, needs auth model added (~1 hr)
+- Vercel KV rate limit on `/api/audit` + `/api/orders/raw` — need to create KV store in Vercel UI first
+
 ### History tab v2 port — Apps Script v5.10.7 (2026-05-09 evening, `51e8df5` + `1093a6d`)
 
 ปิด last "🚧 อยู่ระหว่างพัฒนา" placeholder ใน /board card detail + /orders modal. WP `renderJobHistoryTab` (production-monitoring.js:1066) port ครบเป็น React.
