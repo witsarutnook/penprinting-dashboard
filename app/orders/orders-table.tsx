@@ -418,15 +418,7 @@ function OrderDetailModal({
                 <IconInfo size={20} />
               </div>
               <p className="text-sm text-stone-500">
-                ประวัติงาน (audit log) ดูได้ใน{' '}
-                <a
-                  href="https://app.penprinting.co/production-monitoring/"
-                  className="underline hover:text-stone-700"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  ระบบ WP
-                </a>
+                ประวัติงาน (audit log) อยู่ระหว่างพัฒนา
               </p>
             </div>
           )}

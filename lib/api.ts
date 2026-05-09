@@ -2,7 +2,7 @@ import 'server-only';
 import type { LoadAllResponse, Order } from './types';
 
 /**
- * Fetch wrapper for the legacy Apps Script API at app.penprinting.co.
+ * Fetch wrapper for the Dashboard Apps Script web app (script.google.com → APPS_SCRIPT_URL).
  * Server-side only — env vars APPS_SCRIPT_URL + APPS_SCRIPT_TOKEN must never reach the client.
  *
  * The token is HMAC-signed by API_SECRET (managed in Apps Script Script Properties).

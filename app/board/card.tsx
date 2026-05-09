@@ -1065,13 +1065,8 @@ function DetailContent({
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-stone-100 text-stone-400 mx-auto">
               <IconInfo size={20} />
             </div>
-            <p className="text-sm text-stone-500">ประวัติงาน (audit log) ดูได้ใน{' '}
-              <a
-                href="https://app.penprinting.co/production-monitoring/"
-                className="underline hover:text-stone-700"
-              >
-                ระบบ WP
-              </a>
+            <p className="text-sm text-stone-500">
+              ประวัติงาน (audit log) อยู่ระหว่างพัฒนา
             </p>
           </div>
         )}

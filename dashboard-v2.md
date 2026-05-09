@@ -300,6 +300,26 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Phase 3.6 prep day — Retire WP code-side prep (2026-05-09 morning)
+Code-side prep ครบสำหรับ DNS-switch retire WordPress legacy. แก้ทั้งหมด 9 hard-coded WP refs across 3 projects, type-check + production build ผ่าน.
+
+| Fix | Location | Why |
+|---|---|---|
+| Comment fix | [lib/api.ts:5](lib/api.ts) | "legacy Apps Script API at app.penprinting.co" → "Apps Script web app (script.google.com → APPS_SCRIPT_URL)". Apps Script API ไม่เคย host ที่ app.penprinting.co — WP frontend เท่านั้นที่ host ที่นั่น. หลัง retire ก็ยิ่งทำให้สับสน |
+| History tab WP link removed | [app/orders/orders-table.tsx:423](app/orders/orders-table.tsx) + [app/board/card.tsx:1070](app/board/card.tsx) | "ดูประวัติงาน → ระบบ WP" link จะ 404 หลัง DNS switch (Vercel ไม่มี /production-monitoring path). แทนด้วย "ประวัติงาน (audit log) อยู่ระหว่างพัฒนา" |
+| Marketing site redirects | [penprinting-web/next.config.js](../penprinting-web/next.config.js) | 4 redirects เคยชี้ `app.penprinting.co/production-monitoring*` + `/track*` (อ้อม WP) → ปรับเป็น `dashboard.penprinting.co/board` + `/track` (canonical, ไม่อ้อม alias) |
+| Morning Report DASHBOARD_URL | [morning-report/apps-script/v2/Code.js:15](../morning-report/apps-script/v2/Code.js) + mirror `.gs` | เคย `penprinting.co/production-monitoring/` (broken แล้วตั้งแต่ migration 2026-04-26 — penprinting.co Vercel ไม่มี path นั้น) → `dashboard.penprinting.co/board` |
+
+**Verified safe** (no action needed):
+- Paper QR codes ที่พิมพ์ไปแล้ว — ใช้ `app.penprinting.co/track?id=...` ตกที่ Vercel `/track` route ทำงานปกติ
+- v2 QR generation ใหม่ ([app/orders/[id]/tracking-card/page.tsx](app/orders/[id]/tracking-card/page.tsx) + [print/page.tsx](app/orders/[id]/print/page.tsx)) — ใช้ `dashboard.penprinting.co/track` อยู่แล้ว
+- LINE Webhook + Cloudflare Worker — ไม่มี hard-coded WP URL
+- `production-monitoring.js:N` doc comments ใน v2 source — historical port refs ไม่ break
+
+**Spawned task**: Morning Report `ICON_BASE` (`penprinting.co/icons/`) ก็ broken เหมือนกัน — icons จริงอยู่ที่ `_shared/icons/` ไม่ได้ expose ผ่าน HTTP. Fix แยก task
+
+**ถัดไป (manual user steps)**: backup WP + add custom domain Vercel + DNS A→CNAME HostAtom + push Morning Report Apps Script. ดู [NEXT-SESSION.md](NEXT-SESSION.md) Section "Phase 3.6 Path A — รายการที่ user ต้องทำเอง"
+
 ### Round 5 — Workflow speed sweep (2026-05-07 afternoon, `3cb4501`) + Apps Script v5.10.5
 6 fixes spanning hot + cold paths after the perf compound work. Ships with Apps Script v5.10.5 (audit-skip param) — v2 deploys with `audit=0` by default; backwards-compat preserved.
 
