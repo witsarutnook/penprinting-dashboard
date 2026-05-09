@@ -2,7 +2,9 @@
 
 > Last scan: **2026-05-08** (penprinting-auditor) — รอบ regression หลัง 2026-05-07 mega-day (16+ commits)
 >
-> Latest update: **2026-05-08** — ปิด 9 (3 High + 5 Medium + 1 doc), defer 6 (M1, M3, L1-L4) ที่ audit เองแนะนำให้ defer
+> Latest update: **2026-05-09** — ปิด 1 user-reported perf bug (`createOrder` missing from PATHS_BY_ACTION → order create perceived 15-60s instead of ~1.5s)
+>
+> Previous: **2026-05-08** — ปิด 9 (3 High + 5 Medium + 1 doc), defer 6 (M1, M3, L1-L4) ที่ audit เองแนะนำให้ defer
 >
 > ✅ = ปิดแล้ว / commit hash อยู่ในวงเล็บ
 > ⏳ = ยังเหลือ
@@ -36,6 +38,12 @@ _(ปิดครบ — ดู Closed section)_
 - [ ] ⏳ **L2-currentactor-edge-comment** — `lib/api.ts:179-189` doc clarity — defer ก่อน, จะปรับตอน sweep doc รอบหน้า
 - [ ] ⏳ **L3-edge-build-warnings** — `app/api/track/lookup/route.ts:13` + `app/api/auth/{login,logout}` Vercel logs edge runtime warnings (expected) แต่ noisy. **Defer reason**: cosmetic, no functional issue
 - [ ] ⏳ **L4-data-audit-modal-sales-no-action** — `app/orders/data-audit-modal.tsx:175-184, 295-307` sales เห็นบัดจ์ count + open modal ได้ แต่ปุ่มทั้งหมด admin-only → UX leak. **Fix idea**: ซ่อน DataAuditButton สำหรับ non-admin หรือใส่ "ติดต่อ admin" hint. Defer ก่อนเพราะ low impact (sales เปิดแล้วเห็นปุ่มไม่ได้ก็ไม่กระทบ workflow ตัวเอง)
+
+---
+
+## ✅ Closed — Bug Hunt 2026-05-09 (user-reported, found via static analysis)
+
+- [x] **createOrder-cache-bust-missing** — `lib/api.ts:160` PATHS_BY_ACTION map ไม่มี entry สำหรับ `createOrder` action (fast-path สำหรับ POST /api/orders/add ตั้งแต่ commit `a184254` 2026-05-07). ทุก atomic action อื่น (`cancelOrder`, `deleteOrderCascade`, `promoteDraft`, `bulkForward`) อยู่ครบ. **Effect**: หลัง user submit ใบสั่งงานใหม่ — Apps Script atomic write done ใน ~1.5s แต่ /board + /orders ยังโชว์ snapshot เก่า (60s ISR cache + ❌ no revalidatePath). New order appears เมื่อ ISR expire (worst 60s) หรือ auto-sync coincides with expiry (best 15s). Closed `e88f386` — เพิ่ม `createOrder: ['/board', '/orders', '/orders/new', '/calendar', '/analytics']` (union ของ addOrder + addJob path lists). **Lesson** [should add to memory]: audit เวลาเพิ่ม atomic Apps Script action ใหม่ที่ replace multi-call legacy → ตรวจ PATHS_BY_ACTION map ด้วย เสมอ มิฉะนั้น cache invalidation จะหาย.
 
 ---
 
