@@ -100,15 +100,17 @@ async function tryPostgres<T>(label: string, fn: () => Promise<T>): Promise<T | 
   try {
     return await fn();
   } catch (err) {
-    // Fall back to Apps Script silently — staleness or schema drift
-    // shouldn't surface to users while we're in shadow-mode validation.
-    // Tag a Sentry breadcrumb so we can audit fallback rate later.
+    const reason = err instanceof Error ? err.message : String(err);
+    // console.warn writes to Vercel function logs — visible via Logs tab,
+    // searchable for "[postgres-fallback]". Sentry breadcrumb stays for
+    // event context if any error surfaces later in the same request.
+    console.warn(`[postgres-fallback] ${label}: ${reason}`);
     try {
       const Sentry = await import('@sentry/nextjs');
       Sentry.addBreadcrumb({
         category: 'postgres-fallback',
         level: 'warning',
-        message: `${label}: ${err instanceof Error ? err.message : String(err)}`,
+        message: `${label}: ${reason}`,
       });
     } catch {
       // Sentry import failure is non-fatal
