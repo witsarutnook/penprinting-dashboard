@@ -143,9 +143,42 @@ export function OrderForm({
   // already enabled (e.g. while transitioning to /print or staying on page).
   const [, startTransition] = useTransition();
 
+  // Track which order id we've already initialized for this open session.
+  // After save, lib/api.ts mirrors the write to Postgres + revalidatePath
+  // bumps the cache, then the page re-renders with a FRESH `initial` object
+  // whose .id matches the one we already initialized for. Without this guard
+  // the useEffect below would re-run, setSuccess(null), and the post-save
+  // SuccessView would vanish — the user would see the form re-rendered with
+  // their just-saved data and conclude the save didn't happen, then click
+  // save again. Phase 1.7's faster refresh made this flicker user-visible.
+  const initializedIdRef = useRef<number | null | 'prefill' | 'empty'>(null);
+  const wasOpenRef = useRef(false);
+
   // Initialize on open (inline mode is always considered "open")
   useEffect(() => {
-    if (!open && !inline) return;
+    const isOpen = open || inline;
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      return;
+    }
+
+    // Compute a stable identity for what we're populating the form from.
+    // Same identity → skip re-init unless the modal just transitioned
+    // from closed → open (modal "fresh open" case).
+    const justOpened = !wasOpenRef.current;
+    wasOpenRef.current = true;
+    let identity: number | 'prefill' | 'empty';
+    if (initial) identity = initial.id;
+    else if (initialPrefill) identity = 'prefill';
+    else identity = 'empty';
+
+    if (!justOpened && initializedIdRef.current === identity) {
+      // Same logical entity, mid-session re-render (e.g. router.refresh
+      // after save) — preserve local form state INCLUDING the SuccessView.
+      return;
+    }
+    initializedIdRef.current = identity;
+
     if (!initial && initialPrefill) {
       // Duplicate flow — populate from another order's rawData but clear
       // identifying fields so user fills fresh values.
