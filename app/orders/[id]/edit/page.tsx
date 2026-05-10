@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
-import { loadAll, loadOrder, AppsScriptError } from '@/lib/api';
+import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { OrderEditClient } from './client';
@@ -33,15 +33,14 @@ export default async function EditOrderPage({ params }: { params: { id: string }
   }> = [];
   let errorMessage: string | null = null;
   try {
-    // Fetch the target order (uncached, single-row, ~200ms) AND the cached
-    // 60s-ISR snapshot (for the recentOrders autocomplete) IN PARALLEL.
-    // Edit page now starts rendering as soon as the target lands instead
-    // of waiting on the full snapshot every time.
-    const [orderResult, snap] = await Promise.all([
-      loadOrder(id),
-      loadAll(),
-    ]);
-    const o = orderResult.order;
+    // ONE fetch covers both needs: loadAll() (Postgres-first via Phase 1.7
+    // dual-write mirror, ~200ms warm) returns the full snapshot which
+    // already contains the target order with rawData + recentOrders source.
+    // Phase 1.7 dual-write keeps the mirror current with every Apps Script
+    // write so this snapshot is fresh — no need for the previous "uncached
+    // single-row loadOrder" pattern that bypassed Postgres.
+    const snap = await loadAll();
+    const o = snap.orders.find((x) => Number(x.id) === id);
     if (!o) notFound();
     initial = {
       id: Number(o.id),
