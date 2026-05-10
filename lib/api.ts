@@ -385,6 +385,26 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
       // ignore — non-fatal
     }
   }
+
+  // Phase 1 staleness guard — the just-written change exists in Sheet but
+  // the Postgres mirror won't reflect it until the next 10-min cron run.
+  // Without this marker, the next page render's loadAll() would Postgres-
+  // first and return the OLD data → user perceives the write as "bouncing
+  // back" because the optimistic UI's commit reveals stale state. Push
+  // sync_meta.last_sync_at into the past so checkStaleness() sees stale
+  // → tryPostgres throws → reads fall back to Apps Script until the
+  // next cron sync brings Postgres back in sync.
+  if (postgresEnabled() && paths && paths.length > 0) {
+    try {
+      const { sql, isPostgresConfigured } = await import('@/lib/postgres');
+      if (isPostgresConfigured()) {
+        await sql`UPDATE sync_meta SET last_sync_at = NOW() - INTERVAL '1 hour'`;
+      }
+    } catch {
+      // ignore — non-fatal. Worst case: read sees stale Postgres for one
+      // page render until the next ISR / cron resolves it.
+    }
+  }
   return data as T;
 }
 
