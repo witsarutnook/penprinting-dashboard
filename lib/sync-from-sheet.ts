@@ -112,6 +112,16 @@ export async function syncAllFromSheet(): Promise<SyncResult> {
   // tables stop being mirrored from Sheet and rely on lib/postgres-write.ts
   // best-effort Apps Script calls to keep Sheet in sync as a one-way push.
   if (phase2OwnsTable('templates')) {
+    // Touch sync_meta so loadAllFromPostgres staleness check still passes.
+    // Semantically: "Postgres owns this table; data is current via Phase 2
+    // writes, not cron." Without this update, sync_meta stays from before
+    // the flag was flipped and the staleness check drives unrelated reads
+    // (loadAll for /board) into the Apps Script fallback path.
+    try {
+      await recordSyncMetaTouch('templates');
+    } catch {
+      // Non-fatal — staleness check might fail for templates but not block deploy
+    }
     tables.push({
       table: 'templates',
       fetched: snapshot.templates?.length || 0,
@@ -148,6 +158,19 @@ async function recordSyncMeta(table: string, rowCount: number, ok: boolean, erro
   } catch {
     // Never break a sync run on meta-write failure.
   }
+}
+
+/** Update sync_meta.last_sync_at for a Phase 2-owned table without
+ *  touching row_count or ok status — signals "table is current via Phase
+ *  2 writes, not cron." Used when we skip the cron sync for owned tables.
+ *  Falls back to a minimal INSERT if the row doesn't exist yet. */
+async function recordSyncMetaTouch(table: string): Promise<void> {
+  await sql`
+    INSERT INTO sync_meta (table_name, last_sync_at, ok)
+    VALUES (${table}, NOW(), true)
+    ON CONFLICT (table_name)
+    DO UPDATE SET last_sync_at = NOW(), ok = true, last_error = NULL
+  `;
 }
 
 async function bulkInsert(
