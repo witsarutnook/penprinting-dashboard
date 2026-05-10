@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { loadAll, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { loadOrder, AppsScriptError } from '@/lib/api';
 import { displayDate } from '@/lib/jobs';
 import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
 import { computeUrgency, getBangkokToday, type Urgency } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
+import type { Job, Shipped, Cancelled } from '@/lib/types';
 
 // Public route — no auth, no Node-specific deps. Run on Vercel's Edge
 // runtime to skip Node.js cold starts (~150-300ms saved on the first
@@ -130,22 +131,28 @@ export async function POST(req: Request) {
     return respond({ error: 'เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง' }, 400);
   }
 
-  // Try the cached snapshot first (60s ISR — fast for already-known orders).
-  // If not found, the order might be brand-new — created seconds ago via
-  // "พิมพ์+สั่ง" then customer scans the QR before the cache rotates.
-  // Bypass the cache once before giving up. Mirrors the print page pattern.
-  let snap;
+  // Single-order lookup is much faster than loadAll snapshot for /track:
+  // public users only need ONE order, ~1KB of payload vs ~200KB for full
+  // snapshot. loadOrder() goes Postgres-first when READ_FROM_POSTGRES=1
+  // (Phase 1) and falls back to Apps Script with revalidate=0 for
+  // brand-new orders that haven't been mirrored yet (created within the
+  // last cron window).
+  let lookup;
   try {
-    snap = await loadAll();
-    if (!snap.orders.some((o) => String(o.id) === id)) {
-      snap = await loadAllFresh();
+    // First attempt: cached read with 30s revalidate — Postgres-first
+    // happy path returns in ~80-150ms for already-mirrored orders.
+    lookup = await loadOrder(id, { revalidate: 30 });
+    if (!lookup.order) {
+      // Order genuinely missing OR freshly created (mirror lag).
+      // Force Apps Script direct read with no caching.
+      lookup = await loadOrder(id, { revalidate: 0 });
     }
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);
   }
 
-  const order = snap.orders.find((o) => String(o.id) === id);
+  const order = lookup.order;
   if (!order) {
     return respond({ error: 'ไม่พบใบสั่งงานนี้' }, 404);
   }
@@ -158,10 +165,12 @@ export async function POST(req: Request) {
     return respond({ error: 'PIN ไม่ถูกต้อง' }, 401);
   }
 
-  // Match job / shipped / cancelled by orderId
-  const jobMatch = snap.jobs.find((j) => Number(j.orderId) === Number(id));
-  const shippedMatch = snap.shipped.find((s) => Number(s.orderId) === Number(id));
-  const cancelledMatch = snap.cancelled.find((c) => Number(c.orderId) === Number(id));
+  // loadOrder returns the SINGLE most recent matching row per state. The
+  // legacy loadAll path used .find() which has the same single-row semantics,
+  // so behavior is preserved.
+  const jobMatch = lookup.job as unknown as Job | null;
+  const shippedMatch = lookup.shipped as unknown as Shipped | null;
+  const cancelledMatch = lookup.cancelled as unknown as Cancelled | null;
 
   // Status label = current step name, matching WP wording exactly so the
   // 6-step progress bar on the client is consistent with the badge.

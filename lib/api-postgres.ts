@@ -129,8 +129,16 @@ export async function loadOrderFromPostgres(orderId: number | string): Promise<L
     sql<{ raw: Cancelled }>`SELECT raw FROM cancelled WHERE order_id = ${id} ORDER BY id DESC LIMIT 1`,
   ]);
 
+  // Throw a stale signal when the order doesn't exist in the mirror so
+  // the caller's fallback path (Apps Script direct read) gets a chance.
+  // This handles brand-new orders created within the last cron window
+  // (≤10 min) — they exist in Sheet but haven't been mirrored yet.
+  if (!orderR.rows[0]) {
+    throw new PostgresStaleError(`order ${id} not in mirror (likely freshly created)`);
+  }
+
   return {
-    order: orderR.rows[0]?.raw ?? null,
+    order: orderR.rows[0].raw,
     job: (jobR.rows[0]?.raw as unknown as Record<string, unknown>) ?? null,
     shipped: (shippedR.rows[0]?.raw as unknown as Record<string, unknown>) ?? null,
     cancelled: (cancelledR.rows[0]?.raw as unknown as Record<string, unknown>) ?? null,
