@@ -3,7 +3,7 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF } from '@/lib/board';
 import { phase2WriteEnabled } from '@/lib/feature-flags';
-import { setCoworkInPostgres, markRowClean, PostgresWriteError } from '@/lib/postgres-write';
+import { setCoworkInPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -15,12 +15,15 @@ export const maxDuration = 30;
  * Apps Script overwrites the `cowork` column of the job row — pass empty
  * array (or null) to clear all collaborators.
  *
- * Phase 2 — when WRITE_COWORK_TO_POSTGRES=1, Postgres is authoritative.
- * Path: UPDATE Postgres + mark phase2_dirty_at → best-effort Apps Script
- * setCowork → on success markRowClean. If Apps Script fails, the row
- * stays dirty and the heal cron `/api/cron/sync-to-sheet` retries via
- * `setJobRow` until Sheet catches up. The from-Sheet cron skips dirty
- * rows so the Phase 2 update doesn't get clobbered while waiting.
+ * Phase 2 — when WRITE_COWORK_TO_POSTGRES=1, Postgres is authoritative
+ * and the inline Apps Script Sheet sync is dropped. /board reads from
+ * Postgres so the new cowork chip lands instantly (~300ms perceived vs
+ * ~1.8s with inline sync). The heal cron `/api/cron/sync-to-sheet`
+ * pushes phase2_dirty_at rows to Sheet within 5 min via setJobRow.
+ * The from-Sheet cron skips dirty rows so Phase 2 state survives until
+ * Sheet catches up. Trade: admin Sheet UI sees up to 5 min stale cowork
+ * — acceptable because no external system (LINE webhook, morning report)
+ * reads cowork from Sheet.
  *
  * Request body: { id, cowork: Array<{ dept, staff }> }
  */
@@ -101,9 +104,10 @@ async function phase2SetCowork(id: number, cleaned: string[]): Promise<NextRespo
 
   if (!found) {
     // Job id not in Postgres — could be an older row that the from-Sheet
-    // cron hasn't synced yet. Mark dirty was a no-op in this case (UPDATE
-    // affected 0 rows). Fall through to legacy Apps Script path so the
-    // user's intent still lands on Sheet, then the next cron pulls it.
+    // cron hasn't synced yet, or a fresh job from a sibling tab whose
+    // mirror hasn't propagated. Fall through to legacy Apps Script path
+    // (synchronous) so the user's intent still lands on Sheet — the next
+    // from-Sheet cron will pick it up into Postgres.
     try {
       const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
         id, cowork: cleaned,
@@ -116,40 +120,11 @@ async function phase2SetCowork(id: number, cleaned: string[]): Promise<NextRespo
     }
   }
 
-  // Best-effort inline Sheet sync — fast path. On success we clear the
-  // dirty marker so the heal cron doesn't re-process this row. On failure
-  // the row stays dirty and the heal cron retries via setJobRow within
-  // 5 minutes. Sentry breadcrumb for observability.
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
-      id, cowork: cleaned,
-    });
-    if (result.error) {
-      // Apps Script returned an error response — leave row dirty for heal cron
-      try {
-        const Sentry = await import('@sentry/nextjs');
-        Sentry.addBreadcrumb({
-          category: 'phase2-sheet-sync',
-          level: 'warning',
-          message: `setCowork inline sync failed (will retry via heal cron): ${result.error}`,
-          data: { jobId: id },
-        });
-      } catch { /* ignore */ }
-    } else {
-      await markRowClean('jobs', id);
-    }
-  } catch (err) {
-    // Apps Script unreachable — row stays dirty, heal cron retries
-    try {
-      const Sentry = await import('@sentry/nextjs');
-      Sentry.captureException(err, {
-        tags: { layer: 'phase2-sheet-sync', action: 'setCowork' },
-        extra: { jobId: id },
-      });
-    } catch { /* ignore */ }
-  }
-
-  // Cache bust — only /board uses cowork data
+  // Postgres write succeeded — the row carries phase2_dirty_at NOT NULL,
+  // so the heal cron will push it to Sheet via setJobRow within 5 min.
+  // No inline Apps Script call here — that's where the perceived ~1.5s
+  // latency was coming from. Card on /board re-renders from Postgres
+  // (Phase 1 read mirror) which already sees the new cowork.
   try {
     const { revalidatePath } = await import('next/cache');
     revalidatePath('/board');
