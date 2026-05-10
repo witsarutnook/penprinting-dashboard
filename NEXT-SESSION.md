@@ -2,6 +2,20 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-10 (afternoon batch 5 — Phase 2 setCowork sync_meta bug fix):** ✅
+> - **Symptom**: หลัง activate `WRITE_COWORK_TO_POSTGRES=1` + drop inline Apps Script sync, /board cards ไม่ render cowork chip ใหม่ ทั้งที่ toast success + Postgres state ถูกต้อง
+> - **Diagnosed via** `/diagnose` skill + 5-layer diagnostic endpoint (`/api/admin/diagnose-board`):
+>   - Layer 1 Postgres direct: ✅ cowork = `["mo"]`
+>   - Layer 2 loadAllFromPostgres: ❌ throws `PostgresStaleError: templates last synced 107 min ago`
+>   - Layer 3 loadAll wrapper: silently falls back to Apps Script
+>   - Layer 4 Apps Script: returns `cowork: undefined` because heal cron hadn't pushed to Sheet yet (5-min cron, just-written rows are dirty)
+> - **Root cause**: Phase 2 templates migration (afternoon batch 3) skipped cron sync via `phase2OwnsTable('templates')` แต่ลืมอัปเดต `sync_meta.last_sync_at` → templates "stale" ตามเวลา → staleness check fail → silent fallback to Apps Script → /board reads stale Sheet
+> - **Fix** (`de9d06a`): `lib/sync-from-sheet.ts` — when skipping a Phase 2-owned table, call new `recordSyncMetaTouch(table)` to update last_sync_at + ok=true (no row_count change). Semantically: "Postgres owns this; data current via Phase 2 writes, not cron."
+> - **Manual remediation**: hit `/api/admin/sync-all` once after deploy to update sync_meta immediately (otherwise wait ≤10 min for next cron cycle)
+> - **Verified all 4 layers via diagnose-board** + user confirmed /board cards now update within ~300ms
+> - **Lesson captured**: any future Phase 2 table-level skip MUST call `recordSyncMetaTouch()`. Phase 2 row-level dirty marker (jobs/orders/etc.) doesn't have this issue because cron still runs + updates sync_meta normally
+> - **Total**: 2 commits (`fd9ce1f` diagnostic + `de9d06a` fix). Diagnostic endpoint kept for future Phase 2 debugging
+>
 > **Session 2026-05-10 (afternoon batch 4 — Phase 2 reverse-sync infra + setCowork):** ✅
 > - **Architectural insight**: Templates migration was clean เพราะ table-level ownership (cron skip table). setCowork (และ actions ส่วนใหญ่ที่เหลือ) แตะ `jobs/orders/shipped/cancelled` ที่ยังมี actions อื่น write ผ่าน Apps Script อยู่ → cron ต้อง keep running → table-skip ไม่ใช้. ต้อง row-level ownership marker
 > - **Phase 2 reverse-sync infrastructure**:
