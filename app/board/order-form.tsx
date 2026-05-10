@@ -128,6 +128,10 @@ export function OrderForm({
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [manageTemplatesOpen, setManageTemplatesOpen] = useState(false);
+  // Persist last-applied template id so the dropdown shows what was loaded
+  // instead of resetting to the placeholder. Cleared when user picks the
+  // empty option or applies a different template.
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
 
   const [tab, setTab] = useState<TabKey>('main');
   const [data, setData] = useState<OrderFormData>(() => emptyOrderForm(defaultOrderer));
@@ -527,6 +531,7 @@ export function OrderForm({
     lastOrderIdForCustomer.has(data.customer.trim().toLowerCase());
 
   function applyTemplate(templateId: string) {
+    setSelectedTemplateId(templateId);
     if (!templateId) return;
     const tpl = templateList.find((t) => String(t.id) === templateId);
     if (!tpl) return;
@@ -580,6 +585,7 @@ export function OrderForm({
           createdAt: new Date().toISOString(),
         },
       ]);
+      toast.success(`บันทึก template "${name.trim()}" สำเร็จ`);
       startTransition(() => router.refresh());
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
@@ -589,6 +595,7 @@ export function OrderForm({
   }
 
   async function deleteTemplate(id: number) {
+    const tpl = templateList.find((t) => Number(t.id) === Number(id));
     const ok = await confirmDlg.confirm({
       title: 'ลบ template นี้?',
       message: 'ไม่สามารถย้อนกลับได้',
@@ -610,6 +617,9 @@ export function OrderForm({
         return;
       }
       setTemplateList((list) => list.filter((t) => Number(t.id) !== Number(id)));
+      // Drop the dropdown selection if the user just deleted the loaded template
+      if (selectedTemplateId === String(id)) setSelectedTemplateId('');
+      toast.success(tpl ? `ลบ template "${tpl.name}" สำเร็จ` : 'ลบ template สำเร็จ');
       startTransition(() => router.refresh());
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
@@ -671,7 +681,8 @@ export function OrderForm({
               <div className="flex items-center gap-2 flex-wrap">
                 {templateList.length > 0 && (
                   <select
-                    onChange={(e) => { applyTemplate(e.target.value); e.currentTarget.value = ''; }}
+                    value={selectedTemplateId}
+                    onChange={(e) => applyTemplate(e.target.value)}
                     disabled={busy || templateBusy}
                     className="px-2 py-1 border border-stone-200 rounded-lg text-xs bg-white focus:outline-none focus:border-accent disabled:opacity-50"
                   >
@@ -712,7 +723,7 @@ export function OrderForm({
           {manageTemplatesOpen && !isEdit && canManageTemplates && (
             <div className="mx-5 mt-3 rounded-lg border border-stone-200 bg-stone-50/60 p-3">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-stone-700">Templates</h3>
+                <h3 className="text-sm font-semibold text-stone-700">จัดการ template</h3>
                 <button
                   type="button"
                   onClick={() => setManageTemplatesOpen(false)}
