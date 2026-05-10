@@ -62,6 +62,7 @@ async function BenchData() {
   // Probe: count rows + suggest a target_id with the most entries (gives
   // bench a non-empty working set without the user having to guess one).
   let totalRows = 0;
+  let jobsRows = 0;
   let suggestedTargetId: string | null = null;
   let suggestedRowCount = 0;
   let probeError: string | null = null;
@@ -81,6 +82,15 @@ async function BenchData() {
         suggestedTargetId = top.rows[0].target_id;
         suggestedRowCount = top.rows[0].cnt;
       }
+    }
+    // Optional jobs probe — survives if jobs table doesn't exist yet
+    // (pre-migrate or pre-import). Errors are silenced so audit-only PoC
+    // still works.
+    try {
+      const j = await sql<{ count: number }>`SELECT COUNT(*)::int AS count FROM jobs`;
+      jobsRows = j.rows[0]?.count ?? 0;
+    } catch {
+      jobsRows = 0;
     }
   } catch (err) {
     probeError = err instanceof Error ? err.message : String(err);
@@ -116,6 +126,9 @@ async function BenchData() {
         <div className="text-sm text-stone-900">
           <span className="font-bold tabular-nums">{totalRows.toLocaleString('en-US')}</span>{' '}
           <span className="text-stone-500">rows ใน audit_log</span>
+          {' · '}
+          <span className="font-bold tabular-nums">{jobsRows.toLocaleString('en-US')}</span>{' '}
+          <span className="text-stone-500">rows ใน jobs</span>
         </div>
         {suggestedTargetId && (
           <div className="text-sm text-stone-700">
@@ -124,9 +137,14 @@ async function BenchData() {
             <span className="text-stone-500">({suggestedRowCount} rows)</span>
           </div>
         )}
+        {jobsRows === 0 && (
+          <p className="text-xs text-amber-700">
+            ⚠️ jobs table ว่าง — เปิด <code className="bg-amber-100 px-1 rounded">/api/admin/import-jobs</code> เพื่อ seed → bench section &quot;loadAll&quot; จะใช้งานได้
+          </p>
+        )}
       </div>
 
-      <BenchClient defaultTargetId={suggestedTargetId || ''} />
+      <BenchClient defaultTargetId={suggestedTargetId || ''} jobsAvailable={jobsRows > 0} />
     </>
   );
 }

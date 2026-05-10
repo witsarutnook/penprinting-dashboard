@@ -13,6 +13,10 @@ import { useState } from 'react';
  * Warmup: 1 throwaway hit to each endpoint so we don't measure cold-start
  * Apps Script (it spins up after ~5-15 min idle and the first hit pays
  * 1-3s extra). We want sustained-load numbers.
+ *
+ * Two bench sections:
+ *  1. audit_log filter — small targeted query (best case for Sheet)
+ *  2. loadAll-shaped — full jobs payload (best case for Postgres advantage)
  */
 
 type Sample = { ms: number; ok: boolean; status?: number; error?: string; entries?: number };
@@ -52,21 +56,36 @@ function summarize(label: string, url: string, warmup: Sample, samples: Sample[]
   };
 }
 
-async function timedFetch(url: string): Promise<Sample> {
+async function timedFetch(url: string, entriesKey: 'entries' | 'jobs' = 'entries'): Promise<Sample> {
   const t0 = performance.now();
   try {
     const res = await fetch(url, { cache: 'no-store' });
     const ms = performance.now() - t0;
     if (!res.ok) return { ms, ok: false, status: res.status };
-    const data = (await res.json()) as { entries?: unknown[]; error?: string };
-    if (data.error) return { ms, ok: false, status: res.status, error: data.error };
-    return { ms, ok: true, status: res.status, entries: Array.isArray(data.entries) ? data.entries.length : 0 };
+    const data = (await res.json()) as Record<string, unknown>;
+    if (data.error) return { ms, ok: false, status: res.status, error: String(data.error) };
+    const arr = data[entriesKey];
+    return { ms, ok: true, status: res.status, entries: Array.isArray(arr) ? arr.length : 0 };
   } catch (err) {
     return { ms: performance.now() - t0, ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-export function BenchClient({ defaultTargetId }: { defaultTargetId: string }) {
+interface BenchClientProps {
+  defaultTargetId: string;
+  jobsAvailable: boolean;
+}
+
+export function BenchClient({ defaultTargetId, jobsAvailable }: BenchClientProps) {
+  return (
+    <div className="space-y-6">
+      <AuditBench defaultTargetId={defaultTargetId} />
+      {jobsAvailable && <BoardBench />}
+    </div>
+  );
+}
+
+function AuditBench({ defaultTargetId }: { defaultTargetId: string }) {
   const [targetIdInput, setTargetIdInput] = useState(defaultTargetId);
   const [paramKind, setParamKind] = useState<'orderId' | 'jobId'>('orderId');
   const [runs, setRuns] = useState(10);
@@ -107,10 +126,11 @@ export function BenchClient({ defaultTargetId }: { defaultTargetId: string }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-stone-200 bg-white p-5 space-y-3">
-        <h2 className="text-sm font-medium text-stone-500 uppercase tracking-wide">การตั้งค่า bench</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <BenchSection
+      title="Bench 1 — audit_log filter (single target)"
+      subtitle="Best case for Sheet — small targeted query"
+      controls={
+        <>
           <label className="text-sm text-stone-700">
             param
             <select
@@ -132,29 +152,121 @@ export function BenchClient({ defaultTargetId }: { defaultTargetId: string }) {
               className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm font-mono"
             />
           </label>
-          <label className="text-sm text-stone-700">
-            จำนวน runs ต่อ endpoint
-            <input
-              type="number"
-              min={3}
-              max={50}
-              value={runs}
-              onChange={e => setRuns(Math.max(3, Math.min(50, parseInt(e.target.value) || 10)))}
-              className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm tabular-nums"
-            />
-          </label>
+          <RunsInput runs={runs} setRuns={setRuns} />
+        </>
+      }
+      runDisabled={running || !targetIdInput.trim()}
+      runLabel={running ? 'กำลัง bench…' : 'รัน benchmark (audit)'}
+      onRun={runBench}
+      progress={progress}
+      results={results}
+    />
+  );
+}
+
+function BoardBench() {
+  const [runs, setRuns] = useState(5);
+  const [running, setRunning] = useState(false);
+  const [results, setResults] = useState<{ sheet: Result; postgres: Result } | null>(null);
+  const [progress, setProgress] = useState<string>('');
+
+  async function runBench() {
+    setRunning(true);
+    setResults(null);
+
+    const sheetUrl = '/api/board/sheet';
+    const pgUrl = '/api/board/postgres';
+
+    setProgress('Warmup hits…');
+    const sheetWarm = await timedFetch(sheetUrl, 'jobs');
+    const pgWarm = await timedFetch(pgUrl, 'jobs');
+
+    const sheetSamples: Sample[] = [];
+    const pgSamples: Sample[] = [];
+
+    for (let i = 0; i < runs; i++) {
+      setProgress(`Sheet ${i + 1}/${runs}…`);
+      sheetSamples.push(await timedFetch(sheetUrl, 'jobs'));
+    }
+    for (let i = 0; i < runs; i++) {
+      setProgress(`Postgres ${i + 1}/${runs}…`);
+      pgSamples.push(await timedFetch(pgUrl, 'jobs'));
+    }
+
+    setResults({
+      sheet: summarize('Sheet (loadAllFresh)', sheetUrl, sheetWarm, sheetSamples),
+      postgres: summarize('Postgres (SELECT raw)', pgUrl, pgWarm, pgSamples),
+    });
+    setProgress('');
+    setRunning(false);
+  }
+
+  return (
+    <BenchSection
+      title="Bench 2 — loadAll-shaped (full jobs payload)"
+      subtitle="Best case for Postgres — what /board page actually does on cold ISR rotation"
+      controls={<RunsInput runs={runs} setRuns={setRuns} />}
+      runDisabled={running}
+      runLabel={running ? 'กำลัง bench…' : 'รัน benchmark (loadAll)'}
+      onRun={runBench}
+      progress={progress}
+      results={results}
+    />
+  );
+}
+
+function RunsInput({ runs, setRuns }: { runs: number; setRuns: (n: number) => void }) {
+  return (
+    <label className="text-sm text-stone-700">
+      จำนวน runs ต่อ endpoint
+      <input
+        type="number"
+        min={3}
+        max={50}
+        value={runs}
+        onChange={e => setRuns(Math.max(3, Math.min(50, parseInt(e.target.value) || 10)))}
+        className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm tabular-nums"
+      />
+    </label>
+  );
+}
+
+function BenchSection({
+  title,
+  subtitle,
+  controls,
+  runDisabled,
+  runLabel,
+  onRun,
+  progress,
+  results,
+}: {
+  title: string;
+  subtitle: string;
+  controls: React.ReactNode;
+  runDisabled: boolean;
+  runLabel: string;
+  onRun: () => void;
+  progress: string;
+  results: { sheet: Result; postgres: Result } | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-stone-200 bg-white p-5 space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-stone-900">{title}</h2>
+          <p className="text-xs text-stone-500 mt-1">{subtitle}</p>
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{controls}</div>
         <button
           type="button"
-          onClick={runBench}
-          disabled={running || !targetIdInput.trim()}
+          onClick={onRun}
+          disabled={runDisabled}
           className="px-4 py-2 rounded-lg bg-stone-900 text-white text-sm font-medium hover:bg-stone-800 disabled:bg-stone-300 disabled:cursor-not-allowed"
         >
-          {running ? 'กำลัง bench…' : 'รัน benchmark'}
+          {runLabel}
         </button>
-        {progress && (
-          <div className="text-xs text-stone-500 tabular-nums">{progress}</div>
-        )}
+        {progress && <div className="text-xs text-stone-500 tabular-nums">{progress}</div>}
       </div>
 
       {results && (
@@ -244,31 +356,35 @@ function SamplesCol({ label, samples }: { label: string; samples: Sample[] }) {
 }
 
 function Verdict({ a, b }: { a: Result; b: Result }) {
-  const speedup = a.p50 > 0 && b.p50 > 0 ? a.p50 / b.p50 : 0;
+  // Use p95 (tail) as the primary signal, not p50 — user pain comes from
+  // the slow requests (cold start, big payloads), not the typical case.
+  // p50 ratio is also reported alongside.
+  const p95Speedup = a.p95 > 0 && b.p95 > 0 ? a.p95 / b.p95 : 0;
+  const p50Speedup = a.p50 > 0 && b.p50 > 0 ? a.p50 / b.p50 : 0;
   let verdict: { color: string; title: string; body: string };
-  if (speedup >= 10) {
+  if (p95Speedup >= 5) {
     verdict = {
       color: 'bg-emerald-50 border-emerald-200 text-emerald-900',
-      title: `🟢 Postgres เร็วกว่า ${speedup.toFixed(1)}× — proceed migration`,
-      body: 'PoC ผ่าน threshold (>10×). แนะนำเข้า Phase 1 (read mirror) — Vercel Postgres + Drizzle + dual-write, v2 reads ทั้งหมดไปที่ Postgres, Sheet ยังเป็น source of truth. ใช้เวลา ~1 สัปดาห์.',
+      title: `🟢 Postgres p95 เร็วกว่า ${p95Speedup.toFixed(1)}× (p50 ${p50Speedup.toFixed(1)}×) — strong GO`,
+      body: 'tail latency ดีขึ้นมาก = user UX จะรู้สึก smooth (ไม่มี cold start spike). แนะนำเข้า Phase 1 (read mirror): Vercel Postgres + Drizzle + dual-write จาก Apps Script, v2 reads ทั้งหมดไป Postgres, Sheet ยังเป็น source of truth. ใช้เวลา ~1 สัปดาห์.',
     };
-  } else if (speedup >= 5) {
+  } else if (p95Speedup >= 2) {
     verdict = {
       color: 'bg-amber-50 border-amber-200 text-amber-900',
-      title: `🟡 Postgres เร็วกว่า ${speedup.toFixed(1)}× — borderline`,
-      body: 'PoC ผ่านแบบกลางๆ. Migration จะเห็นผล แต่ ROI ไม่สูงพอที่จะยกเลิก Apps Script ทั้งหมด. แนะนำทำ hybrid (Postgres read mirror สำหรับ /analytics + /track, Sheet สำหรับ /board + /orders) แทน full migrate.',
+      title: `🟡 Postgres p95 เร็วกว่า ${p95Speedup.toFixed(1)}× (p50 ${p50Speedup.toFixed(1)}×) — moderate win`,
+      body: 'มี win แต่ไม่ใหญ่. ทำ hybrid (Postgres read mirror สำหรับ /analytics + /track ที่ payload ใหญ่, Sheet สำหรับ small reads) แทน full migrate. ROI เร็วกว่าและ risk ต่ำกว่า.',
     };
-  } else if (speedup >= 1.5) {
+  } else if (p95Speedup >= 1.2) {
     verdict = {
       color: 'bg-stone-50 border-stone-200 text-stone-900',
-      title: `🟠 Postgres เร็วกว่าแค่ ${speedup.toFixed(1)}× — defer`,
-      body: 'PoC ไม่คุ้ม. Network bottleneck (Vercel ↔ Postgres region) อาจเป็นตัวจำกัด — ลอง check ว่า Postgres region ตรงกับ Vercel function region. ถ้าจริงๆ แค่ 1-3× ที่นี่, Migration ทั้งหมดจะได้ ~3-5× ในผู้ใช้จริง — ไม่คุ้ม risk + 4-6 weeks.',
+      title: `🟠 Postgres p95 เร็วกว่าแค่ ${p95Speedup.toFixed(1)}× (p50 ${p50Speedup.toFixed(1)}×) — defer`,
+      body: 'win น้อย — น่าจะเพราะ Apps Script + TextFinder optimize ไปเยอะแล้ว. หันไปทำ optimization อื่นแทน (stale-while-revalidate, server-rendered KPI cache, edge runtime ขยาย, smart prefetch) ที่ปลอดภัยกว่า migration 4-6 wk.',
     };
   } else {
     verdict = {
       color: 'bg-red-50 border-red-200 text-red-900',
-      title: `🔴 Postgres ${speedup < 1 ? 'ช้ากว่า' : 'เท่ากัน'} — abort`,
-      body: 'มีอะไรผิด — ปกติ Postgres + index ต้องเร็วกว่า Sheet เยอะ. Check: Postgres region (US? Asia?), Vercel function region, audit_log row count ใน Postgres. ถ้า region ไม่ใช่ปัญหา = ปัญหา network แปลกๆ ที่ต้อง debug ก่อนตัดสินใจ migration.',
+      title: `🔴 Postgres p95 ${p95Speedup < 1 ? 'ช้ากว่า' : 'เท่ากัน'} — abort`,
+      body: 'มีอะไรผิด — ปกติ Postgres + index ต้องชนะอย่างน้อย p95. Check: Postgres region, Vercel function region (ต้องตรงกัน), Neon auto-suspend. ถ้า region ตรงแล้วยังเสมอ = workload เล็กเกินไปสำหรับเทียบ — skip migration, ทำ optimization อื่น.',
     };
   }
   return (
