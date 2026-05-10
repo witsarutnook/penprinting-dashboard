@@ -737,14 +737,14 @@ export function OrderForm({
               ) : (
                 <ul className="space-y-1">
                   {templateList.map((t) => (
-                    <li key={t.id} className="flex items-center justify-between gap-2 text-sm bg-white rounded px-2 py-1 border border-stone-100">
-                      <span className="font-medium text-stone-800 truncate">{t.name}</span>
-                      <span className="text-[11px] text-stone-400 truncate hidden sm:block">{t.createdBy}</span>
+                    <li key={t.id} className="flex items-center gap-3 text-sm bg-white rounded px-2 py-1 border border-stone-100">
+                      <span className="flex-1 min-w-0 font-medium text-stone-800 truncate">{t.name}</span>
+                      <span className="hidden sm:block w-20 shrink-0 text-[11px] text-stone-400 text-right truncate">{t.createdBy}</span>
                       <button
                         type="button"
                         onClick={() => deleteTemplate(Number(t.id))}
                         disabled={templateBusy}
-                        className="inline-flex items-center gap-0.5 text-[11px] text-red-600 hover:text-red-800 hover:bg-red-50 px-2 py-0.5 rounded disabled:opacity-50"
+                        className="shrink-0 inline-flex items-center gap-0.5 text-[11px] text-red-600 hover:text-red-800 hover:bg-red-50 px-2 py-0.5 rounded disabled:opacity-50"
                       >
                         <IconTrash size={11} />
                         ลบ
