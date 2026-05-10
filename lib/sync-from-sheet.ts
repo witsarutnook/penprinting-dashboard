@@ -1,0 +1,344 @@
+import 'server-only';
+import { loadAllWithAudit, AppsScriptError } from '@/lib/api';
+import { sql, isPostgresConfigured } from '@/lib/postgres';
+import type { Order, Job, Shipped, Cancelled, AuditEntry, Template } from '@/lib/types';
+
+/**
+ * Full re-sync from Apps Script (Google Sheet) → Postgres.
+ *
+ * Pattern: TRUNCATE + bulk INSERT chunks of 100 via multi-row VALUES,
+ * per table. ~6 seconds end-to-end for the typical Sheet (123 orders,
+ * 200 jobs, 200 shipped, 50 cancelled, 500 audit, 30 templates).
+ *
+ * Called from:
+ *  - /api/admin/sync-all  (manual trigger, admin only)
+ *  - /api/cron/sync-from-sheet (Vercel cron, every 10 min)
+ *
+ * Source-of-truth contract: Sheet remains authoritative. This module
+ * never writes back to Sheet. v2 reads should fall back to Apps Script
+ * if Postgres is empty / stale beyond a threshold.
+ */
+
+interface TableSyncResult {
+  table: string;
+  fetched: number;
+  inserted: number;
+  ok: boolean;
+  error?: string;
+  ms: number;
+}
+
+export interface SyncResult {
+  ok: boolean;
+  startedAt: string;
+  finishedAt: string;
+  totalMs: number;
+  tables: TableSyncResult[];
+}
+
+const CHUNK = 100;
+
+/** Sync everything in one shot. Returns per-table stats + overall ok flag. */
+export async function syncAllFromSheet(): Promise<SyncResult> {
+  const startedAt = new Date();
+  const tables: TableSyncResult[] = [];
+
+  if (!isPostgresConfigured()) {
+    return {
+      ok: false,
+      startedAt: startedAt.toISOString(),
+      finishedAt: startedAt.toISOString(),
+      totalMs: 0,
+      tables: [{
+        table: 'config',
+        fetched: 0,
+        inserted: 0,
+        ok: false,
+        error: 'POSTGRES_URL env var missing',
+        ms: 0,
+      }],
+    };
+  }
+
+  let snapshot;
+  try {
+    snapshot = await loadAllWithAudit();
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      startedAt: startedAt.toISOString(),
+      finishedAt: new Date().toISOString(),
+      totalMs: Date.now() - startedAt.getTime(),
+      tables: [{
+        table: 'apps-script-fetch',
+        fetched: 0,
+        inserted: 0,
+        ok: false,
+        error: msg,
+        ms: 0,
+      }],
+    };
+  }
+
+  tables.push(await syncJobs(snapshot.jobs || []));
+  tables.push(await syncOrders(snapshot.orders || []));
+  tables.push(await syncShipped(snapshot.shipped || []));
+  tables.push(await syncCancelled(snapshot.cancelled || []));
+  tables.push(await syncTemplates(snapshot.templates || []));
+  tables.push(await syncAuditLog(snapshot.audit || []));
+
+  const finishedAt = new Date();
+  const ok = tables.every(t => t.ok);
+
+  return {
+    ok,
+    startedAt: startedAt.toISOString(),
+    finishedAt: finishedAt.toISOString(),
+    totalMs: finishedAt.getTime() - startedAt.getTime(),
+    tables,
+  };
+}
+
+async function recordSyncMeta(table: string, rowCount: number, ok: boolean, error?: string): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO sync_meta (table_name, last_sync_at, row_count, ok, last_error)
+      VALUES (${table}, NOW(), ${rowCount}, ${ok}, ${error || null})
+      ON CONFLICT (table_name)
+      DO UPDATE SET last_sync_at = NOW(), row_count = ${rowCount}, ok = ${ok}, last_error = ${error || null}
+    `;
+  } catch {
+    // Never break a sync run on meta-write failure.
+  }
+}
+
+async function bulkInsert(
+  tableName: string,
+  columnList: string,
+  rows: unknown[][],
+  paramsPerRow: number,
+  cast: string[] = [],
+): Promise<{ inserted: number; error?: string }> {
+  if (rows.length === 0) return { inserted: 0 };
+  let inserted = 0;
+  for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK) {
+    const chunk = rows.slice(chunkStart, chunkStart + CHUNK);
+    const placeholders: string[] = [];
+    const values: unknown[] = [];
+    let p = 1;
+    for (const row of chunk) {
+      const row$ = row.map((_, i) => {
+        const c = cast[i];
+        return c ? `$${p + i}::${c}` : `$${p + i}`;
+      }).join(', ');
+      placeholders.push(`(${row$})`);
+      values.push(...row);
+      p += paramsPerRow;
+    }
+    try {
+      const query = `INSERT INTO ${tableName} (${columnList}) VALUES ${placeholders.join(', ')}`;
+      const res = await sql.query(query, values);
+      inserted += res.rowCount || 0;
+    } catch (err) {
+      return { inserted, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  return { inserted };
+}
+
+async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
+  const t0 = Date.now();
+  try {
+    await sql`TRUNCATE TABLE jobs`;
+    const rows = jobs
+      .filter(j => Number.isFinite(Number(j.id)))
+      .map(j => [
+        Number(j.id),
+        j.orderId != null ? Number(j.orderId) : null,
+        String(j.name || ''),
+        j.date != null ? String(j.date) : null,
+        j.dateIn != null ? String(j.dateIn) : null,
+        j.staff != null ? String(j.staff) : null,
+        j.dept != null ? String(j.dept) : null,
+        j.status != null ? String(j.status) : null,
+        j.cowork != null ? JSON.stringify(j.cowork) : null,
+        JSON.stringify(j),
+      ]);
+    const r = await bulkInsert(
+      'jobs',
+      'id, order_id, name, date, date_in, staff, dept, status, cowork, raw',
+      rows,
+      10,
+      ['bigint', 'bigint', '', '', '', '', '', '', 'jsonb', 'jsonb'],
+    );
+    await recordSyncMeta('jobs', r.inserted, !r.error, r.error);
+    return { table: 'jobs', fetched: jobs.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordSyncMeta('jobs', 0, false, msg);
+    return { table: 'jobs', fetched: jobs.length, inserted: 0, ok: false, error: msg, ms: Date.now() - t0 };
+  }
+}
+
+async function syncOrders(orders: Order[]): Promise<TableSyncResult> {
+  const t0 = Date.now();
+  try {
+    await sql`TRUNCATE TABLE orders`;
+    const rows = orders
+      .filter(o => Number.isFinite(Number(o.id)))
+      .map(o => [
+        Number(o.id),
+        String(o.name || ''),
+        o.customer != null ? String(o.customer) : null,
+        o.dateIn != null ? String(o.dateIn) : null,
+        o.dateDue != null ? String(o.dateDue) : null,
+        o.price != null ? String(o.price) : null,
+        o.assignDept != null ? String(o.assignDept) : null,
+        o.assignStaff != null ? String(o.assignStaff) : null,
+        o.orderer != null ? String(o.orderer) : null,
+        o.status != null ? String(o.status) : null,
+        o.details != null ? JSON.stringify(o.details) : null,
+        o.rawData != null ? JSON.stringify(o.rawData) : null,
+        JSON.stringify(o),
+      ]);
+    const r = await bulkInsert(
+      'orders',
+      'id, name, customer, date_in, date_due, price, assign_dept, assign_staff, orderer, status, details, raw_data, raw',
+      rows,
+      13,
+      ['bigint', '', '', '', '', '', '', '', '', '', 'jsonb', 'jsonb', 'jsonb'],
+    );
+    await recordSyncMeta('orders', r.inserted, !r.error, r.error);
+    return { table: 'orders', fetched: orders.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordSyncMeta('orders', 0, false, msg);
+    return { table: 'orders', fetched: orders.length, inserted: 0, ok: false, error: msg, ms: Date.now() - t0 };
+  }
+}
+
+async function syncShipped(shipped: Shipped[]): Promise<TableSyncResult> {
+  const t0 = Date.now();
+  try {
+    await sql`TRUNCATE TABLE shipped`;
+    const rows = shipped
+      .filter(s => Number.isFinite(Number(s.id)))
+      .map(s => [
+        Number(s.id),
+        s.orderId != null ? Number(s.orderId) : null,
+        s.name != null ? String(s.name) : null,
+        s.shippedDate != null ? String(s.shippedDate) : null,
+        JSON.stringify(s),
+      ]);
+    const r = await bulkInsert(
+      'shipped',
+      'id, order_id, name, shipped_date, raw',
+      rows,
+      5,
+      ['bigint', 'bigint', '', '', 'jsonb'],
+    );
+    await recordSyncMeta('shipped', r.inserted, !r.error, r.error);
+    return { table: 'shipped', fetched: shipped.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordSyncMeta('shipped', 0, false, msg);
+    return { table: 'shipped', fetched: shipped.length, inserted: 0, ok: false, error: msg, ms: Date.now() - t0 };
+  }
+}
+
+async function syncCancelled(cancelled: Cancelled[]): Promise<TableSyncResult> {
+  const t0 = Date.now();
+  try {
+    await sql`TRUNCATE TABLE cancelled`;
+    const rows = cancelled
+      .filter(c => Number.isFinite(Number(c.id)))
+      .map(c => [
+        Number(c.id),
+        c.orderId != null ? Number(c.orderId) : null,
+        c.name != null ? String(c.name) : null,
+        c.dept != null ? String(c.dept) : null,
+        c.staff != null ? String(c.staff) : null,
+        c.cancelledBy != null ? String(c.cancelledBy) : null,
+        c.cancelledAt != null ? String(c.cancelledAt) : null,
+        c.reason != null ? String(c.reason) : null,
+        JSON.stringify(c),
+      ]);
+    const r = await bulkInsert(
+      'cancelled',
+      'id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw',
+      rows,
+      9,
+      ['bigint', 'bigint', '', '', '', '', '', '', 'jsonb'],
+    );
+    await recordSyncMeta('cancelled', r.inserted, !r.error, r.error);
+    return { table: 'cancelled', fetched: cancelled.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordSyncMeta('cancelled', 0, false, msg);
+    return { table: 'cancelled', fetched: cancelled.length, inserted: 0, ok: false, error: msg, ms: Date.now() - t0 };
+  }
+}
+
+async function syncTemplates(templates: Template[]): Promise<TableSyncResult> {
+  const t0 = Date.now();
+  try {
+    await sql`TRUNCATE TABLE templates`;
+    const rows = templates
+      .filter(t => Number.isFinite(Number(t.id)))
+      .map(t => [
+        Number(t.id),
+        String(t.name || ''),
+        t.rawData != null ? JSON.stringify(t.rawData) : null,
+        t.createdBy != null ? String(t.createdBy) : null,
+        t.createdAt != null ? String(t.createdAt) : null,
+        JSON.stringify(t),
+      ]);
+    const r = await bulkInsert(
+      'templates',
+      'id, name, raw_data, created_by, created_at, raw',
+      rows,
+      6,
+      ['bigint', '', 'jsonb', '', '', 'jsonb'],
+    );
+    await recordSyncMeta('templates', r.inserted, !r.error, r.error);
+    return { table: 'templates', fetched: templates.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordSyncMeta('templates', 0, false, msg);
+    return { table: 'templates', fetched: templates.length, inserted: 0, ok: false, error: msg, ms: Date.now() - t0 };
+  }
+}
+
+async function syncAuditLog(audit: AuditEntry[]): Promise<TableSyncResult> {
+  const t0 = Date.now();
+  try {
+    await sql`TRUNCATE TABLE audit_log RESTART IDENTITY`;
+    const rows = audit.map(r => {
+      const tsIso = r.timestamp || new Date().toISOString();
+      const targetIdNum = r.targetId ? Number(String(r.targetId).replace(/[^\d]/g, '')) : null;
+      const targetId = Number.isFinite(targetIdNum) && targetIdNum ? targetIdNum : null;
+      return [
+        tsIso,
+        r.role || null,
+        null, // user_name not in Sheet schema yet
+        r.action || 'unknown',
+        targetId,
+        r.summary || null,
+      ];
+    });
+    const r = await bulkInsert(
+      'audit_log',
+      'timestamp, role, user_name, action, target_id, summary',
+      rows,
+      6,
+      ['timestamptz', '', '', '', 'bigint', ''],
+    );
+    await recordSyncMeta('audit_log', r.inserted, !r.error, r.error);
+    return { table: 'audit_log', fetched: audit.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordSyncMeta('audit_log', 0, false, msg);
+    return { table: 'audit_log', fetched: audit.length, inserted: 0, ok: false, error: msg, ms: Date.now() - t0 };
+  }
+}

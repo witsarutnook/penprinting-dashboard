@@ -97,28 +97,111 @@ export async function GET() {
     `;
     applied.push('CREATE INDEX idx_jobs_order_id');
 
-    // Quick row count for confirmation.
-    const { rows: auditRows } = await sql<{ count: number }>`
-      SELECT COUNT(*)::int AS count FROM audit_log
+    // ─── orders ─────────────────────────────────────────────────
+    await sql`
+      CREATE TABLE IF NOT EXISTS orders (
+        id            BIGINT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        customer      TEXT,
+        date_in       TEXT,
+        date_due      TEXT,
+        price         TEXT,
+        assign_dept   TEXT,
+        assign_staff  TEXT,
+        orderer       TEXT,
+        status        TEXT,
+        details       JSONB,
+        raw_data      JSONB,
+        raw           JSONB,
+        imported_at   TIMESTAMPTZ DEFAULT NOW()
+      )
     `;
-    const { rows: jobsRows } = await sql<{ count: number }>`
-      SELECT COUNT(*)::int AS count FROM jobs
-    `;
+    applied.push('CREATE TABLE orders');
 
-    const auditCount = auditRows[0]?.count ?? 0;
-    const jobsCount = jobsRows[0]?.count ?? 0;
+    await sql`CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)`;
+    applied.push('CREATE INDEX idx_orders_status');
+    await sql`CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(LOWER(customer))`;
+    applied.push('CREATE INDEX idx_orders_customer');
+
+    // ─── shipped ────────────────────────────────────────────────
+    await sql`
+      CREATE TABLE IF NOT EXISTS shipped (
+        id            BIGINT PRIMARY KEY,
+        order_id      BIGINT,
+        name          TEXT,
+        shipped_date  TEXT,
+        raw           JSONB,
+        imported_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `;
+    applied.push('CREATE TABLE shipped');
+    await sql`CREATE INDEX IF NOT EXISTS idx_shipped_order ON shipped(order_id)`;
+    applied.push('CREATE INDEX idx_shipped_order');
+
+    // ─── cancelled ──────────────────────────────────────────────
+    await sql`
+      CREATE TABLE IF NOT EXISTS cancelled (
+        id            BIGINT PRIMARY KEY,
+        order_id      BIGINT,
+        name          TEXT,
+        dept          TEXT,
+        staff         TEXT,
+        cancelled_by  TEXT,
+        cancelled_at  TEXT,
+        reason        TEXT,
+        raw           JSONB,
+        imported_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `;
+    applied.push('CREATE TABLE cancelled');
+    await sql`CREATE INDEX IF NOT EXISTS idx_cancelled_order ON cancelled(order_id)`;
+    applied.push('CREATE INDEX idx_cancelled_order');
+
+    // ─── templates ──────────────────────────────────────────────
+    await sql`
+      CREATE TABLE IF NOT EXISTS templates (
+        id            BIGINT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        raw_data      JSONB,
+        created_by    TEXT,
+        created_at    TEXT,
+        raw           JSONB,
+        imported_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `;
+    applied.push('CREATE TABLE templates');
+
+    // ─── sync_meta ──────────────────────────────────────────────
+    // Tracks last successful sync per table — UI surfaces this so admin
+    // knows whether Postgres reads are stale. Cron updates after each
+    // successful TRUNCATE+INSERT pass.
+    await sql`
+      CREATE TABLE IF NOT EXISTS sync_meta (
+        table_name    TEXT PRIMARY KEY,
+        last_sync_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        row_count     INT,
+        ok            BOOLEAN DEFAULT TRUE,
+        last_error    TEXT
+      )
+    `;
+    applied.push('CREATE TABLE sync_meta');
+
+    // Quick row counts for confirmation.
+    const counts: Record<string, number> = {};
+    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates']) {
+      try {
+        const r = await sql.query(`SELECT COUNT(*)::int AS count FROM ${t}`);
+        counts[t] = (r.rows[0] as { count?: number })?.count ?? 0;
+      } catch {
+        counts[t] = -1;
+      }
+    }
 
     return NextResponse.json({
       ok: true,
       applied,
-      auditLogRowCount: auditCount,
-      jobsRowCount: jobsCount,
-      hint:
-        auditCount === 0
-          ? 'Schema ready. Next: hit /api/admin/import-audit-log + /api/admin/import-jobs to seed'
-          : jobsCount === 0
-            ? 'Audit imported. Next: /api/admin/import-jobs'
-            : `Schema ready. audit=${auditCount}, jobs=${jobsCount}`,
+      counts,
+      hint: 'Schema ready. Next: hit /api/admin/sync-all to import all tables in one shot',
     });
   } catch (err) {
     return NextResponse.json(

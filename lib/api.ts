@@ -77,6 +77,46 @@ function withDefaults(data: Partial<LoadAllResponse>): LoadAllResponse {
   };
 }
 
+/** Phase 1 read-mirror feature flag.
+ *
+ *  When `READ_FROM_POSTGRES=1`, public read functions (loadAll,
+ *  loadAllWithAudit, loadOrder, getAuditByTarget) try the Postgres mirror
+ *  first and fall back to Apps Script on any error / staleness. The flag
+ *  is intentionally opt-in — Apps Script is the safe default until ops
+ *  has verified that the cron-based sync is healthy.
+ *
+ *  Flip the flag (Vercel project → Settings → Environment Variables) to
+ *  enable Postgres-first reads. No code change needed; reads pick up the
+ *  new value on the next deploy.
+ *
+ *  `loadAllFresh()` always reads Apps Script — write paths need
+ *  authoritative Sheet state, not the cron-lagged mirror. */
+function postgresEnabled(): boolean {
+  return process.env.READ_FROM_POSTGRES === '1';
+}
+
+async function tryPostgres<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
+  if (!postgresEnabled()) return null;
+  try {
+    return await fn();
+  } catch (err) {
+    // Fall back to Apps Script silently — staleness or schema drift
+    // shouldn't surface to users while we're in shadow-mode validation.
+    // Tag a Sentry breadcrumb so we can audit fallback rate later.
+    try {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.addBreadcrumb({
+        category: 'postgres-fallback',
+        level: 'warning',
+        message: `${label}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } catch {
+      // Sentry import failure is non-fatal
+    }
+    return null;
+  }
+}
+
 /** Fetch the full snapshot used by the dashboard frontend (60s ISR cache).
  *  Passes `audit=0` so Apps Script (v5.10.5+) skips the audit_log read
  *  — saves ~50-100KB payload + ~50ms script time. The /analytics page
@@ -84,6 +124,11 @@ function withDefaults(data: Partial<LoadAllResponse>): LoadAllResponse {
  *  Script ignores the param and returns audit anyway, so this is a
  *  forward-compat speedup. */
 export async function loadAll(): Promise<LoadAllResponse> {
+  const pg = await tryPostgres('loadAll', async () => {
+    const { loadAllFromPostgres } = await import('@/lib/api-postgres');
+    return loadAllFromPostgres({ audit: false });
+  });
+  if (pg) return pg;
   const data = await get<Partial<LoadAllResponse>>('loadAll', { audit: '0' });
   return withDefaults(data);
 }
@@ -91,6 +136,11 @@ export async function loadAll(): Promise<LoadAllResponse> {
 /** Same as loadAll but includes the 500 most recent audit rows — used by
  *  /analytics for monthly-report breakdowns by dept. */
 export async function loadAllWithAudit(): Promise<LoadAllResponse> {
+  const pg = await tryPostgres('loadAllWithAudit', async () => {
+    const { loadAllFromPostgres } = await import('@/lib/api-postgres');
+    return loadAllFromPostgres({ audit: true });
+  });
+  if (pg) return pg;
   const data = await get<Partial<LoadAllResponse>>('loadAll');
   return withDefaults(data);
 }
@@ -124,6 +174,18 @@ export async function loadOrder(
   id: number | string,
   opts: { revalidate?: number } = {},
 ): Promise<LoadOrderResponse> {
+  // Postgres-first only when caller is OK with the 10-min cron staleness
+  // ceiling. Write-path callers pass revalidate: 0 because they need the
+  // result of THEIR own write reflected — Postgres mirror would still
+  // show the pre-write snapshot. Read-path callers pass a small revalidate
+  // (≥30s) which is a hint that staleness is fine.
+  if ((opts.revalidate ?? 0) > 0) {
+    const pg = await tryPostgres('loadOrder', async () => {
+      const { loadOrderFromPostgres } = await import('@/lib/api-postgres');
+      return loadOrderFromPostgres(id);
+    });
+    if (pg) return pg;
+  }
   const data = await get<Partial<LoadOrderResponse>>(
     'getOrder',
     { orderId: String(id) },
@@ -185,6 +247,12 @@ export async function getAuditByTarget(
   orderId: number | string | null | undefined,
   opts: { revalidate?: number } = {},
 ): Promise<{ entries: AuditEntry[] }> {
+  const pg = await tryPostgres('getAuditByTarget', async () => {
+    const { getAuditByTargetFromPostgres } = await import('@/lib/api-postgres');
+    return getAuditByTargetFromPostgres(jobId, orderId);
+  });
+  if (pg) return pg;
+
   const params: Record<string, string> = {};
   if (jobId != null && String(jobId).trim()) params.jobId = String(jobId);
   if (orderId != null && String(orderId).trim()) params.orderId = String(orderId);

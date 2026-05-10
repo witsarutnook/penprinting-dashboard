@@ -65,6 +65,7 @@ async function BenchData() {
   let jobsRows = 0;
   let suggestedTargetId: string | null = null;
   let suggestedRowCount = 0;
+  let syncMeta: { table_name: string; last_sync_at: Date; row_count: number; ok: boolean }[] = [];
   let probeError: string | null = null;
   try {
     const total = await sql<{ count: number }>`SELECT COUNT(*)::int AS count FROM audit_log`;
@@ -91,6 +92,16 @@ async function BenchData() {
       jobsRows = j.rows[0]?.count ?? 0;
     } catch {
       jobsRows = 0;
+    }
+    try {
+      const meta = await sql<{ table_name: string; last_sync_at: Date; row_count: number; ok: boolean }>`
+        SELECT table_name, last_sync_at, row_count, ok
+        FROM sync_meta
+        ORDER BY table_name
+      `;
+      syncMeta = meta.rows;
+    } catch {
+      syncMeta = [];
     }
   } catch (err) {
     probeError = err instanceof Error ? err.message : String(err);
@@ -139,12 +150,63 @@ async function BenchData() {
         )}
         {jobsRows === 0 && (
           <p className="text-xs text-amber-700">
-            ⚠️ jobs table ว่าง — เปิด <code className="bg-amber-100 px-1 rounded">/api/admin/import-jobs</code> เพื่อ seed → bench section &quot;loadAll&quot; จะใช้งานได้
+            ⚠️ jobs table ว่าง — เปิด <code className="bg-amber-100 px-1 rounded">/api/admin/sync-all</code> เพื่อ seed → bench section &quot;loadAll&quot; จะใช้งานได้
           </p>
         )}
       </div>
 
+      {syncMeta.length > 0 && <SyncMetaTable rows={syncMeta} />}
+
       <BenchClient defaultTargetId={suggestedTargetId || ''} jobsAvailable={jobsRows > 0} />
     </>
+  );
+}
+
+function SyncMetaTable({
+  rows,
+}: {
+  rows: { table_name: string; last_sync_at: Date; row_count: number; ok: boolean }[];
+}) {
+  const now = Date.now();
+  return (
+    <div className="rounded-xl border border-stone-200 bg-white overflow-hidden">
+      <div className="px-5 py-3 border-b border-stone-100 flex items-baseline justify-between flex-wrap gap-2">
+        <h2 className="text-sm font-medium text-stone-900">Sync status (Sheet → Postgres)</h2>
+        <span className="text-xs text-stone-500">cron every 10 min · ฉีกแบบ TRUNCATE+INSERT</span>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide">
+          <tr>
+            <th className="text-left px-4 py-2 font-medium">table</th>
+            <th className="text-right px-4 py-2 font-medium">rows</th>
+            <th className="text-right px-4 py-2 font-medium">last sync</th>
+            <th className="text-right px-4 py-2 font-medium">status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const ageMs = now - new Date(r.last_sync_at).getTime();
+            const ageMin = Math.floor(ageMs / 60000);
+            const stale = ageMs > 30 * 60 * 1000;
+            return (
+              <tr key={r.table_name} className="border-t border-stone-100">
+                <td className="px-4 py-2 text-stone-700 font-medium">{r.table_name}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{r.row_count.toLocaleString('en-US')}</td>
+                <td className={`px-4 py-2 text-right tabular-nums ${stale ? 'text-amber-700' : 'text-stone-700'}`}>
+                  {ageMin === 0 ? 'just now' : `${ageMin} min ago`}
+                </td>
+                <td className="px-4 py-2 text-right">
+                  {r.ok ? (
+                    <span className="text-emerald-700">✓ ok</span>
+                  ) : (
+                    <span className="text-red-700">✗ failed</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
