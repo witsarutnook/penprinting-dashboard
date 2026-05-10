@@ -107,6 +107,69 @@ export async function deleteTemplateFromPostgres(id: number | string): Promise<D
   return { ok: true, found: (r.rowCount ?? 0) > 0 };
 }
 
+// ─── jobs ────────────────────────────────────────────────────────
+
+export interface SetCoworkInput {
+  id: number | string;
+  cowork: unknown;  // typically string[] of staff names; null/empty clears
+}
+
+/** Phase 2 — atomic UPDATE of jobs.cowork + mark dirty so the heal cron
+ *  knows to push the new state to Sheet. Caller (route) is responsible
+ *  for calling Apps Script `setCowork` inline (best-effort) and clearing
+ *  the dirty marker on success — see /api/jobs/cowork/route.ts. */
+export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: true; found: boolean }> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('setCowork', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('setCowork', 'Invalid job id');
+  }
+  const coworkJson = input.cowork == null ? null : JSON.stringify(input.cowork);
+  const r = await sql`
+    UPDATE jobs
+    SET cowork = ${coworkJson}::jsonb,
+        raw = jsonb_set(COALESCE(raw, '{}'::jsonb), '{cowork}', COALESCE(${coworkJson}::jsonb, 'null'::jsonb)),
+        phase2_dirty_at = NOW()
+    WHERE id = ${idNum}::bigint
+  `;
+  return { ok: true, found: (r.rowCount ?? 0) > 0 };
+}
+
+// ─── dirty row helpers ───────────────────────────────────────────
+
+export type DirtyTable = 'jobs' | 'orders' | 'shipped' | 'cancelled';
+
+/** Clear phase2_dirty_at after Apps Script Sheet sync confirms. Sheet now
+ *  matches Postgres for this row, so the next from-Sheet cron can treat
+ *  it normally (overwrite if Sheet drifts). */
+export async function markRowClean(table: DirtyTable, id: number | string): Promise<void> {
+  if (!isPostgresConfigured()) return;
+  const idNum = Number(id);
+  if (!Number.isFinite(idNum) || idNum <= 0) return;
+  // Tablename can't be parameterised in the @vercel/postgres tagged-template
+  // helper, so build the query string. table is constrained by the union
+  // type above so this isn't a SQL-injection vector.
+  await sql.query(
+    `UPDATE ${table} SET phase2_dirty_at = NULL WHERE id = $1::bigint`,
+    [idNum],
+  );
+}
+
+/** Re-mark a row as dirty (e.g. heal cron retry after transient Sheet
+ *  failure). Idempotent — sets timestamp to NOW() regardless of prior
+ *  value. */
+export async function markRowDirty(table: DirtyTable, id: number | string): Promise<void> {
+  if (!isPostgresConfigured()) return;
+  const idNum = Number(id);
+  if (!Number.isFinite(idNum) || idNum <= 0) return;
+  await sql.query(
+    `UPDATE ${table} SET phase2_dirty_at = NOW() WHERE id = $1::bigint`,
+    [idNum],
+  );
+}
+
 // ─── small util ───────────────────────────────────────────────────
 
 function safeParseJson(s: string): AnyRow {

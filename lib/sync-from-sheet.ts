@@ -156,6 +156,7 @@ async function bulkInsert(
   rows: unknown[][],
   paramsPerRow: number,
   cast: string[] = [],
+  opts: { onConflict?: 'do-nothing' | 'replace' } = {},
 ): Promise<{ inserted: number; error?: string }> {
   if (rows.length === 0) return { inserted: 0 };
   let inserted = 0;
@@ -174,7 +175,9 @@ async function bulkInsert(
       p += paramsPerRow;
     }
     try {
-      const query = `INSERT INTO ${tableName} (${columnList}) VALUES ${placeholders.join(', ')}`;
+      const conflictClause =
+        opts.onConflict === 'do-nothing' ? ' ON CONFLICT (id) DO NOTHING' : '';
+      const query = `INSERT INTO ${tableName} (${columnList}) VALUES ${placeholders.join(', ')}${conflictClause}`;
       const res = await sql.query(query, values);
       inserted += res.rowCount || 0;
     } catch (err) {
@@ -184,10 +187,38 @@ async function bulkInsert(
   return { inserted };
 }
 
+/** Phase 2 sync pattern — preserve rows where Postgres has fresher state
+ *  than Sheet (`phase2_dirty_at IS NOT NULL`). Replaces the TRUNCATE +
+ *  bulk-INSERT pattern for tables with phase2_dirty_at column.
+ *
+ *  Steps:
+ *  1. DELETE rows where phase2_dirty_at IS NULL — these are
+ *     Sheet-authoritative rows that we'll refresh from current Sheet.
+ *  2. INSERT all Sheet rows ON CONFLICT (id) DO NOTHING — dirty rows are
+ *     left alone (they survive because they're still in the table after
+ *     step 1, so the conflict check protects them).
+ *
+ *  Result: dirty rows preserved with their Phase 2 state; clean rows
+ *  overwritten with Sheet's current state. Heal cron later pushes dirty
+ *  rows back to Sheet, marking them clean once Sheet has caught up. */
+async function deleteCleanThenInsert(
+  tableName: string,
+  columnList: string,
+  rows: unknown[][],
+  paramsPerRow: number,
+  cast: string[] = [],
+): Promise<{ inserted: number; error?: string }> {
+  try {
+    await sql.query(`DELETE FROM ${tableName} WHERE phase2_dirty_at IS NULL`);
+  } catch (err) {
+    return { inserted: 0, error: err instanceof Error ? err.message : String(err) };
+  }
+  return bulkInsert(tableName, columnList, rows, paramsPerRow, cast, { onConflict: 'do-nothing' });
+}
+
 async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
-    await sql`TRUNCATE TABLE jobs`;
     const { unique, dropped } = dedupeById(jobs);
     const rows = unique
       .filter(j => Number.isFinite(Number(j.id)))
@@ -203,7 +234,8 @@ async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
         j.cowork != null ? JSON.stringify(j.cowork) : null,
         JSON.stringify(j),
       ]);
-    const r = await bulkInsert(
+    // Phase 2 dirty-row preservation — see deleteCleanThenInsert docstring.
+    const r = await deleteCleanThenInsert(
       'jobs',
       'id, order_id, name, date, date_in, staff, dept, status, cowork, raw',
       rows,
@@ -222,7 +254,6 @@ async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
 async function syncOrders(orders: Order[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
-    await sql`TRUNCATE TABLE orders`;
     const { unique, dropped } = dedupeById(orders);
     const rows = unique
       .filter(o => Number.isFinite(Number(o.id)))
@@ -241,7 +272,7 @@ async function syncOrders(orders: Order[]): Promise<TableSyncResult> {
         o.rawData != null ? JSON.stringify(o.rawData) : null,
         JSON.stringify(o),
       ]);
-    const r = await bulkInsert(
+    const r = await deleteCleanThenInsert(
       'orders',
       'id, name, customer, date_in, date_due, price, assign_dept, assign_staff, orderer, status, details, raw_data, raw',
       rows,
@@ -260,7 +291,6 @@ async function syncOrders(orders: Order[]): Promise<TableSyncResult> {
 async function syncShipped(shipped: Shipped[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
-    await sql`TRUNCATE TABLE shipped`;
     const { unique, dropped } = dedupeById(shipped);
     const rows = unique
       .filter(s => Number.isFinite(Number(s.id)))
@@ -271,7 +301,7 @@ async function syncShipped(shipped: Shipped[]): Promise<TableSyncResult> {
         s.shippedDate != null ? String(s.shippedDate) : null,
         JSON.stringify(s),
       ]);
-    const r = await bulkInsert(
+    const r = await deleteCleanThenInsert(
       'shipped',
       'id, order_id, name, shipped_date, raw',
       rows,
@@ -290,7 +320,6 @@ async function syncShipped(shipped: Shipped[]): Promise<TableSyncResult> {
 async function syncCancelled(cancelled: Cancelled[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
-    await sql`TRUNCATE TABLE cancelled`;
     const { unique, dropped } = dedupeById(cancelled);
     const rows = unique
       .filter(c => Number.isFinite(Number(c.id)))
@@ -305,7 +334,7 @@ async function syncCancelled(cancelled: Cancelled[]): Promise<TableSyncResult> {
         c.reason != null ? String(c.reason) : null,
         JSON.stringify(c),
       ]);
-    const r = await bulkInsert(
+    const r = await deleteCleanThenInsert(
       'cancelled',
       'id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw',
       rows,

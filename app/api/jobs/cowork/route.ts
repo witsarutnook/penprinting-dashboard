@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF } from '@/lib/board';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { setCoworkInPostgres, markRowClean, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -12,6 +14,13 @@ export const maxDuration = 30;
  *
  * Apps Script overwrites the `cowork` column of the job row — pass empty
  * array (or null) to clear all collaborators.
+ *
+ * Phase 2 — when WRITE_COWORK_TO_POSTGRES=1, Postgres is authoritative.
+ * Path: UPDATE Postgres + mark phase2_dirty_at → best-effort Apps Script
+ * setCowork → on success markRowClean. If Apps Script fails, the row
+ * stays dirty and the heal cron `/api/cron/sync-to-sheet` retries via
+ * `setJobRow` until Sheet catches up. The from-Sheet cron skips dirty
+ * rows so the Phase 2 update doesn't get clobbered while waiting.
  *
  * Request body: { id, cowork: Array<{ dept, staff }> }
  */
@@ -61,6 +70,11 @@ export async function POST(req: Request) {
     seen.add(staff);
     cleaned.push(staff);
   }
+
+  if (phase2WriteEnabled('setCowork')) {
+    return phase2SetCowork(id, cleaned);
+  }
+
   try {
     const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
       id,
@@ -72,4 +86,74 @@ export async function POST(req: Request) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });
   }
+}
+
+async function phase2SetCowork(id: number, cleaned: string[]): Promise<NextResponse> {
+  let found = false;
+  try {
+    const r = await setCoworkInPostgres({ id, cowork: cleaned });
+    found = r.found;
+  } catch (err) {
+    const msg =
+      err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  if (!found) {
+    // Job id not in Postgres — could be an older row that the from-Sheet
+    // cron hasn't synced yet. Mark dirty was a no-op in this case (UPDATE
+    // affected 0 rows). Fall through to legacy Apps Script path so the
+    // user's intent still lands on Sheet, then the next cron pulls it.
+    try {
+      const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
+        id, cowork: cleaned,
+      });
+      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ ok: true, count: cleaned.length, fallback: 'apps-script' });
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
+  }
+
+  // Best-effort inline Sheet sync — fast path. On success we clear the
+  // dirty marker so the heal cron doesn't re-process this row. On failure
+  // the row stays dirty and the heal cron retries via setJobRow within
+  // 5 minutes. Sentry breadcrumb for observability.
+  try {
+    const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
+      id, cowork: cleaned,
+    });
+    if (result.error) {
+      // Apps Script returned an error response — leave row dirty for heal cron
+      try {
+        const Sentry = await import('@sentry/nextjs');
+        Sentry.addBreadcrumb({
+          category: 'phase2-sheet-sync',
+          level: 'warning',
+          message: `setCowork inline sync failed (will retry via heal cron): ${result.error}`,
+          data: { jobId: id },
+        });
+      } catch { /* ignore */ }
+    } else {
+      await markRowClean('jobs', id);
+    }
+  } catch (err) {
+    // Apps Script unreachable — row stays dirty, heal cron retries
+    try {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureException(err, {
+        tags: { layer: 'phase2-sheet-sync', action: 'setCowork' },
+        extra: { jobId: id },
+      });
+    } catch { /* ignore */ }
+  }
+
+  // Cache bust — only /board uses cowork data
+  try {
+    const { revalidatePath } = await import('next/cache');
+    revalidatePath('/board');
+  } catch { /* ignore */ }
+
+  return NextResponse.json({ ok: true, count: cleaned.length });
 }

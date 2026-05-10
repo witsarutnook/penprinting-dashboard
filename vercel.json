@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/sync-from-sheet",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-to-sheet",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -29,6 +29,11 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // /orders/new for save-preset / load-preset.
   addTemplate:    'WRITE_TEMPLATES_TO_POSTGRES',
   deleteTemplate: 'WRITE_TEMPLATES_TO_POSTGRES',
+  // setCowork — second action migrated. Single-field UPDATE, /board only,
+  // no id allocation. Reuses Apps Script `setCowork` action for inline
+  // Sheet sync (idempotent UPDATE) + heal cron uses `setJobRow` for
+  // post-failure retries. First user of phase2_dirty_at infrastructure.
+  setCowork:      'WRITE_COWORK_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

@@ -186,6 +186,30 @@ export async function GET() {
     `;
     applied.push('CREATE TABLE sync_meta');
 
+    // ─── Phase 2 dirty-row tracking ─────────────────────────────
+    // phase2_dirty_at = NOT NULL means "row was just written by Phase 2,
+    // Sheet is behind and needs heal-cron sync to catch up". The from-
+    // Sheet cron must skip these rows (else it would overwrite Phase 2's
+    // newer state with Sheet's stale state). The to-Sheet heal cron picks
+    // up dirty rows, calls Apps Script setRow, marks clean on success.
+    //
+    // ALTER IF NOT EXISTS — Postgres doesn't have it, so use information_schema check
+    for (const table of ['jobs', 'orders', 'shipped', 'cancelled']) {
+      const r = await sql.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = $1 AND column_name = 'phase2_dirty_at' LIMIT 1`,
+        [table],
+      );
+      if (r.rowCount === 0) {
+        await sql.query(`ALTER TABLE ${table} ADD COLUMN phase2_dirty_at TIMESTAMPTZ`);
+        await sql.query(
+          `CREATE INDEX IF NOT EXISTS idx_${table}_phase2_dirty
+             ON ${table}(phase2_dirty_at) WHERE phase2_dirty_at IS NOT NULL`,
+        );
+        applied.push(`ALTER TABLE ${table} ADD phase2_dirty_at + partial index`);
+      }
+    }
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
     for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates']) {

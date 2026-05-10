@@ -2,6 +2,19 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-10 (afternoon batch 4 — Phase 2 reverse-sync infra + setCowork):** ✅
+> - **Architectural insight**: Templates migration was clean เพราะ table-level ownership (cron skip table). setCowork (และ actions ส่วนใหญ่ที่เหลือ) แตะ `jobs/orders/shipped/cancelled` ที่ยังมี actions อื่น write ผ่าน Apps Script อยู่ → cron ต้อง keep running → table-skip ไม่ใช้. ต้อง row-level ownership marker
+> - **Phase 2 reverse-sync infrastructure**:
+>   - **Schema**: `phase2_dirty_at TIMESTAMPTZ` column + partial index บน 4 tables (db-migrate idempotent ALTER)
+>   - **From-Sheet cron** ([sync-from-sheet.ts](lib/sync-from-sheet.ts)): TRUNCATE+INSERT → "DELETE WHERE phase2_dirty_at IS NULL + INSERT ON CONFLICT DO NOTHING". Phase 2 dirty rows survive cron passes
+>   - **To-Sheet heal cron** (`/api/cron/sync-to-sheet`, schedule `*/5 * * * *`): SELECT dirty rows → call Apps Script `setJobRow` → mark clean on success. Batch limit 50/run
+>   - **Helpers** ([postgres-write.ts](lib/postgres-write.ts)): `markRowDirty`, `markRowClean`, `setCoworkInPostgres`. Phase 2 paths set dirty + clear on inline-sync success; cron retries failed inline syncs
+> - **Apps Script v5.10.11**: `setJobRow` action — generic upsert that accepts pre-allocated id + idempotent (append if not found, overwrite if exists). Mirrors setTemplateRow pattern. Available for heal cron + future Phase 2 actions
+> - **First migrated using new infra**: `setCowork` ([app/api/jobs/cowork/route.ts](app/api/jobs/cowork/route.ts)) — flag-gated branch via `WRITE_COWORK_TO_POSTGRES=1`. Postgres UPDATE + dirty mark → inline `setCowork` Apps Script call → markClean on success / leave dirty for heal cron on failure. Fallback to legacy if row not in Postgres yet (older row before Phase 1.7 mirror)
+> - **Failure mode contract**: Inline sync fail → row stays `phase2_dirty_at IS NOT NULL` → from-Sheet cron skips → heal cron retries within 5 min → success clears mark. Worst case: ~5 min Sheet drift before heal catches up
+> - **Default-off** — `WRITE_COWORK_TO_POSTGRES` flag ยังไม่ flip ที่ production
+> - **Total**: 7 file changes (1 new lib + 1 new cron route + 5 modified)
+>
 > **Session 2026-05-10 (afternoon batch 3 — Phase 2 scaffold + templates migration):** ✅
 > - **Phase 2 = write migration** (drop Apps Script writes, Postgres = source of truth) — เลือกทำ scaffold + 1 action proof-of-concept ก่อน, ไม่ลุย hot-path
 > - **Infra**:
@@ -317,14 +330,35 @@ Type-check ผ่าน + production build OK ทุก commit. Vercel auto-depl
 
 ## ⚠️ Pending user actions (after 2026-05-10 session)
 
-### Phase 2 templates activation (2 ขั้น — ทำเมื่อพร้อม validate)
+### Phase 2 setCowork activation (3 ขั้น — ต้องรัน db-migrate + push Apps Script + flag)
 
-ถ้าจะ activate Phase 2 สำหรับ templates (low risk, เป็น POC):
+ก่อน activate ต้องเตรียม schema + Apps Script ก่อน:
 
-1. **Push Apps Script v5.10.10** — `cd production-monitoring/apps-script/dashboard && bash push.sh dashboard` (หรือใช้ `/push-apps-script dashboard` slash command). Apps Script editor → **Edit existing → Save → Manage deployments → New version** ⚠️ ห้าม "New deployment" (URL จะเปลี่ยน). Description: "v5.10.10 setTemplateRow Phase 2 sync target"
+1. **Run db-migrate** (1 ครั้ง) — เปิด `https://dashboard.penprinting.co/api/admin/db-migrate` ในเบราว์เซอร์ (admin role required) → ตอบ `{ok: true, applied: [...includes ALTER jobs/orders/shipped/cancelled phase2_dirty_at...]}` → confirm ใหม่ 4 ALTER + index
+2. **Push Apps Script v5.10.11** — `bash production-monitoring/apps-script/dashboard/push.sh` หรือ `/push-apps-script dashboard` → Apps Script editor → **Manage deployments → Edit existing → New version**. Description: "v5.10.11 setJobRow Phase 2 reverse-sync target"
+3. **Set env var** — Vercel → Settings → Environment Variables → Add `WRITE_COWORK_TO_POSTGRES=1` (Production + Preview + Development) → redeploy
+
+**Smoke test:**
+- เปิด /board → คลิก "co-work" บน job ใดๆ → เลือก print staff 1 คน → กด save
+- Vercel logs ดู `/api/jobs/cowork` → confirm Postgres UPDATE + Apps Script setCowork
+- เปิด Sheet tab `jobs` → row นั้น cowork column ต้องมี value ใหม่
+- รอ 5 นาที → Vercel logs `/api/cron/sync-to-sheet` ควร run + report `{tables: [{table: 'jobs', candidates: 0, ...}]}` (no dirty = inline sync succeeded)
+- ทดสอบ failure path: ปิด Apps Script ชั่วคราว (rename action) → setCowork → confirm row dirty in Postgres + Sheet ไม่ update → enable Apps Script → รอ heal cron → confirm row healed + Sheet updated
+
+**Rollback:** unset `WRITE_COWORK_TO_POSTGRES` → redeploy → กลับ Apps Script-first path. Existing dirty rows ใน Postgres ที่ยัง pending heal: heal cron ยังรันได้ (ไม่ขึ้นกับ flag) → จะค่อยๆ heal จนเสร็จภายในไม่กี่ cron cycles
+
+### Phase 2 templates activation — เหลือ 1 ขั้น
+
+✅ **Apps Script v5.10.10 deployed** 2026-05-10 — `setTemplateRow` action live (dormant ถ้า flag off)
+
+ถ้าจะ activate Phase 2 สำหรับ templates:
+
+1. ~~Push Apps Script~~ ✅ done 2026-05-10
 2. **Set env var** — Vercel project `penprinting-dashboard` → Settings → Environment Variables → Add `WRITE_TEMPLATES_TO_POSTGRES=1` (Production + Preview + Development) → redeploy
 3. **Smoke test**: เปิด /orders/new → "บันทึก template" ใหม่ → Vercel logs ดู `/api/orders/templates/add` → confirm Postgres INSERT + Apps Script `setTemplateRow` POST → เปิด Sheet tab `templates` ดู row ใหม่ลง → "ลบ template" → ดู row หาย
 4. **Rollback** (ถ้าจำเป็น): unset `WRITE_TEMPLATES_TO_POSTGRES` → redeploy → กลับสู่ Apps Script-first path. Phase 2-only rows ใน Postgres ที่อาจไม่อยู่ใน Sheet จะถูก sync ทันที (cron resume เพราะ flag off แล้ว) — **อาจ overwrite Postgres-only rows ที่ Sheet ยังไม่ได้รับ** ดังนั้นก่อน rollback ตรวจดู /orders/new ก่อน ถ้ามี template ที่เพิ่งสร้างให้ confirm Sheet ก็มีก่อน
+
+แนะนำให้ **monitor Phase 1.7 ก่อน 24-48 ชม.** ก่อน flip flag — ถ้า Sentry breadcrumbs `postgres-fallback` rate ต่ำ (< 1%) แล้วค่อยลุย Phase 2 activate
 
 ### Phase 1 monitor (passive, 24-48 ชม.)
 
@@ -493,13 +527,13 @@ Future fix สำหรับ:
 | # | Action(s) | Risk | Reason | Est. effort |
 |---|---|---|---|---|
 | ✅ 1 | `addTemplate` + `deleteTemplate` | Low | /orders/new only, ไม่ hot path, name+Date.now() id ไม่ collision | done |
-| 2 | `setCowork` | Low | single field UPDATE, /board only, no id alloc | 30 min |
-| 3 | `updateJob` (spec-only edits) | Med | all roles use, แต่ partial update ปลอดภัย | 1 hr |
-| 4 | `addJob` + `deleteJob` (standalone) | Med | needs `nextId` SEQUENCE — first id minting migration | 2 hr |
+| ✅ 2 | `setCowork` + reverse-sync infra | Low | single field UPDATE + built phase2_dirty_at + heal cron | done |
+| 3 | `updateJob` (spec-only edits) | Med | all roles use, แต่ partial update ปลอดภัย — reuse setJobRow infra | 30 min |
+| 4 | `addJob` + `deleteJob` (standalone) | Med | needs `job_id_seq` SEQUENCE — first id minting migration | 2 hr |
 | 5 | `cancelJob` + `restoreJob` | Med | 2-table mutate (jobs + cancelled). Mirror handlers reusable | 1 hr |
-| 6 | `moveToShipped` | Med | 2-table mutate (jobs + shipped). Mirror handlers reusable | 1 hr |
+| 6 | `moveToShipped` | Med | 2-table mutate (jobs + shipped). Need `setShippedRow` Apps Script | 1 hr |
 | 7 | `bulkForward` | High | hot path, server-side id alloc, atomic LockService → Postgres tx | 3 hr |
-| 8 | `addOrder` + `updateOrder` + `deleteOrder` | High | needs orderId SEQUENCE, customer name match logic | 3 hr |
+| 8 | `addOrder` + `updateOrder` + `deleteOrder` | High | needs `order_id_seq` SEQUENCE, customer name match logic | 3 hr |
 | 9 | `createOrder` (atomic order + initial job) | High | combines 4 + 8, dependency on both SEQUENCEs | 2 hr |
 | 10 | `cancelOrder` (atomic cascade) | High | reuses 5 cascade pattern but more rows | 2 hr |
 | 11 | `deleteOrderCascade` | High | similar to 10 | 1 hr |
@@ -588,7 +622,9 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-10 (afternoon batch 3) — **Phase 2 scaffold + templates migration ready**. Built `lib/postgres-write.ts` (Postgres-authoritative writes) + `lib/feature-flags.ts` (per-action `WRITE_<ACTION>_TO_POSTGRES` flag) + gated cron template sync via `phase2OwnsTable`. Migrated `addTemplate` + `deleteTemplate` API routes with flag-gated branch — flag off (default) = legacy behavior unchanged, flag on = Postgres-first + best-effort Apps Script Sheet sync. Apps Script side: `setTemplateRow` action (v5.10.10) accepts pre-allocated id + idempotent upsert. Failure contract: Postgres write fail → propagate; Sheet sync fail → swallow + Sentry. Default-off until user pushes Apps Script + sets env var. Type-check + production build clean. Migration order documented for remaining 16 actions (~22 hr total) — next: `setCowork` (low risk), then id-minting actions need SEQUENCEs._
+_อัปเดตล่าสุด: 2026-05-10 (afternoon batch 4) — **Phase 2 reverse-sync infra + setCowork ready**. After templates (table-level ownership) realized actions sharing tables (setCowork, etc.) need row-level marker. Built `phase2_dirty_at` column on 4 tables + refactored from-Sheet cron to "DELETE WHERE NULL + INSERT ON CONFLICT DO NOTHING" preserving dirty rows + heal cron `*/5 * * * *` pushing dirty rows back via Apps Script `setJobRow` (v5.10.11). setCowork migrated as POC of new infra: Postgres UPDATE + dirty mark → inline setCowork Apps Script call → markClean on success / leave for heal cron on failure. Worst-case Sheet drift: 5 min until heal catches up. 16 actions ที่เหลือ now reuse this infra (cleaner per-action migration). Type-check + production build clean. Default-off (3-step activation: db-migrate + Apps Script push + env flag)._
+
+_อัปเดตก่อน: 2026-05-10 (afternoon batch 3) — **Phase 2 scaffold + templates migration ready**. Built `lib/postgres-write.ts` (Postgres-authoritative writes) + `lib/feature-flags.ts` (per-action `WRITE_<ACTION>_TO_POSTGRES` flag) + gated cron template sync via `phase2OwnsTable`. Migrated `addTemplate` + `deleteTemplate` API routes with flag-gated branch — flag off (default) = legacy behavior unchanged, flag on = Postgres-first + best-effort Apps Script Sheet sync. Apps Script side: `setTemplateRow` action (v5.10.10) accepts pre-allocated id + idempotent upsert. Failure contract: Postgres write fail → propagate; Sheet sync fail → swallow + Sentry. Default-off until user pushes Apps Script + sets env var. Type-check + production build clean. Migration order documented for remaining 16 actions (~22 hr total) — next: `setCowork` (low risk), then id-minting actions need SEQUENCEs._
 
 _อัปเดตก่อน: 2026-05-10 (afternoon batch 2) — **Phase 1.7 dual-write live + 2 bug fixes**. After Phase 1 cutover writes "เด้งกลับหมด" (Postgres mirror 10-min lag → reads after writes returned stale → optimistic UI bounced back). Fix: `lib/postgres-write-mirror.ts` 17 handlers mirror every Apps Script write to Postgres in same request → 0 staleness window. Plus 2 follow-on fixes: OrderForm SuccessView flicker on refresh (`initializedIdRef` guard) + /orders→edit speed (drop redundant loadOrder, loadAll covers both target + recent autocomplete). 3 commits. Phase 2 deferred — writes still through Apps Script (~1.5s) which user finds acceptable; 70-80% of Path A handlers reuse in Phase 2 when triggered._
 
