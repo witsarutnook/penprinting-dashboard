@@ -386,23 +386,24 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
     }
   }
 
-  // Phase 1 staleness guard — the just-written change exists in Sheet but
-  // the Postgres mirror won't reflect it until the next 10-min cron run.
-  // Without this marker, the next page render's loadAll() would Postgres-
-  // first and return the OLD data → user perceives the write as "bouncing
-  // back" because the optimistic UI's commit reveals stale state. Push
-  // sync_meta.last_sync_at into the past so checkStaleness() sees stale
-  // → tryPostgres throws → reads fall back to Apps Script until the
-  // next cron sync brings Postgres back in sync.
+  // Phase 1.7 dual-write — keep Postgres in sync with the just-finished
+  // Apps Script write so subsequent Postgres-first reads stay correct
+  // without waiting for the next 10-min cron cycle. Mirror failures are
+  // non-fatal: lib/postgres-write-mirror.ts marks sync_meta stale so
+  // reads fall back to Apps Script until the cron run repairs the drift.
+  // Awaited (not fire-and-forget) so the response to the client only
+  // returns after Postgres reflects the change — the next read is
+  // guaranteed to see the new state.
   if (postgresEnabled() && paths && paths.length > 0) {
     try {
-      const { sql, isPostgresConfigured } = await import('@/lib/postgres');
-      if (isPostgresConfigured()) {
-        await sql`UPDATE sync_meta SET last_sync_at = NOW() - INTERVAL '1 hour'`;
-      }
+      const { mirrorWriteToPostgres } = await import('@/lib/postgres-write-mirror');
+      await mirrorWriteToPostgres({
+        action,
+        body: { ...body, _actor: undefined },
+        response: data as Record<string, unknown>,
+      });
     } catch {
-      // ignore — non-fatal. Worst case: read sees stale Postgres for one
-      // page render until the next ISR / cron resolves it.
+      // ignore — mirror has its own internal try/catch that marks stale on error
     }
   }
   return data as T;
