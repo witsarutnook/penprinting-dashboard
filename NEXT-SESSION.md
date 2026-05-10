@@ -342,6 +342,36 @@ Type-check ผ่าน + production build OK ทุก commit. Vercel auto-depl
 
 ---
 
+## 🎯 Tomorrow (2026-05-11) — start with P1 before Phase 2 ต่อ
+
+After /diagnose-driven setCowork bug debug (~2 ชม.), agreed to harden infra ก่อน migrate actions ที่เหลือ. Phase 2 actions ที่ ship ต่อโดยไม่มี tests = repeat ของ setCowork bug pattern (silent fallback, hard to detect)
+
+### P1.a — Pre-commit hook (30 นาที, do first)
+- เพิ่ม `husky` + `lint-staged` หรือใช้ native git hook
+- Run: `npx tsc --noEmit && npm run lint`
+- Block commit ถ้า fail
+- ทำให้ทุก commit (Claude หรือ user) ผ่าน type+lint แน่นอน
+- Branch: ทำใน penprinting-dashboard repo อย่างเดียว
+
+### P1.b — Vitest integration tests for Phase 2 paths (4-6 ชม.)
+- Setup `vitest` + `@vitest/coverage-v8` (Next.js 14 compatible)
+- Test target: lib/ pure functions (sync-from-sheet, postgres-write, postgres-write-mirror, feature-flags) — ไม่ต้อง spin up server
+- Mock @vercel/postgres sql tagged template (เก็บ query + params)
+- **Top tests ที่ต้องมี:**
+  - `setCoworkInPostgres` — input array → expected SQL
+  - `deleteCleanThenInsert` — preserves dirty rows
+  - `phase2OwnsTable` truthy/falsy paths
+  - sync-from-sheet `recordSyncMetaTouch` after table-skip — **ตัวที่จะ catch บัก setCowork**
+  - `mirrorWriteToPostgres` for setCowork action (cowork column update)
+- Run via `npm test` + integrate into pre-commit hook
+- เป้า coverage: 60-70% ของ lib/
+
+### หลัง P1.a + P1.b เสร็จ → ค่อยลุย Phase 2 ต่อ
+
+`updateJob` (Med risk, ~30 min, infra พร้อม) เป็น action ถัดไปตาม migration order
+
+---
+
 ## ⚠️ Pending user actions (after 2026-05-10 session)
 
 ### Phase 2 setCowork activation (3 ขั้น — ต้องรัน db-migrate + push Apps Script + flag)
