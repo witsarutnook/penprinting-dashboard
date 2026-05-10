@@ -9,17 +9,17 @@ export const maxDuration = 60;
  * One-time audit_log import — admin only.
  *
  * Pulls the most recent ~500 audit rows from Apps Script (loadAllWithAudit)
- * and bulk-inserts into Postgres `audit_log` table. Safe to re-run; uses
- * a transient staging table + INSERT ... SELECT WHERE NOT EXISTS pattern
- * so duplicates (matched by timestamp + action + target_id + role) are
- * skipped.
+ * and bulk-inserts into Postgres `audit_log`. PoC reset behavior: truncates
+ * table first, then bulk inserts in chunks of 100 via multi-row VALUES.
  *
- * For PoC purposes, 500 rows with proper indexes is plenty representative —
- * filters by target_id are O(log n) regardless of table size, so the bench
- * latency at 500 rows mirrors what we'd see at 50,000 rows.
+ * Why bulk: the previous per-row `INSERT ... WHERE NOT EXISTS` did 500
+ * sequential round-trips × ~50-100ms each = 25-50s = past the function
+ * timeout. Multi-row VALUES collapses to ~5 round-trips → ~500ms.
  *
- * Production migration would replace this with a streaming sync from
- * Apps Script trigger → POST webhook → INSERT (Phase 1 of migration plan).
+ * Re-running this endpoint is safe — TRUNCATE always brings the table
+ * back to a known-good state. For a real migration we'd want incremental
+ * sync (timestamp watermark, ON CONFLICT DO NOTHING), but PoC scope is
+ * "fast and predictable, not robust".
  */
 export async function GET() {
   const session = await requireSession(['admin']);
@@ -42,50 +42,56 @@ export async function GET() {
   }
 
   if (auditRows.length === 0) {
-    return NextResponse.json({ ok: true, fetched: 0, inserted: 0, skipped: 0 });
+    return NextResponse.json({ ok: true, fetched: 0, inserted: 0 });
   }
 
-  // Insert in chunks. @vercel/postgres tagged-template `sql` doesn't
-  // support multi-row VALUES bulk inserts directly, so we loop with
-  // individual statements wrapped in an implicit per-statement transaction.
-  // For 500 rows this is fast enough (~1-2s end to end).
-  let inserted = 0;
-  let skipped = 0;
-  const errors: { i: number; msg: string }[] = [];
+  // Reset: truncate so re-running the endpoint gives a fresh, predictable state.
+  // RESTART IDENTITY resets the BIGSERIAL counter so ids stay small + readable.
+  try {
+    await sql`TRUNCATE TABLE audit_log RESTART IDENTITY`;
+  } catch (err) {
+    return NextResponse.json(
+      { error: `TRUNCATE failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 },
+    );
+  }
 
-  for (let i = 0; i < auditRows.length; i++) {
-    const r = auditRows[i];
-    const tsIso = r.timestamp || new Date().toISOString();
-    const role = r.role || null;
-    const action = r.action || 'unknown';
-    const targetIdNum = r.targetId ? Number(String(r.targetId).replace(/[^\d]/g, '')) : null;
-    const targetId = Number.isFinite(targetIdNum) && targetIdNum ? targetIdNum : null;
-    const summary = r.summary || null;
+  // Bulk insert in chunks of 100 — 500 rows = 5 round-trips total.
+  const CHUNK = 100;
+  let inserted = 0;
+  const errors: { chunkStart: number; msg: string }[] = [];
+
+  for (let chunkStart = 0; chunkStart < auditRows.length; chunkStart += CHUNK) {
+    const chunk = auditRows.slice(chunkStart, chunkStart + CHUNK);
+    const placeholders: string[] = [];
+    const values: unknown[] = [];
+    let paramIdx = 1;
+
+    for (const r of chunk) {
+      const tsIso = r.timestamp || new Date().toISOString();
+      const role = r.role || null;
+      const action = r.action || 'unknown';
+      const targetIdNum = r.targetId ? Number(String(r.targetId).replace(/[^\d]/g, '')) : null;
+      const targetId = Number.isFinite(targetIdNum) && targetIdNum ? targetIdNum : null;
+      const summary = r.summary || null;
+
+      placeholders.push(
+        `($${paramIdx}::timestamptz, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}::bigint, $${paramIdx + 4})`,
+      );
+      paramIdx += 5;
+      values.push(tsIso, role, action, targetId, summary);
+    }
 
     try {
-      // Dedupe: skip if a row with same (timestamp, action, target_id) exists.
-      // Sheet's audit log is append-only, so this combo is effectively unique
-      // for each operation. Faster than a unique constraint + ON CONFLICT
-      // because we control the comparison shape.
-      const result = await sql`
-        INSERT INTO audit_log (timestamp, role, user_name, action, target_id, summary)
-        SELECT ${tsIso}::timestamptz, ${role}, NULL, ${action}, ${targetId}, ${summary}
-        WHERE NOT EXISTS (
-          SELECT 1 FROM audit_log
-          WHERE timestamp = ${tsIso}::timestamptz
-            AND action = ${action}
-            AND ((target_id IS NULL AND ${targetId}::bigint IS NULL) OR target_id = ${targetId})
-        )
-        RETURNING id
-      `;
-      if (result.rowCount && result.rowCount > 0) {
-        inserted++;
-      } else {
-        skipped++;
-      }
+      const query = `INSERT INTO audit_log (timestamp, role, action, target_id, summary) VALUES ${placeholders.join(', ')}`;
+      const res = await sql.query(query, values);
+      inserted += res.rowCount || 0;
     } catch (err) {
-      errors.push({ i, msg: err instanceof Error ? err.message : String(err) });
-      if (errors.length >= 10) break; // bail on persistent failure
+      errors.push({
+        chunkStart,
+        msg: err instanceof Error ? err.message : String(err),
+      });
+      if (errors.length >= 3) break;
     }
   }
 
@@ -97,9 +103,9 @@ export async function GET() {
     ok: errors.length === 0,
     fetched: auditRows.length,
     inserted,
-    skipped,
     totalAfter: countRows[0]?.count ?? 0,
-    errors: errors.slice(0, 10),
+    chunks: Math.ceil(auditRows.length / CHUNK),
+    errors,
     hint: 'Now hit /admin/bench-audit to compare Sheet vs Postgres latency',
   });
 }
