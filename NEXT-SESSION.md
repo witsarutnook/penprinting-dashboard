@@ -1,8 +1,16 @@
 # 🎯 Next Session — Pick up from here
 
-> **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
+> **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-10 — Tier B close-out + perf compound (6 tasks):** ✅
+> **Session 2026-05-10 (afternoon — Phase 1 Postgres read mirror LIVE):** ✅
+> - **PoC bench-driven decision** — built `/admin/bench-audit` 2-section harness. Bench 1 (audit_log filter): tied at p50 ~108ms (best case for Sheet). Bench 2 (loadAll-shaped, full jobs payload): **Postgres p50 23.9× faster**, p95 19.8× faster. Sheet 4400ms → Postgres 200ms. Strong-GO verdict.
+> - **Phase 1 read mirror full deploy** — 4 mirror tables (orders + shipped + cancelled + templates) + sync_meta + Vercel cron `*/10 * * * *` + `lib/api-postgres.ts` Postgres-flavored loadAll/loadOrder/getAuditByTarget + `lib/api.ts` Postgres-first behind `READ_FROM_POSTGRES=1` flag with Apps Script fallback.
+> - **Sheet drift dedup** — shipped table had 2 duplicate ids causing PRIMARY KEY violation; added `dedupeById()` (last wins) to all 5 mirror sync functions. Currently: 86 fetched → 84 inserted, dedup 2.
+> - **/track migration** — switched from `loadAll().filter()` (200KB payload) to `loadOrder()` (1KB targeted). Public QR scan flow now ~3-5× faster. Postgres-first via Phase 1 flag.
+> - **Cutover validated** — flag flipped, /board feels noticeably faster ("เร็วขึ้นเยอะ" — user confirmed).
+> - **Total**: 8 commits + 1 Vercel UI config (Neon connect + READ_FROM_POSTGRES env). Migration plan estimated 1 wk → shipped in 1 session via bench-driven approach.
+>
+> **Session 2026-05-10 (morning — Tier B close-out + perf compound, 6 tasks):** ✅
 > - **Morning Report cron migration** — Apps Script `doPost` handler + `/api/cron/morning-report` Vercel route + 3rd `vercel.json` cron entry. ⏳ Pending user actions: deploy Morning Report Apps Script as Web App + set env vars (see runbook below).
 > - **Vercel KV rate limit** — `lib/rate-limit.ts` fail-open Upstash REST helper, applied to `/api/audit` (60/min/user) + `/api/orders/raw/[id]` (120/min/user). ⏳ Pending: connect Upstash KV via Vercel Storage.
 > - **Apps Script TextFinder write paths** (v5.10.9) — `findRowById` + new `findRowMatchesByColumn` helper in `helpers.ts`. `cancelOrder` + `deleteOrderCascade` refactored to share `cascadeCancelJobsForOrder_`. -500ms-1.5s per cascade.
@@ -288,35 +296,34 @@ Type-check ผ่าน + production build OK ทุก commit. Vercel auto-depl
 
 ## ⚠️ Pending user actions (after 2026-05-10 session)
 
-### Apps Script v5.10.9 redeploy (Dashboard project)
+### Phase 1 monitor (passive, 24-48 ชม.)
 
-Apps Script TS files ถูก compile + .js synced แล้ว — เหลือแค่ push + bump version.
+- ✅ **Postgres mirror live** — Vercel cron `*/10 * * * *` runs syncAllFromSheet, sync_meta tracks per-table freshness
+- ✅ **Postgres-first reads ON** — `READ_FROM_POSTGRES=1` Vercel env var set, /board/orders/calendar/analytics/track all use Postgres
+- [ ] Watch **Sentry** breadcrumbs ที่ category = `postgres-fallback` — ควร < 1% ของ requests. ถ้าสูง = Postgres mirror มีปัญหา
+- [ ] Watch **Vercel cron logs** — `path:/api/cron/sync-from-sheet` ควร 200 ทุก 10 นาที
+- [ ] **Rollback (กรณีฉุกเฉิน)**: Vercel → Settings → Environment Variables → delete `READ_FROM_POSTGRES` → redeploy → reads กลับไป Apps Script ทันที. Sheet เป็น source of truth ตลอด — 0% data loss risk
 
-1. `cd production-monitoring/apps-script/dashboard && bash push.sh` — clasp push the .js files
-2. Apps Script editor → **Deploy → Manage deployments → Edit existing → New version → Description "v5.10.9 TextFinder writes + getQuotaStats + bumpUsage" → Deploy** (อย่ากด "New deployment")
-3. Verify: open dashboard.penprinting.co/board → check Vercel logs for any "Unknown action" errors. Open /analytics range view → ดูว่า quota widget ขึ้นปกติ (อาจจะว่างวันแรก เพราะ counter เริ่มสะสมจากการ deploy)
+### Apps Script trigger cleanup (~1 วันรอ verify Phase 1)
 
-### Morning Report Apps Script Web App deploy (NEW — first time)
+- [ ] หลัง Postgres mirror ทำงานปกติ 1-2 วัน → Apps Script editor → **Triggers → row `morningReport` (Time-driven) → delete** (ป้องกัน double-fire กับ Vercel cron — ปัจจุบัน 5-min dedup ป้องกันอยู่แต่ลบ trigger จะ cleaner)
 
-Morning Report ยังไม่เคย deploy เป็น Web App — ต้องครั้งแรก.
+### Upstash KV connect — optional (5 min user)
 
-1. `cd morning-report && bash apps-script/v2/push.sh` (ถ้ามี) — ไม่งั้น copy `apps-script/v2/Code.js` ไปวางใน Apps Script editor "MorningReportV2"
-2. Apps Script editor → **Project Settings → Script properties → add `CRON_TOKEN` = ค่าสุ่ม ≥32 chars** (e.g. `openssl rand -hex 32`)
-3. Apps Script editor → **Deploy → New deployment → Type: Web app → Execute as: Me → Who has access: Anyone → Deploy** (ครั้งแรกเท่านั้นใช้ "New deployment" — รอบต่อไปใช้ "Edit existing")
-4. Copy the deployed URL (`/exec` ลงท้าย).
-5. Vercel project `penprinting-dashboard` → Settings → Environment Variables → add:
-   - `MORNING_REPORT_APPS_SCRIPT_URL` = the URL from step 4 (Production + Preview + Development)
-   - `MORNING_REPORT_TOKEN` = same value as CRON_TOKEN from step 2 (Sensitive flag ✅)
-6. Vercel → Deployments → Redeploy without build cache (so new env vars take effect)
-7. Vercel → Settings → Cron Jobs → ดูว่า `/api/cron/morning-report` ขึ้นมา → กด "Run Now" → check LINE group ว่ามี Flex message
-8. หลัง verify ผ่าน 1-2 วัน: Apps Script editor → **Triggers → row for `morningReport` → delete** (ปิด Apps Script time trigger เพื่อไม่ double-fire)
-
-### Upstash KV connect (Vercel Marketplace)
+ตอนนี้ rate limit fail-open อยู่ — endpoints ยังตอบปกติแต่ไม่มี protection. ทำเมื่อพร้อม:
 
 1. Vercel project → Storage → Connect Database → Marketplace → Upstash → Redis → Free tier
 2. Vercel auto-injects `KV_REST_API_URL` + `KV_REST_API_TOKEN` to Production + Preview + Development
 3. Redeploy (env var change takes 1 deploy to propagate)
 4. Verify: หลัง deploy เสร็จ ลองเปิด /board card detail หลายๆ ใบติดกันเร็วๆ ในมือถือ → หลัง ~60 ครั้ง/นาที จะเห็น 429 response. ถ้าไม่ติด rate limit แม้ spam → KV ยังไม่ wired (ดู Vercel function logs สำหรับ warn message)
+
+### Sheet data drift cleanup — 2 shipped duplicates
+
+shipped table ใน Sheet มี 2 rows ที่ id ซ้ำกัน (sync ก็ work เพราะ dedup last-wins แต่ Sheet เองยังมี data drift)
+
+- [ ] Run `/api/admin/diagnose-shipped-dupes` (added in this session) → ดู ids 2 ตัวที่ซ้ำ
+- [ ] เปิด Sheet → tab `shipped` → หา rows ตามที่ diagnose บอก → ลบ row ที่เก่ากว่า (ตาม shippedDate)
+- [ ] Run `/api/admin/sync-all` → confirm dedup กลับเป็น 0
 
 ---
 
@@ -447,21 +454,14 @@ Future fix สำหรับ:
 - Shared providers (Toast/Confirm) ที่ stays mounted across navigations
 - Effort ~2-3 ชม. defer until needed
 
-### 4. 🗄 Database migration — Vercel Postgres (planned 2026-05-09, not started)
-**Decision**: Vercel Postgres (Powered by Neon) — รวมใน Pro plan, single dashboard, schema portable to Supabase ภายหลังถ้าต้องการ realtime.
+### 4. ✅ Phase 1 Postgres read mirror — DONE 2026-05-10 (live in production)
+**Decision** (logged 2026-05-09): Vercel Postgres (Powered by Neon) — รวมใน Pro plan, single dashboard, schema portable to Supabase ภายหลังถ้าต้องการ realtime.
 
-**Full plan**: [`migration-plan-vercel-postgres.md`](migration-plan-vercel-postgres.md) — schema design + 4 migration phases + risk mitigation + speed comparison + alternatives.
+**Phase 1 result**: bench-driven decision via `/admin/bench-audit` showed Postgres p50 23.9× faster than Sheet for loadAll-shaped query (4400ms → 200ms). Shipped same session: 4 mirror tables + sync_meta + Vercel cron + `lib/api-postgres.ts` + `lib/api.ts` Postgres-first behind `READ_FROM_POSTGRES=1` flag with Apps Script fallback.
 
-**ห้าม migrate proactively.** รอ trigger:
-- Order volume 400+ active (currently 123)
-- Apps Script daily script time > 4 hr (currently ~30-60 min)
-- UrlFetchApp daily > 50K calls
-- Multi-user real-time edit need
-- Real-time KPI / TV display return
+**User confirmed**: "เร็วขึ้นเยอะ" after flag flipped + redeploy.
 
-**Quick-win starter (ก่อน commit เต็ม)**: 2-hour PoC mirror audit_log → Postgres, measure real timing vs Sheet. Low risk (audit append-only), high signal value.
-
-**Expected**: 5-50x faster reads, 10-30x faster writes. Effort: 4-6 weeks part-time / 2-3 weeks focused.
+**Phase 2 — write migration** (~2 wk effort) defer ถึงเมื่อ writes รู้สึกช้าจริง. Currently writes ~1.5-3s = acceptable. Trigger conditions: user complains writes slow, LockService timeout errors, multi-user concurrent edit need. ดู migration-plan §3-4.
 
 ### 5. ✅ Tier B leftover Pro features — DONE 2026-05-10 (code; user actions pending — see top of file)
 
@@ -522,7 +522,9 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-10 — Tier B close-out + perf compound (6 tasks ใน 1 session). **Morning Report cron migration**: Apps Script doPost handler + Vercel cron route + 3rd vercel.json entry + new env vars (pending user deploy). **Vercel KV rate limit**: lib/rate-limit.ts fail-open Upstash REST helper applied to /api/audit + /api/orders/raw (pending KV connect). **Apps Script TextFinder writes (v5.10.9)**: helpers.ts findRowById + findRowMatchesByColumn + cancelOrder/deleteOrderCascade share new cascadeCancelJobsForOrder_. -500ms-1.5s per cascade. **/board sweep**: 18.4 → 16.4 kB (-11%) + biggest win = killed 50-card useEffect audit fetch storm via mount-on-open DetailContent gate. **Quota widget**: bumpUsage_() per-day Properties counter + getQuotaStats action + app/analytics/quota-widget.tsx SVG sparkline. **Total**: code complete + type-check passes + production build OK. ⏳ User actions: Apps Script v5.10.9 redeploy + Morning Report Web App first-time deploy + Vercel env vars + Upstash KV connect (see runbook above)._
+_อัปเดตล่าสุด: 2026-05-10 (afternoon) — **Phase 1 Postgres read mirror LIVE in production**. PoC bench-driven decision (Bench 2 loadAll-shaped showed Postgres 23.9× faster) → shipped full Phase 1 same session: 4 mirror tables + Vercel cron `*/10 * * * *` + Postgres-first reads behind `READ_FROM_POSTGRES=1` flag + dedupeById safety net. /track migration: switched from loadAll().filter() (200KB) → loadOrder() (1KB). User confirmed "เร็วขึ้นเยอะ" after flag flipped. Total 8 commits + 1 Vercel UI config (Neon connect + READ_FROM_POSTGRES env). Migration plan estimated 1 wk → shipped in 1 session._
+
+_อัปเดตก่อน: 2026-05-10 (morning) — Tier B close-out + perf compound (6 tasks ใน 1 session). **Morning Report cron migration**: Apps Script doPost handler + Vercel cron route + 3rd vercel.json entry + new env vars (pending user deploy). **Vercel KV rate limit**: lib/rate-limit.ts fail-open Upstash REST helper applied to /api/audit + /api/orders/raw (pending KV connect). **Apps Script TextFinder writes (v5.10.9)**: helpers.ts findRowById + findRowMatchesByColumn + cancelOrder/deleteOrderCascade share new cascadeCancelJobsForOrder_. -500ms-1.5s per cascade. **/board sweep**: 18.4 → 16.4 kB (-11%) + biggest win = killed 50-card useEffect audit fetch storm via mount-on-open DetailContent gate. **Quota widget**: bumpUsage_() per-day Properties counter + getQuotaStats action + app/analytics/quota-widget.tsx SVG sparkline._
 
 _อัปเดตก่อน: 2026-05-09/10 mega-day (12+ hr session) — Phase 3.6 cutover ✅ + history tab v2 port + Tier A Pro features + Tier B 2/4 cron migration. **Phase 3.6**: WP retired via DNS A→CNAME Vercel, app.penprinting.co alias, cushion redirect, 9 hard-coded refs fixed. **Bonus**: createOrder PATHS_BY_ACTION miss fix `e88f386`, quota threshold 3000→5000ms. **History tab port**: Apps Script v5.10.7 `getAuditByTarget` + `/api/audit` + `<HistoryTab>` (`51e8df5`) + prefetch-on-mount (`1093a6d`). **Tier A Pro**: Speed Insights + Web Analytics + maxDuration=30 on 20 routes + Spend Cap $200 (`fc0579c`). **Tier B 2/4**: Vercel Cron migration — quota-check + r2-backup endpoints + vercel.json + Apps Script v5.10.8 (`d0ec15d`). CRON_SECRET manually created (Vercel didn't auto-gen), force-redeploy without build cache, Apps Script time triggers `dailyQuotaCheck` + `backupSheet` deleted. **Total**: 11 commits + 3 Apps Script deploys + DNS cutover + 4 Vercel UI configs (custom domain, env vars, spend cap, cron). Monitor 1 สัปดาห์._
 

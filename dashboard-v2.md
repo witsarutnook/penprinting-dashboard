@@ -300,7 +300,53 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### Tier B leftover Pro features close-out + perf compound (2026-05-10, Apps Script v5.10.9)
+### Phase 1 Postgres read mirror LIVE (2026-05-10 afternoon)
+
+Bench-driven decision shipped same session as the PoC. Migration plan estimated 1 week → done in 1 session because the bench (`/admin/bench-audit`) gave a single number (Postgres 23.9× faster on loadAll-shaped queries) that made the go/no-go call obvious.
+
+**PoC arc (audit_log → loadAll-shaped):**
+- Audit-only PoC tied at p50 (~108ms) — best case for Sheet (small targeted filter). Postgres better tail (p95 8×) but verdict was inconclusive.
+- Phase 1.5 added `jobs` mirror + `/api/board/sheet` + `/api/board/postgres` shadow endpoints.
+- Bench 2 (full jobs payload, no filter): Sheet ~4400ms p50 / Postgres ~200ms p50 = **23.9×**. Strong-GO verdict.
+
+**Phase 1 deploy:**
+- Schema: 4 new mirror tables (orders + shipped + cancelled + templates) + sync_meta tracking + indexes (`idx_orders_status`, `idx_orders_customer LOWER`, `idx_shipped_order`, `idx_cancelled_order`)
+- Sync mechanism: [`lib/sync-from-sheet.ts`](lib/sync-from-sheet.ts) — full re-sync via TRUNCATE + bulk INSERT chunks of 100. Records sync_meta per table. ~500ms end-to-end for current Sheet sizes (32 jobs, 124 orders, 86 shipped, 18 cancelled, 9 templates, 500 audit).
+- Endpoints: `/api/admin/sync-all` (manual, admin-gated) + `/api/cron/sync-from-sheet` (Vercel cron `*/10 * * * *`)
+- Read path: [`lib/api-postgres.ts`](lib/api-postgres.ts) — Postgres-flavored `loadAllFromPostgres` + `loadOrderFromPostgres` + `getAuditByTargetFromPostgres` with `PostgresStaleError` thrown when sync_meta says stale (>30 min) or sync failed.
+- Feature flag: [`lib/api.ts`](lib/api.ts) `tryPostgres()` helper — when `READ_FROM_POSTGRES=1` env var set, public read functions try Postgres first and fall back to Apps Script on `PostgresStaleError`. Sentry breadcrumb on every fallback for audit.
+- /track migration: switched from `loadAll().filter()` (200KB payload) to `loadOrder()` (1KB targeted). Public QR scan flow ~3-5× faster.
+
+**Sheet drift discovery:** shipped table had 2 duplicate ids (likely from old restore/ship cycles), causing PRIMARY KEY violation on first sync. Added `dedupeById()` safety net to all 5 mirror sync functions (last occurrence wins, surfaces dropped count). Backlog: clean Sheet duplicates manually.
+
+**lib/postgres.ts env aliasing:** Vercel marketplace UI lets users pick a custom prefix (`STORAGE_*`, `POSTGRES_*`, `DATABASE_URL`). [`lib/postgres-env-alias.ts`](lib/postgres-env-alias.ts) is a side-effect import that copies any of those into `POSTGRES_URL` so `@vercel/postgres` (which hard-codes the lookup) works regardless of which prefix the user chose.
+
+**Region pairing:**
+- Vercel function: iad1 (US East) by default — bench was running cross-region for the audit_log PoC, accounting for the ~555ms Postgres latency observed
+- After Phase 1 cutover, the function-region mismatch wasn't fixed — Postgres still in sin1 — but Postgres-first reads still beat Sheet by an order of magnitude even with cross-region overhead. **Future improvement: add Singapore (sin1) to Vercel Function Regions** for further -200-300ms RTT savings.
+
+**Rollback procedure:** Vercel project → Settings → Environment Variables → delete `READ_FROM_POSTGRES` → redeploy → reads return to Apps Script in seconds. Sheet remains source of truth throughout — 0% data loss risk.
+
+**Phase 2 (write migration) deferred** — writes ~1.5-3s currently is acceptable per user. Trigger conditions to revisit: writes feel slow, LockService timeouts, multi-user concurrent edit need.
+
+**Decision log:**
+- Why raw SQL (`@vercel/postgres` `sql` tag) instead of Drizzle ORM: PoC scope, can swap later. Phase 2 will likely add Drizzle.
+- Why TRUNCATE+INSERT cron instead of trigger-based sync: simpler + robust + bounded staleness (10 min) acceptable for read use cases.
+- Why sin1 Postgres region (despite Vercel iad1): user's primary location is Thailand → faster for Vercel function in sin1 IF we ever add it. For now cross-region overhead is absorbed.
+
+**Files added:**
+- [`lib/postgres.ts`](lib/postgres.ts) + [`lib/postgres-env-alias.ts`](lib/postgres-env-alias.ts)
+- [`lib/sync-from-sheet.ts`](lib/sync-from-sheet.ts)
+- [`lib/api-postgres.ts`](lib/api-postgres.ts)
+- [`lib/rate-limit.ts`](lib/rate-limit.ts) (Tier B 4/4 — morning session)
+- `app/admin/bench-audit/{page,client}.tsx` (PoC validation harness, kept for ongoing perf monitoring)
+- `app/api/admin/{db-migrate,sync-all,import-jobs,import-audit-log}/route.ts`
+- `app/api/audit/postgres/route.ts`
+- `app/api/board/{sheet,postgres}/route.ts` (bench shadow endpoints, kept)
+- `app/api/cron/sync-from-sheet/route.ts`
+- `app/admin/bench-audit/page.tsx` Sync status table (server probe of sync_meta)
+
+### Tier B leftover Pro features close-out + perf compound (2026-05-10 morning, Apps Script v5.10.9)
 
 ปิด Tier B (cron 3/4 migration + KV rate limit) + perf compound (TextFinder write paths + /board fetch storm fix + quota dashboard widget). 6 tasks ใน 1 session.
 
