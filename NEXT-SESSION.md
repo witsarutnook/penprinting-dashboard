@@ -2,6 +2,14 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-10 — Tier B close-out + perf compound (6 tasks):** ✅
+> - **Morning Report cron migration** — Apps Script `doPost` handler + `/api/cron/morning-report` Vercel route + 3rd `vercel.json` cron entry. ⏳ Pending user actions: deploy Morning Report Apps Script as Web App + set env vars (see runbook below).
+> - **Vercel KV rate limit** — `lib/rate-limit.ts` fail-open Upstash REST helper, applied to `/api/audit` (60/min/user) + `/api/orders/raw/[id]` (120/min/user). ⏳ Pending: connect Upstash KV via Vercel Storage.
+> - **Apps Script TextFinder write paths** (v5.10.9) — `findRowById` + new `findRowMatchesByColumn` helper in `helpers.ts`. `cancelOrder` + `deleteOrderCascade` refactored to share `cascadeCancelJobsForOrder_`. -500ms-1.5s per cascade.
+> - **/board bundle sweep + fetch storm fix** — 18.4 kB → 16.4 kB (-11%). Bigger win: eliminated 50-card `useEffect` audit fetch storm by gating `DetailContent` mount on `detailsOpen` state.
+> - **Apps Script quota dashboard widget** (v5.10.9) — per-day counter via Properties Service + `getQuotaStats` action + `app/analytics/quota-widget.tsx` SVG sparkline. ISR 5 min.
+> - **Morning Report icons** — already done in `1e1f692` (2026-05-09); session note was stale.
+>
 > **✅ Phase 3.6 cutover DONE 2026-05-09** — WP retired. DNS switch HostAtom A→CNAME Vercel complete. app.penprinting.co alias dashboard.penprinting.co (same Vercel project). WP source ยังอยู่ที่ HostAtom เก็บ rollback ≥1 สัปดาห์ (DNS ไม่ตอบที่นั่นแล้ว, files ยังอยู่). **Monitor 1 สัปดาห์**: Sentry error rate + Vercel logs `/api/track/lookup` traffic + LINE OA `/track` ปกติ. ถ้ามี issue rollback ได้: HostAtom DNS → A `203.170.190.20` กลับ.
 >
 > **Session 2026-05-09 (mega-day: Phase 3.6 cutover + 2 bonus fixes)** ✅:
@@ -278,9 +286,41 @@ Type-check ผ่าน + production build OK ทุก commit. Vercel auto-depl
 
 ---
 
-## ⚠️ Pending user actions
+## ⚠️ Pending user actions (after 2026-05-10 session)
 
-_(none open — ทุกอย่าง deploy ครบแล้วตอนปิด session 2026-05-08)_
+### Apps Script v5.10.9 redeploy (Dashboard project)
+
+Apps Script TS files ถูก compile + .js synced แล้ว — เหลือแค่ push + bump version.
+
+1. `cd production-monitoring/apps-script/dashboard && bash push.sh` — clasp push the .js files
+2. Apps Script editor → **Deploy → Manage deployments → Edit existing → New version → Description "v5.10.9 TextFinder writes + getQuotaStats + bumpUsage" → Deploy** (อย่ากด "New deployment")
+3. Verify: open dashboard.penprinting.co/board → check Vercel logs for any "Unknown action" errors. Open /analytics range view → ดูว่า quota widget ขึ้นปกติ (อาจจะว่างวันแรก เพราะ counter เริ่มสะสมจากการ deploy)
+
+### Morning Report Apps Script Web App deploy (NEW — first time)
+
+Morning Report ยังไม่เคย deploy เป็น Web App — ต้องครั้งแรก.
+
+1. `cd morning-report && bash apps-script/v2/push.sh` (ถ้ามี) — ไม่งั้น copy `apps-script/v2/Code.js` ไปวางใน Apps Script editor "MorningReportV2"
+2. Apps Script editor → **Project Settings → Script properties → add `CRON_TOKEN` = ค่าสุ่ม ≥32 chars** (e.g. `openssl rand -hex 32`)
+3. Apps Script editor → **Deploy → New deployment → Type: Web app → Execute as: Me → Who has access: Anyone → Deploy** (ครั้งแรกเท่านั้นใช้ "New deployment" — รอบต่อไปใช้ "Edit existing")
+4. Copy the deployed URL (`/exec` ลงท้าย).
+5. Vercel project `penprinting-dashboard` → Settings → Environment Variables → add:
+   - `MORNING_REPORT_APPS_SCRIPT_URL` = the URL from step 4 (Production + Preview + Development)
+   - `MORNING_REPORT_TOKEN` = same value as CRON_TOKEN from step 2 (Sensitive flag ✅)
+6. Vercel → Deployments → Redeploy without build cache (so new env vars take effect)
+7. Vercel → Settings → Cron Jobs → ดูว่า `/api/cron/morning-report` ขึ้นมา → กด "Run Now" → check LINE group ว่ามี Flex message
+8. หลัง verify ผ่าน 1-2 วัน: Apps Script editor → **Triggers → row for `morningReport` → delete** (ปิด Apps Script time trigger เพื่อไม่ double-fire)
+
+### Upstash KV connect (Vercel Marketplace)
+
+1. Vercel project → Storage → Connect Database → Marketplace → Upstash → Redis → Free tier
+2. Vercel auto-injects `KV_REST_API_URL` + `KV_REST_API_TOKEN` to Production + Preview + Development
+3. Redeploy (env var change takes 1 deploy to propagate)
+4. Verify: หลัง deploy เสร็จ ลองเปิด /board card detail หลายๆ ใบติดกันเร็วๆ ในมือถือ → หลัง ~60 ครั้ง/นาที จะเห็น 429 response. ถ้าไม่ติด rate limit แม้ spam → KV ยังไม่ wired (ดู Vercel function logs สำหรับ warn message)
+
+---
+
+### ✅ Done in earlier sessions (no further action needed)
 
 ✅ **Already done by user 2026-05-07**: Apps Script redeploy (Phase 2.1 + createOrder + bulkForward auto-alloc + per-user audit signing + **v5.10.4 cancelOrder/deleteOrderCascade/promoteDraft** + **v5.10.5 audit-param skip** — all live)
 
@@ -423,17 +463,14 @@ Future fix สำหรับ:
 
 **Expected**: 5-50x faster reads, 10-30x faster writes. Effort: 4-6 weeks part-time / 2-3 weeks focused.
 
-### 5. Tier B leftover Pro features (~3 ชม.)
-- **Morning Report cron migration** — separate Apps Script project ต้องเพิ่ม doPost handler + auth (1 hr) → ตอนนี้ยังเป็น Apps Script time trigger 8 AM Bangkok
-- **Vercel KV rate limit** `/api/audit` + `/api/orders/raw` — DDoS protection + Apps Script quota safety (1.5 hr) → ต้อง create KV store ใน Vercel UI ก่อน
+### 5. ✅ Tier B leftover Pro features — DONE 2026-05-10 (code; user actions pending — see top of file)
 
-### 6. Perf optimization backlog
-- TextFinder pattern apply ใน `production-monitoring/apps-script/dashboard/write.ts` (-500ms-1.5s ต่อ write action)
-- Bundle analysis sweep `/board` 18.4KB chunk — find duplicate icon SVG / unused code
-- Apps Script quota dashboard ใน `/analytics` page (Properties Service counter + sparkline)
+### 6. ✅ Perf optimization batch — DONE 2026-05-10
+- ✅ TextFinder pattern in `write.ts` — `findRowById` rewrite + new `findRowMatchesByColumn` + cascade refactor
+- ✅ /board bundle sweep 18.4 → 16.4 kB + fetch storm fix
+- ✅ Apps Script quota dashboard widget on /analytics
 
-### 7. Spawned tasks
-- Morning Report `ICON_BASE` (`penprinting.co/icons/`) broken — icons live ที่ `_shared/icons/` ไม่ expose ผ่าน HTTP. Fix: copy ไป `penprinting-web/public/icons/` + push (Vercel auto-deploys)
+### 7. ✅ Spawned tasks — Morning Report `ICON_BASE` already shipped 2026-05-09 (`1e1f692`)
 
 ---
 
@@ -485,7 +522,9 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-09/10 mega-day (12+ hr session) — Phase 3.6 cutover ✅ + history tab v2 port + Tier A Pro features + Tier B 2/4 cron migration. **Phase 3.6**: WP retired via DNS A→CNAME Vercel, app.penprinting.co alias, cushion redirect, 9 hard-coded refs fixed. **Bonus**: createOrder PATHS_BY_ACTION miss fix `e88f386`, quota threshold 3000→5000ms. **History tab port**: Apps Script v5.10.7 `getAuditByTarget` + `/api/audit` + `<HistoryTab>` (`51e8df5`) + prefetch-on-mount (`1093a6d`). **Tier A Pro**: Speed Insights + Web Analytics + maxDuration=30 on 20 routes + Spend Cap $200 (`fc0579c`). **Tier B 2/4**: Vercel Cron migration — quota-check + r2-backup endpoints + vercel.json + Apps Script v5.10.8 (`d0ec15d`). CRON_SECRET manually created (Vercel didn't auto-gen), force-redeploy without build cache, Apps Script time triggers `dailyQuotaCheck` + `backupSheet` deleted. **Total**: 11 commits + 3 Apps Script deploys + DNS cutover + 4 Vercel UI configs (custom domain, env vars, spend cap, cron). Monitor 1 สัปดาห์._
+_อัปเดตล่าสุด: 2026-05-10 — Tier B close-out + perf compound (6 tasks ใน 1 session). **Morning Report cron migration**: Apps Script doPost handler + Vercel cron route + 3rd vercel.json entry + new env vars (pending user deploy). **Vercel KV rate limit**: lib/rate-limit.ts fail-open Upstash REST helper applied to /api/audit + /api/orders/raw (pending KV connect). **Apps Script TextFinder writes (v5.10.9)**: helpers.ts findRowById + findRowMatchesByColumn + cancelOrder/deleteOrderCascade share new cascadeCancelJobsForOrder_. -500ms-1.5s per cascade. **/board sweep**: 18.4 → 16.4 kB (-11%) + biggest win = killed 50-card useEffect audit fetch storm via mount-on-open DetailContent gate. **Quota widget**: bumpUsage_() per-day Properties counter + getQuotaStats action + app/analytics/quota-widget.tsx SVG sparkline. **Total**: code complete + type-check passes + production build OK. ⏳ User actions: Apps Script v5.10.9 redeploy + Morning Report Web App first-time deploy + Vercel env vars + Upstash KV connect (see runbook above)._
+
+_อัปเดตก่อน: 2026-05-09/10 mega-day (12+ hr session) — Phase 3.6 cutover ✅ + history tab v2 port + Tier A Pro features + Tier B 2/4 cron migration. **Phase 3.6**: WP retired via DNS A→CNAME Vercel, app.penprinting.co alias, cushion redirect, 9 hard-coded refs fixed. **Bonus**: createOrder PATHS_BY_ACTION miss fix `e88f386`, quota threshold 3000→5000ms. **History tab port**: Apps Script v5.10.7 `getAuditByTarget` + `/api/audit` + `<HistoryTab>` (`51e8df5`) + prefetch-on-mount (`1093a6d`). **Tier A Pro**: Speed Insights + Web Analytics + maxDuration=30 on 20 routes + Spend Cap $200 (`fc0579c`). **Tier B 2/4**: Vercel Cron migration — quota-check + r2-backup endpoints + vercel.json + Apps Script v5.10.8 (`d0ec15d`). CRON_SECRET manually created (Vercel didn't auto-gen), force-redeploy without build cache, Apps Script time triggers `dailyQuotaCheck` + `backupSheet` deleted. **Total**: 11 commits + 3 Apps Script deploys + DNS cutover + 4 Vercel UI configs (custom domain, env vars, spend cap, cron). Monitor 1 สัปดาห์._
 
 _อัปเดตก่อน: 2026-05-08 mega-day — audit batch 5 (`57ca976` + `dc24167`) + Sentry 5-layer journey (`212bb7a` → `f299dc9` → `076586d` → `5b851a5` → `7e6fbfa`) + photobook spec (`682fd0e`) + promote-draft flicker (`5db20f5`) + date corruption (Vercel `25e28c0` + Apps Script helpers.ts pushed by คุณนุ๊ก) + Bug 4 modal slow (`7b73d4f` + Apps Script load.ts pushed by คุณนุ๊ก + architectural fix `96603a8`) + Bug 5 pagination (`b798c3e`). 15 commits + 2 Apps Script deploys. Sentry observability live._
 

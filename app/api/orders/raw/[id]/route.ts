@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { loadOrder, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export const maxDuration = 30;
 
@@ -21,6 +22,17 @@ export async function GET(
 ) {
   const session = await requireSession();
   if (session instanceof NextResponse) return session;
+
+  // Per-user rate limit — 120 req/min handles bursty browsing of the
+  // orders list (each modal open is one fetch, sometimes prefetched on
+  // hover) while capping runaway loops from burning Apps Script quota.
+  const rate = await checkRateLimit(`raw:${session.user}`, { limit: 120, windowSec: 60 });
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: `เรียกข้อมูลถี่เกินไป กรุณารออีก ${rate.retryIn} วินาที` },
+      { status: 429, headers: { 'Retry-After': String(rate.retryIn) } },
+    );
+  }
 
   const id = Number(params.id);
   if (!id || !Number.isFinite(id)) {

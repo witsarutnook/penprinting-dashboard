@@ -19,7 +19,6 @@ import { useUndo } from '@/components/board/undo-context';
 import { useConfirm } from '@/components/confirm-provider';
 import { useToast } from '@/components/toast-provider';
 import { usePendingMutations } from '@/components/board/pending-mutations';
-import { HistoryTab } from '@/components/history-tab';
 
 // Lazy-load admin-only edit modals — saves ~50KB First Load JS for staff
 // (who never open these). Chunks only fetch when the user clicks ✏️.
@@ -30,6 +29,13 @@ const OrderForm = dynamic(
 );
 const JobForm = dynamic(
   () => import('./job-form').then((m) => ({ default: m.JobForm })),
+  { ssr: false },
+);
+// HistoryTab + its icon-set ride a separate chunk — only loads when the
+// user actually opens a card detail modal. Page load on /board avoids the
+// audit-tab JS until needed.
+const HistoryTab = dynamic(
+  () => import('@/components/history-tab').then((m) => ({ default: m.HistoryTab })),
   { ssr: false },
 );
 import {
@@ -87,6 +93,13 @@ function CardImpl({
   const toast = useToast();
   const { hideJob, unhideJob, commit } = usePendingMutations();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  // Conditional-mount the heavy DetailContent + HistoryTab subtree only
+  // when the dialog is actually open. Previously DetailContent rendered
+  // for every card on page load (50 cards = 50 HistoryTab `useEffect`
+  // fetches firing immediately, all of them blocked by the rate-limiter
+  // anyway). Mount-on-open: zero audit fetches, zero history-tab chunk
+  // download, until the user clicks a card.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editOrderOpen, setEditOrderOpen] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
@@ -130,10 +143,17 @@ function CardImpl({
       toggleJob(job.id);
       return;
     }
-    dialogRef.current?.showModal();
+    setDetailsOpen(true);
   }
   function close() {
-    dialogRef.current?.close();
+    const dlg = dialogRef.current;
+    // If close() is called between setDetailsOpen(true) and the useEffect
+    // calling showModal(), dlg.open is still false — dlg.close() would
+    // no-op and the native `close` event never fires, leaving the state
+    // stuck at true and locking the card. Reset state directly in that
+    // case so a subsequent open() can re-trigger the effect.
+    if (dlg?.open) dlg.close();
+    else setDetailsOpen(false);
   }
   function startEdit() {
     dialogRef.current?.close();
@@ -143,6 +163,22 @@ function CardImpl({
     dialogRef.current?.close();
     setEditOrderOpen(true);
   }
+
+  // Mount-then-show: when detailsOpen flips to true, React mounts the
+  // DetailContent subtree, then this effect fires `showModal()` on the
+  // freshly-rendered <dialog>. The native `close` event resets state so
+  // the next open re-mounts a fresh subtree (clears any audit/spec cache
+  // from the previous job).
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg || !detailsOpen) return;
+    if (!dlg.open) dlg.showModal();
+    function onClose() {
+      setDetailsOpen(false);
+    }
+    dlg.addEventListener('close', onClose);
+    return () => dlg.removeEventListener('close', onClose);
+  }, [detailsOpen]);
 
   async function handleShipClick() {
     if (bulkMode) {
@@ -415,13 +451,15 @@ function CardImpl({
         ref={dialogRef}
         className="rounded-2xl p-0 m-auto bg-white shadow-2xl backdrop:bg-black/40 max-w-2xl w-[92vw]"
       >
-        <DetailContent
-          job={job}
-          onClose={close}
-          onEdit={startEdit}
-          onEditOrder={startEditOrder}
-          sessionRole={sessionRole}
-        />
+        {detailsOpen && (
+          <DetailContent
+            job={job}
+            onClose={close}
+            onEdit={startEdit}
+            onEditOrder={startEditOrder}
+            sessionRole={sessionRole}
+          />
+        )}
       </dialog>
       <ForwardDialog
         job={job}
@@ -1060,10 +1098,12 @@ function DetailContent({
           </>
         )}
 
-        {/* Always-mount + display toggle = prefetch audit when modal opens.
-         *  HistoryTab fires its fetch on mount; by the time user clicks the
-         *  ประวัติ tab, entries are already loaded. ~500ms saved per click
-         *  with zero cost to pages that don't open this card. */}
+        {/* Mount-on-open + display toggle = prefetch audit as soon as the
+         *  dialog opens. HistoryTab fires its fetch on mount; by the time
+         *  the user clicks the ประวัติ tab, entries are already loaded.
+         *  ~500ms saved per click. The card-level mount-on-open gate (in
+         *  the parent dialog) keeps page-load cards from firing 50 audit
+         *  fetches in parallel — only the opened card pays. */}
         <div style={{ display: tab === 'history' ? 'block' : 'none' }}>
           <HistoryTab jobId={job.id} orderId={job.orderId} />
         </div>

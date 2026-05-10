@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuditByTarget, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export const maxDuration = 30;
 
@@ -20,6 +21,17 @@ export const maxDuration = 30;
 export async function GET(req: Request) {
   const session = await requireSession();
   if (session instanceof NextResponse) return session;
+
+  // Per-user rate limit — 60 req/min is plenty for human use of the
+  // history tab (one fetch per modal open) but caps any runaway client
+  // loop or compromised credential from burning Apps Script quota.
+  const rate = await checkRateLimit(`audit:${session.user}`, { limit: 60, windowSec: 60 });
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: `เรียกข้อมูลถี่เกินไป กรุณารออีก ${rate.retryIn} วินาที` },
+      { status: 429, headers: { 'Retry-After': String(rate.retryIn) } },
+    );
+  }
 
   const url = new URL(req.url);
   const jobId = url.searchParams.get('jobId') || '';

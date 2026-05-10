@@ -300,6 +300,43 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Tier B leftover Pro features close-out + perf compound (2026-05-10, Apps Script v5.10.9)
+
+ปิด Tier B (cron 3/4 migration + KV rate limit) + perf compound (TextFinder write paths + /board fetch storm fix + quota dashboard widget). 6 tasks ใน 1 session.
+
+**1. Morning Report cron migration (Tier B 3/4)**
+- Morning Report Apps Script project ได้ `doPost` handler ใหม่ (verify body.token = Script Property `CRON_TOKEN` → run `morningReport()`). Health-check endpoint via `doGet`.
+- `app/api/cron/morning-report/route.ts` — daily 8 AM Bangkok (1 AM UTC), `0 1 * * *`. POSTs to morning-report Apps Script web app with shared token.
+- `vercel.json` — 3rd cron entry.
+- Env vars: `MORNING_REPORT_APPS_SCRIPT_URL` + `MORNING_REPORT_TOKEN` (set in Vercel after Apps Script web app deploy returns URL).
+- ⏳ Pending user actions: deploy morning-report Apps Script as Web App (first time), set Script Property + Vercel env vars, delete Apps Script time trigger after verification.
+
+**2. Vercel KV rate limit (Tier B 4/4)**
+- `lib/rate-limit.ts` — fail-open Upstash REST helper. Keys: `KV_REST_API_URL` + `KV_REST_API_TOKEN` (Vercel Marketplace auto-injects). Without them logs warn + lets requests through.
+- Applied to `/api/audit` (60 req/min/user) + `/api/orders/raw/[id]` (120 req/min/user). 429 response includes `Retry-After`.
+- Threat model: logged-in user / compromised credentials spamming Apps Script. Anonymous DDoS already blocked by `requireSession()`.
+- ⏳ Pending: connect Upstash KV via Vercel Storage tab → free tier covers our volume by ~1000×.
+
+**3. Apps Script TextFinder pattern in write paths (Apps Script v5.10.9)**
+- `helpers.ts` `findRowById` — switched to TextFinder restricted to column A. ~5-15× faster than the previous `getDataRange().getValues()` scan. Affects all 23 write call sites without touching write.ts.
+- New `findRowMatchesByColumn` helper — TextFinder-based row scan that preserves Date objects via `getValues()` (not `getDisplayValues()`) so cascade write paths don't re-trigger the 2026-05-08 date corruption bug.
+- `cancelOrder` + `deleteOrderCascade` cascade scan refactored to use the new helper. Both also share new `cascadeCancelJobsForOrder_` to DRY the duplicate logic. Estimated -500ms-1.5s per cascade on 100+ row sheets.
+
+**4. /board bundle sweep + fetch storm fix (Vercel)**
+- `/board` page bundle: 18.4 kB → 16.4 kB (-11%). First Load 127 kB → 125 kB.
+- `KPIDetailModal` lazy-loaded + conditionally mounted in `kpi-bar.tsx`.
+- `HistoryTab` lazy-loaded in `card.tsx`.
+- **Bigger win — fetch storm fix**: previous `<dialog>` always rendered `DetailContent`+`HistoryTab` for every card on page load (50 cards = 50 `useEffect` audit fetches firing simultaneously, all rate-limit-bound but burning Apps Script quota). Fixed: `[detailsOpen, setDetailsOpen]` state + `{detailsOpen && <DetailContent>}` conditional mount + `useEffect` that fires `dialog.showModal()` on open.
+
+**5. Apps Script quota dashboard widget (Apps Script v5.10.9)**
+- `quota.ts` — `bumpUsage_()` increments per-day counter (`qd_YYYY-MM-DD` Properties Service key) on every `doGet`/`doPost`. 14-day rolling window with first-hit-of-day pruning.
+- `getQuotaStats` action returns daily array + todayCount + windowTotal + peak.
+- `app/analytics/quota-widget.tsx` — server-rendered SVG sparkline + 3-stat header. Suspense-wrapped, ISR 5 min. Pre-v5.10.9 Apps Script returns "Unknown action" → widget shows redeploy hint.
+
+**6. Spawned task — Morning Report icons fix** (already done 2026-05-09 — `1e1f692` committed + live, NEXT-SESSION.md note was stale).
+
+⏳ **Pending user actions** — see NEXT-SESSION.md for the runbook.
+
 ### Tier B Pro features — Vercel Cron migration 2/4 (2026-05-09 night, `d0ec15d` + Apps Script v5.10.8)
 
 ย้าย 2 cron จาก Apps Script time triggers → Vercel Cron. Apps Script script time -50% + observable cron logs.

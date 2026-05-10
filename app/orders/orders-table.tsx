@@ -1,6 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { displayDate } from '@/lib/jobs';
@@ -15,7 +16,14 @@ import { useConfirm } from '@/components/confirm-provider';
 import { PageSizeBar } from '@/components/page-size-bar';
 import { PaginationBar } from '@/components/pagination-bar';
 import { paginate, clampPage } from '@/lib/page-size';
-import { HistoryTab } from '@/components/history-tab';
+
+// HistoryTab + its icon-set ride a separate chunk — only loads when a
+// user actually opens an order detail modal. Mirrors the /board card.tsx
+// pattern so /orders page-load doesn't pay for the audit-tab JS.
+const HistoryTab = dynamic(
+  () => import('@/components/history-tab').then((m) => ({ default: m.HistoryTab })),
+  { ssr: false },
+);
 
 export interface OrderRow {
   id: number;

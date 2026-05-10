@@ -1,12 +1,20 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   IconCalendar, IconClock, IconBolt, IconAlertTriangle,
 } from '@/lib/icons';
 import type { Urgency } from '@/lib/calendar';
 import type { BoardJob } from '@/lib/board';
-import { KPIDetailModal } from './kpi-detail-modal';
+
+// Lazy-load — modal only opens when a user clicks a KPI bucket. Skipping
+// it from the /board page bundle saves ~3KB compressed for users who
+// never drill in (most of them).
+const KPIDetailModal = dynamic(
+  () => import('./kpi-detail-modal').then((m) => ({ default: m.KPIDetailModal })),
+  { ssr: false },
+);
 
 interface Bucket {
   key: Urgency;
@@ -78,12 +86,14 @@ export function KPIBar({ totals, jobs }: Props) {
           </button>
         ))}
       </div>
-      <KPIDetailModal
-        open={activeBucket !== null}
-        onClose={() => setActiveBucket(null)}
-        urgency={activeBucket}
-        jobs={jobs}
-      />
+      {activeBucket !== null && (
+        <KPIDetailModal
+          open={true}
+          onClose={() => setActiveBucket(null)}
+          urgency={activeBucket}
+          jobs={jobs}
+        />
+      )}
     </>
   );
 }

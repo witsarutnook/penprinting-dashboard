@@ -26,8 +26,10 @@ const URGENCY_RANK: Record<Urgency, number> = { overdue: 0, dday: 1, urgent: 2, 
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Which urgency bucket to show. */
-  urgency: Urgency | null;
+  /** Which urgency bucket to show. Caller is expected to mount the modal
+   *  conditionally (`{bucket !== null && <KPIDetailModal urgency={bucket} ...>}`)
+   *  so this prop can be a tight non-null Urgency. */
+  urgency: Urgency;
   /** All visible jobs (post-filter). KPI counts are computed from the
    *  un-filtered totals upstream, but this modal lists what's currently
    *  visible — keeps modal in sync with the board view. */
@@ -62,8 +64,6 @@ export function KPIDetailModal({ open, onClose, urgency, jobs }: Props) {
       dlg.removeEventListener('cancel', onCancel);
     };
   }, [onClose]);
-
-  if (!urgency) return <dialog ref={dialogRef} className="hidden" />;
 
   // Filter jobs to selected urgency, sorted by severity → due → name
   const filtered = jobs

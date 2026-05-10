@@ -152,6 +152,34 @@ export interface AuditEntry {
   targetId: string;
   summary: string;
 }
+/** Apps Script usage stats — 14-day per-day request counts.
+ *  Apps Script side increments a Properties Service counter on every
+ *  doGet/doPost. Pre-v5.10.9 returns "Unknown action" → empty stats so
+ *  the widget renders gracefully on stale Apps Script deploys. */
+export interface QuotaStats {
+  daily: { date: string; count: number }[];
+  todayCount: number;
+  windowTotal: number;
+  peak: number;
+}
+
+export async function getQuotaStats(): Promise<QuotaStats> {
+  try {
+    const data = await get<Partial<QuotaStats>>('getQuotaStats', {}, { revalidate: 300 });
+    return {
+      daily: data.daily || [],
+      todayCount: typeof data.todayCount === 'number' ? data.todayCount : 0,
+      windowTotal: typeof data.windowTotal === 'number' ? data.windowTotal : 0,
+      peak: typeof data.peak === 'number' ? data.peak : 0,
+    };
+  } catch (err) {
+    if (err instanceof AppsScriptError && /unknown action/i.test(err.message)) {
+      return { daily: [], todayCount: 0, windowTotal: 0, peak: 0 };
+    }
+    throw err;
+  }
+}
+
 export async function getAuditByTarget(
   jobId: number | string | null | undefined,
   orderId: number | string | null | undefined,
