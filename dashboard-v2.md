@@ -300,7 +300,30 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### Phase 1 Postgres read mirror LIVE (2026-05-10 afternoon)
+### Phase 1.7 dual-write mirror + 2 bug fixes (2026-05-10 afternoon batch 2)
+
+User-reported bug after Phase 1 cutover: writes "เด้งกลับหมด" — every drag-drop forward / create order / move card appeared to fail. Root cause: 10-min Postgres mirror cron lag meant `loadAll()` Postgres-first returned the OLD snapshot after every write, the optimistic UI commit revealed pre-write state, and the user concluded the write didn't go through.
+
+**Phase 1.7 — dual-write** (`33d9978`): kill staleness window without going Phase 2.
+
+- [`lib/postgres-write-mirror.ts`](lib/postgres-write-mirror.ts) 17 mirror handlers cover every action surface: `addJob`/`updateJob`/`deleteJob` (upsert + delete), `setCowork` (single-column UPDATE), `moveToShipped` / `cancelJob` / `restoreJob` (state transition INSERT+DELETE), `bulkForward` (per-item DELETE old + INSERT new with server-allocated id from response.succeeded), `addOrder` / `updateOrder` / `deleteOrder` / `addTemplate` / `deleteTemplate`, plus the 4 atomic compound actions (`createOrder`, `cancelOrder`, `deleteOrderCascade`, `promoteDraft`) which read each cascaded job's data BEFORE delete and use `jsonb_set` to flip the order's status field.
+- [`lib/api.ts`](lib/api.ts) `post()` calls `mirrorWriteToPostgres()` AFTER Apps Script success (Sheet remains source of truth). Awaited (not fire-and-forget) so the response only returns after Postgres reflects the change — next read guaranteed fresh.
+- Mirror failures NEVER block the user-facing response. On error, `mirrorWriteToPostgres` marks `sync_meta.last_sync_at = NOW() - INTERVAL '1 hour'` so reads fall back to Apps Script until the next cron run repairs drift, plus a Sentry capture with `tags.layer = 'postgres-mirror'` for audit.
+- 70-80% of these handlers translate directly to Phase 2 (writes go through Postgres) when ready — only the "after Apps Script success" wrapper is throwaway, not the SQL operations themselves.
+
+**Bug fix 1 — OrderForm SuccessView flicker** (`9969af9`)
+
+OrderForm's init useEffect depended on `initial` reference. Phase 1.7's faster refresh (Postgres ~200ms vs Apps Script ~1.5s) made the bug visible: after save success, `router.refresh()` triggered a server re-render that handed OrderForm a fresh `initial` object with the same id but new reference. useEffect re-ran, called `setSuccess(null)`, and the SuccessView vanished mid-frame. The user saw the form re-rendered with their just-saved values and concluded the save didn't go through, clicking save again.
+
+Fix: `initializedIdRef` tracks the id we've already populated for. On useEffect re-run with the same id AND mid-session (not a fresh modal-open), skip re-init to preserve local form state including `success`. `wasOpenRef` tracks closed→open transitions so modal "fresh open" (different from server refresh) still re-initializes correctly.
+
+**Bug fix 2 — Edit-from-/orders speed** (`870aaa4`)
+
+User noticed clicking "แก้ไข" from /orders list felt slower than from /board card. The /board card path renders OrderForm inline with data already in client memory (~16ms), but `/orders/[id]/edit/page.tsx` was SSR-fetching `loadOrder(id)` (uncached, default `revalidate: 0` skips Postgres → Apps Script TextFinder ~200-500ms) AND `loadAll()` (Postgres ~200ms) in parallel — total max(~500, ~200) ≈ ~500ms.
+
+Fix: drop `loadOrder()` entirely. Phase 1.7's dual-write guarantee means `loadAll()` is fresh, and `snap.orders` already contains every order with full `rawData`. `snap.orders.find(o => Number(o.id) === id)` covers both target + recentOrders autocomplete in ONE Postgres fetch. /orders → edit ~500ms → ~200ms.
+
+### Phase 1 Postgres read mirror LIVE (2026-05-10 afternoon batch 1)
 
 Bench-driven decision shipped same session as the PoC. Migration plan estimated 1 week → done in 1 session because the bench (`/admin/bench-audit`) gave a single number (Postgres 23.9× faster on loadAll-shaped queries) that made the go/no-go call obvious.
 
