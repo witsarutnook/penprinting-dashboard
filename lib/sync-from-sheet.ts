@@ -23,9 +23,27 @@ interface TableSyncResult {
   table: string;
   fetched: number;
   inserted: number;
+  /** Rows dropped because their id appeared more than once in the Sheet
+   *  source (last occurrence wins — matches the row's "current state").
+   *  Non-zero usually = data drift in Sheet that an admin should clean
+   *  up at some point, but the sync stays correct in the meantime. */
+  dedup?: number;
   ok: boolean;
   error?: string;
   ms: number;
+}
+
+/** Keep only the LAST occurrence of each id — handles Sheet data drift
+ *  (e.g. shipped table has 2+ rows for the same job id from restore/ship
+ *  cycles). Returns the deduped array + count of dropped rows. */
+function dedupeById<T extends { id?: number | string }>(rows: T[]): { unique: T[]; dropped: number } {
+  const map = new Map<string, T>();
+  for (const r of rows) {
+    const id = String(r.id ?? '');
+    if (!id) continue;
+    map.set(id, r); // last write wins
+  }
+  return { unique: Array.from(map.values()), dropped: rows.length - map.size };
 }
 
 export interface SyncResult {
@@ -151,7 +169,8 @@ async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
     await sql`TRUNCATE TABLE jobs`;
-    const rows = jobs
+    const { unique, dropped } = dedupeById(jobs);
+    const rows = unique
       .filter(j => Number.isFinite(Number(j.id)))
       .map(j => [
         Number(j.id),
@@ -173,7 +192,7 @@ async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
       ['bigint', 'bigint', '', '', '', '', '', '', 'jsonb', 'jsonb'],
     );
     await recordSyncMeta('jobs', r.inserted, !r.error, r.error);
-    return { table: 'jobs', fetched: jobs.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+    return { table: 'jobs', fetched: jobs.length, inserted: r.inserted, dedup: dropped, ok: !r.error, error: r.error, ms: Date.now() - t0 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await recordSyncMeta('jobs', 0, false, msg);
@@ -185,7 +204,8 @@ async function syncOrders(orders: Order[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
     await sql`TRUNCATE TABLE orders`;
-    const rows = orders
+    const { unique, dropped } = dedupeById(orders);
+    const rows = unique
       .filter(o => Number.isFinite(Number(o.id)))
       .map(o => [
         Number(o.id),
@@ -210,7 +230,7 @@ async function syncOrders(orders: Order[]): Promise<TableSyncResult> {
       ['bigint', '', '', '', '', '', '', '', '', '', 'jsonb', 'jsonb', 'jsonb'],
     );
     await recordSyncMeta('orders', r.inserted, !r.error, r.error);
-    return { table: 'orders', fetched: orders.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+    return { table: 'orders', fetched: orders.length, inserted: r.inserted, dedup: dropped, ok: !r.error, error: r.error, ms: Date.now() - t0 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await recordSyncMeta('orders', 0, false, msg);
@@ -222,7 +242,8 @@ async function syncShipped(shipped: Shipped[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
     await sql`TRUNCATE TABLE shipped`;
-    const rows = shipped
+    const { unique, dropped } = dedupeById(shipped);
+    const rows = unique
       .filter(s => Number.isFinite(Number(s.id)))
       .map(s => [
         Number(s.id),
@@ -239,7 +260,7 @@ async function syncShipped(shipped: Shipped[]): Promise<TableSyncResult> {
       ['bigint', 'bigint', '', '', 'jsonb'],
     );
     await recordSyncMeta('shipped', r.inserted, !r.error, r.error);
-    return { table: 'shipped', fetched: shipped.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+    return { table: 'shipped', fetched: shipped.length, inserted: r.inserted, dedup: dropped, ok: !r.error, error: r.error, ms: Date.now() - t0 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await recordSyncMeta('shipped', 0, false, msg);
@@ -251,7 +272,8 @@ async function syncCancelled(cancelled: Cancelled[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
     await sql`TRUNCATE TABLE cancelled`;
-    const rows = cancelled
+    const { unique, dropped } = dedupeById(cancelled);
+    const rows = unique
       .filter(c => Number.isFinite(Number(c.id)))
       .map(c => [
         Number(c.id),
@@ -272,7 +294,7 @@ async function syncCancelled(cancelled: Cancelled[]): Promise<TableSyncResult> {
       ['bigint', 'bigint', '', '', '', '', '', '', 'jsonb'],
     );
     await recordSyncMeta('cancelled', r.inserted, !r.error, r.error);
-    return { table: 'cancelled', fetched: cancelled.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+    return { table: 'cancelled', fetched: cancelled.length, inserted: r.inserted, dedup: dropped, ok: !r.error, error: r.error, ms: Date.now() - t0 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await recordSyncMeta('cancelled', 0, false, msg);
@@ -284,7 +306,8 @@ async function syncTemplates(templates: Template[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
     await sql`TRUNCATE TABLE templates`;
-    const rows = templates
+    const { unique, dropped } = dedupeById(templates);
+    const rows = unique
       .filter(t => Number.isFinite(Number(t.id)))
       .map(t => [
         Number(t.id),
@@ -302,7 +325,7 @@ async function syncTemplates(templates: Template[]): Promise<TableSyncResult> {
       ['bigint', '', 'jsonb', '', '', 'jsonb'],
     );
     await recordSyncMeta('templates', r.inserted, !r.error, r.error);
-    return { table: 'templates', fetched: templates.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
+    return { table: 'templates', fetched: templates.length, inserted: r.inserted, dedup: dropped, ok: !r.error, error: r.error, ms: Date.now() - t0 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await recordSyncMeta('templates', 0, false, msg);
