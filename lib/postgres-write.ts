@@ -115,9 +115,15 @@ export interface SetCoworkInput {
 }
 
 /** Phase 2 — atomic UPDATE of jobs.cowork + mark dirty so the heal cron
- *  knows to push the new state to Sheet. Caller (route) is responsible
- *  for calling Apps Script `setCowork` inline (best-effort) and clearing
- *  the dirty marker on success — see /api/jobs/cowork/route.ts. */
+ *  knows to push the new state to Sheet.
+ *
+ *  Implementation note: read raw, merge in JS, write full row. Earlier
+ *  attempt used jsonb_set inline but the dashboard cards read from
+ *  `r.raw` (full snapshot) and we need ALL derived fields (e.g.
+ *  `hasCowork`) to follow consistently — easier to just rewrite the
+ *  whole raw column with a fresh snapshot than to chase per-field
+ *  jsonb_set patches. The 2-statement cost (~30ms) is dwarfed by the
+ *  client's network roundtrip. */
 export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('setCowork', 'POSTGRES_URL env var missing');
@@ -126,15 +132,27 @@ export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: 
   if (!Number.isFinite(idNum) || idNum <= 0) {
     throw new PostgresWriteError('setCowork', 'Invalid job id');
   }
-  const coworkJson = input.cowork == null ? null : JSON.stringify(input.cowork);
-  const r = await sql`
+
+  // Read current raw snapshot (from a cron or earlier write). If the row
+  // doesn't exist in Postgres yet the route falls through to legacy.
+  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint LIMIT 1`;
+  if (cur.rows.length === 0) {
+    return { ok: true, found: false };
+  }
+  const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+  const cowork = input.cowork == null ? null : input.cowork;
+  const newRaw = { ...oldRaw, cowork };
+  const coworkJson = cowork == null ? null : JSON.stringify(cowork);
+  const newRawJson = JSON.stringify(newRaw);
+
+  await sql`
     UPDATE jobs
     SET cowork = ${coworkJson}::jsonb,
-        raw = jsonb_set(COALESCE(raw, '{}'::jsonb), '{cowork}', COALESCE(${coworkJson}::jsonb, 'null'::jsonb)),
+        raw = ${newRawJson}::jsonb,
         phase2_dirty_at = NOW()
     WHERE id = ${idNum}::bigint
   `;
-  return { ok: true, found: (r.rowCount ?? 0) > 0 };
+  return { ok: true, found: true };
 }
 
 // ─── dirty row helpers ───────────────────────────────────────────
