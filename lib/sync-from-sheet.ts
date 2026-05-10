@@ -1,6 +1,7 @@
 import 'server-only';
 import { loadAllWithAudit, AppsScriptError } from '@/lib/api';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
+import { phase2OwnsTable } from '@/lib/feature-flags';
 import type { Order, Job, Shipped, Cancelled, AuditEntry, Template } from '@/lib/types';
 
 /**
@@ -103,7 +104,25 @@ export async function syncAllFromSheet(): Promise<SyncResult> {
   tables.push(await syncOrders(snapshot.orders || []));
   tables.push(await syncShipped(snapshot.shipped || []));
   tables.push(await syncCancelled(snapshot.cancelled || []));
-  tables.push(await syncTemplates(snapshot.templates || []));
+  // Phase 2 — when Postgres owns a table, skip the Sheet→Postgres sync.
+  // The TRUNCATE+INSERT pattern would otherwise blow away rows that only
+  // exist in Postgres (Phase 2 writes that haven't reached Sheet yet, or
+  // never will if Sheet sync was best-effort and dropped). Reverse-direction
+  // sync (Postgres→Sheet) is a future step — for now, in-flight Phase 2
+  // tables stop being mirrored from Sheet and rely on lib/postgres-write.ts
+  // best-effort Apps Script calls to keep Sheet in sync as a one-way push.
+  if (phase2OwnsTable('templates')) {
+    tables.push({
+      table: 'templates',
+      fetched: snapshot.templates?.length || 0,
+      inserted: 0,
+      ok: true,
+      error: 'skipped — Postgres owns this table (WRITE_TEMPLATES_TO_POSTGRES=1)',
+      ms: 0,
+    });
+  } else {
+    tables.push(await syncTemplates(snapshot.templates || []));
+  }
   tables.push(await syncAuditLog(snapshot.audit || []));
 
   const finishedAt = new Date();

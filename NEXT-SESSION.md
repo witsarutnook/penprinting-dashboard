@@ -2,6 +2,19 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-10 (afternoon batch 3 — Phase 2 scaffold + templates migration):** ✅
+> - **Phase 2 = write migration** (drop Apps Script writes, Postgres = source of truth) — เลือกทำ scaffold + 1 action proof-of-concept ก่อน, ไม่ลุย hot-path
+> - **Infra**:
+>   - `lib/postgres-write.ts` — Postgres-authoritative write handlers (`addTemplateToPostgres`, `deleteTemplateFromPostgres`). Difference vs `postgres-write-mirror.ts`: this is primary write, mirror is best-effort
+>   - `lib/feature-flags.ts` — per-action env flag (`WRITE_TEMPLATES_TO_POSTGRES=1`) + `phase2WriteEnabled(action)` + `phase2OwnsTable(table)` helpers
+>   - `lib/sync-from-sheet.ts` — gated cron template sync (skips when Postgres owns table) เพื่อกัน TRUNCATE blowing away Phase 2-only rows
+> - **First migrated action**: `addTemplate` + `deleteTemplate` (lowest risk — /orders/new only, identified by name+timestamp id, ไม่ใช่ hot path)
+>   - `app/api/orders/templates/{add,delete}/route.ts` — branch on `phase2WriteEnabled('<action>')`. Flag off = legacy Apps Script-first (current behavior unchanged). Flag on = Postgres-first + best-effort Apps Script Sheet sync
+> - **Apps Script side**: `production-monitoring/apps-script/dashboard/templates.ts` + `api.ts` + `auth.ts` — เพิ่ม `setTemplateRow` action (v5.10.10) ที่รับ pre-allocated id + idempotent upsert (append if not found, overwrite if exists). Phase 2 path เรียกผ่าน `post('setTemplateRow', ...)` เพื่อ sync ไป Sheet สำหรับ admin Sheet UI
+> - **Failure mode contract**: Postgres write fail → propagate ไป user. Apps Script Sheet sync fail → swallow + Sentry breadcrumb (`layer: phase2-sheet-sync`). Sheet drifts; cron skips template sync ที่ flag on; drift heals on next setTemplateRow retry
+> - **Default-off** — flag ยังไม่ flip ที่ production. ⏳ User ต้องทำ 2 ขั้นเพื่อ activate (ดู "Pending user actions" ด้านล่าง)
+> - **Total**: 4 commits + 1 Apps Script edit (รอ user push)
+>
 > **Session 2026-05-10 (afternoon batch 2 — Phase 1.7 dual-write + bug fixes):** ✅
 > - **Bug discovered after Phase 1 cutover**: writes "เด้งกลับหมด" — Postgres mirror lag (10-min cron) made loadAll() return OLD data after every write → optimistic UI commit revealed pre-write state → user perceived writes as failed.
 > - **Phase 1.7 dual-write mirror** (`33d9978`) — `lib/postgres-write-mirror.ts` 17 handlers (upsert jobs/orders/shipped/cancelled/templates + atomic cascades for cancelOrder/deleteOrderCascade/promoteDraft + bulkForward with server-allocated newIds). After every Apps Script write success, `post()` mirrors to Postgres in same request → mirror reflects change before response returns → next read sees fresh state. Mirror failures non-fatal (mark sync_meta stale + Sentry capture).
@@ -304,6 +317,15 @@ Type-check ผ่าน + production build OK ทุก commit. Vercel auto-depl
 
 ## ⚠️ Pending user actions (after 2026-05-10 session)
 
+### Phase 2 templates activation (2 ขั้น — ทำเมื่อพร้อม validate)
+
+ถ้าจะ activate Phase 2 สำหรับ templates (low risk, เป็น POC):
+
+1. **Push Apps Script v5.10.10** — `cd production-monitoring/apps-script/dashboard && bash push.sh dashboard` (หรือใช้ `/push-apps-script dashboard` slash command). Apps Script editor → **Edit existing → Save → Manage deployments → New version** ⚠️ ห้าม "New deployment" (URL จะเปลี่ยน). Description: "v5.10.10 setTemplateRow Phase 2 sync target"
+2. **Set env var** — Vercel project `penprinting-dashboard` → Settings → Environment Variables → Add `WRITE_TEMPLATES_TO_POSTGRES=1` (Production + Preview + Development) → redeploy
+3. **Smoke test**: เปิด /orders/new → "บันทึก template" ใหม่ → Vercel logs ดู `/api/orders/templates/add` → confirm Postgres INSERT + Apps Script `setTemplateRow` POST → เปิด Sheet tab `templates` ดู row ใหม่ลง → "ลบ template" → ดู row หาย
+4. **Rollback** (ถ้าจำเป็น): unset `WRITE_TEMPLATES_TO_POSTGRES` → redeploy → กลับสู่ Apps Script-first path. Phase 2-only rows ใน Postgres ที่อาจไม่อยู่ใน Sheet จะถูก sync ทันที (cron resume เพราะ flag off แล้ว) — **อาจ overwrite Postgres-only rows ที่ Sheet ยังไม่ได้รับ** ดังนั้นก่อน rollback ตรวจดู /orders/new ก่อน ถ้ามี template ที่เพิ่งสร้างให้ confirm Sheet ก็มีก่อน
+
 ### Phase 1 monitor (passive, 24-48 ชม.)
 
 - ✅ **Postgres mirror live** — Vercel cron `*/10 * * * *` runs syncAllFromSheet, sync_meta tracks per-table freshness
@@ -462,7 +484,43 @@ Future fix สำหรับ:
 - Shared providers (Toast/Confirm) ที่ stays mounted across navigations
 - Effort ~2-3 ชม. defer until needed
 
-### 4. ✅ Phase 1 Postgres read mirror — DONE 2026-05-10 (live in production)
+### 4a. Phase 2 — write migration (in progress, scaffold + 1/17 actions ready 2026-05-10)
+
+**สถานะ**: scaffold ครบ. 1 action (templates) implemented + flag-gated. 16 actions เหลือ.
+
+**Migration order (lowest → highest risk)**:
+
+| # | Action(s) | Risk | Reason | Est. effort |
+|---|---|---|---|---|
+| ✅ 1 | `addTemplate` + `deleteTemplate` | Low | /orders/new only, ไม่ hot path, name+Date.now() id ไม่ collision | done |
+| 2 | `setCowork` | Low | single field UPDATE, /board only, no id alloc | 30 min |
+| 3 | `updateJob` (spec-only edits) | Med | all roles use, แต่ partial update ปลอดภัย | 1 hr |
+| 4 | `addJob` + `deleteJob` (standalone) | Med | needs `nextId` SEQUENCE — first id minting migration | 2 hr |
+| 5 | `cancelJob` + `restoreJob` | Med | 2-table mutate (jobs + cancelled). Mirror handlers reusable | 1 hr |
+| 6 | `moveToShipped` | Med | 2-table mutate (jobs + shipped). Mirror handlers reusable | 1 hr |
+| 7 | `bulkForward` | High | hot path, server-side id alloc, atomic LockService → Postgres tx | 3 hr |
+| 8 | `addOrder` + `updateOrder` + `deleteOrder` | High | needs orderId SEQUENCE, customer name match logic | 3 hr |
+| 9 | `createOrder` (atomic order + initial job) | High | combines 4 + 8, dependency on both SEQUENCEs | 2 hr |
+| 10 | `cancelOrder` (atomic cascade) | High | reuses 5 cascade pattern but more rows | 2 hr |
+| 11 | `deleteOrderCascade` | High | similar to 10 | 1 hr |
+| 12 | `promoteDraft` (atomic) | High | similar to 9 | 1 hr |
+| 13 | Audit log writes | Med | append-only, no id race, but every action writes audit | 2 hr |
+
+**Total estimated**: ~22 hours additional work (~2 weeks part-time as plan said). Per-action flag = can pause/resume between sessions.
+
+**Schema additions needed before next batch**:
+- Postgres SEQUENCEs: `nextId_seq`, `order_id_seq` (for jobs and orders id allocation)
+- `audit_log` writes from Vercel API directly (currently Apps Script writes audit row after every mutation — Phase 2 needs to replicate)
+- Optional: reverse-direction cron (Postgres → Sheet) for tables Postgres owns, instead of relying solely on best-effort sync per action (in-flight sync misses ที่ Apps Script down ตอน write จะหายไปจาก Sheet ถาวร)
+
+**Validation gate before each action**:
+- Smoke test in preview deployment with flag set
+- Watch Sentry `layer:phase2-sheet-sync` breadcrumb count for 24-48 hr
+- If error rate < 1% → ready for next action
+
+**Trigger to skip Phase 2**: writes ยังเร็วพอ (~1.5-3s) ที่ user รับได้. ถ้า bench-driven decision (analogy ของ Phase 1's bench) ชี้ว่า Postgres writes ไม่เร็วกว่า meaningfully = defer ไม่ต้องทำหมด
+
+### 4b. ✅ Phase 1 Postgres read mirror — DONE 2026-05-10 (live in production)
 **Decision** (logged 2026-05-09): Vercel Postgres (Powered by Neon) — รวมใน Pro plan, single dashboard, schema portable to Supabase ภายหลังถ้าต้องการ realtime.
 
 **Phase 1 result**: bench-driven decision via `/admin/bench-audit` showed Postgres p50 23.9× faster than Sheet for loadAll-shaped query (4400ms → 200ms). Shipped same session: 4 mirror tables + sync_meta + Vercel cron + `lib/api-postgres.ts` + `lib/api.ts` Postgres-first behind `READ_FROM_POSTGRES=1` flag with Apps Script fallback.
@@ -530,7 +588,9 @@ Pick task from list above, follow PATTERNS.md, ship + push (Vercel auto-deploys)
 5. อัปเดต [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) timeline + iteration table
 6. สร้าง daily note ที่ `../10-Daily/YYYY-MM-DD.md`
 
-_อัปเดตล่าสุด: 2026-05-10 (afternoon batch 2) — **Phase 1.7 dual-write live + 2 bug fixes**. After Phase 1 cutover writes "เด้งกลับหมด" (Postgres mirror 10-min lag → reads after writes returned stale → optimistic UI bounced back). Fix: `lib/postgres-write-mirror.ts` 17 handlers mirror every Apps Script write to Postgres in same request → 0 staleness window. Plus 2 follow-on fixes: OrderForm SuccessView flicker on refresh (`initializedIdRef` guard) + /orders→edit speed (drop redundant loadOrder, loadAll covers both target + recent autocomplete). 3 commits. Phase 2 deferred — writes still through Apps Script (~1.5s) which user finds acceptable; 70-80% of Path A handlers reuse in Phase 2 when triggered._
+_อัปเดตล่าสุด: 2026-05-10 (afternoon batch 3) — **Phase 2 scaffold + templates migration ready**. Built `lib/postgres-write.ts` (Postgres-authoritative writes) + `lib/feature-flags.ts` (per-action `WRITE_<ACTION>_TO_POSTGRES` flag) + gated cron template sync via `phase2OwnsTable`. Migrated `addTemplate` + `deleteTemplate` API routes with flag-gated branch — flag off (default) = legacy behavior unchanged, flag on = Postgres-first + best-effort Apps Script Sheet sync. Apps Script side: `setTemplateRow` action (v5.10.10) accepts pre-allocated id + idempotent upsert. Failure contract: Postgres write fail → propagate; Sheet sync fail → swallow + Sentry. Default-off until user pushes Apps Script + sets env var. Type-check + production build clean. Migration order documented for remaining 16 actions (~22 hr total) — next: `setCowork` (low risk), then id-minting actions need SEQUENCEs._
+
+_อัปเดตก่อน: 2026-05-10 (afternoon batch 2) — **Phase 1.7 dual-write live + 2 bug fixes**. After Phase 1 cutover writes "เด้งกลับหมด" (Postgres mirror 10-min lag → reads after writes returned stale → optimistic UI bounced back). Fix: `lib/postgres-write-mirror.ts` 17 handlers mirror every Apps Script write to Postgres in same request → 0 staleness window. Plus 2 follow-on fixes: OrderForm SuccessView flicker on refresh (`initializedIdRef` guard) + /orders→edit speed (drop redundant loadOrder, loadAll covers both target + recent autocomplete). 3 commits. Phase 2 deferred — writes still through Apps Script (~1.5s) which user finds acceptable; 70-80% of Path A handlers reuse in Phase 2 when triggered._
 
 _อัปเดตก่อน: 2026-05-10 (afternoon batch 1) — **Phase 1 Postgres read mirror LIVE in production**. PoC bench-driven decision (Bench 2 loadAll-shaped showed Postgres 23.9× faster) → shipped full Phase 1 same session: 4 mirror tables + Vercel cron `*/10 * * * *` + Postgres-first reads behind `READ_FROM_POSTGRES=1` flag + dedupeById safety net. /track migration: switched from loadAll().filter() (200KB) → loadOrder() (1KB). User confirmed "เร็วขึ้นเยอะ" after flag flipped. Total 8 commits + 1 Vercel UI config (Neon connect + READ_FROM_POSTGRES env). Migration plan estimated 1 wk → shipped in 1 session._
 
