@@ -48,6 +48,13 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // counter-bump (legacy `addJob` calls incrementConfig after getNextId
   // already bumped, leaving id gaps in Sheet). Phase 2 path = clean +1.
   addJob:         'WRITE_ADD_JOB_TO_POSTGRES',
+  // createOrder — fifth action migrated (2026-05-11). Atomic 2-table INSERT
+  // (orders + jobs). Dedupe scan via Postgres mirror (Phase 1). Id allocation
+  // still through Apps Script (getNextOrderId per-month + getNextId global —
+  // keeps Sheet UI ids readable). Skips Apps Script createOrder call → saves
+  // ~1.3s on hot path (every new order/job comes through here). Heal cron
+  // pushes setOrderRow + setJobRow to Sheet within 5 min.
+  createOrder:    'WRITE_CREATE_ORDER_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

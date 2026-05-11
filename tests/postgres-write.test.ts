@@ -14,6 +14,8 @@ import {
   setCoworkInPostgres,
   updateJobInPostgres,
   addJobToPostgres,
+  createOrderInPostgres,
+  findDuplicateOrdersInPostgres,
   appendAuditToPostgres,
   markRowClean,
   markRowDirty,
@@ -371,6 +373,123 @@ describe('addJobToPostgres', () => {
     });
     const insert = findCallContaining('INSERT INTO jobs');
     expect(insert!.values[2]).toBe('job with spaces');
+  });
+});
+
+describe('createOrderInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws on unconfigured / invalid orderId / missing name', async () => {
+    setConfigured(false);
+    await expect(
+      createOrderInPostgres({ orderId: 202605070, order: { name: 'x' } }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    setConfigured(true);
+    await expect(
+      createOrderInPostgres({ orderId: 0, order: { name: 'x' } }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(
+      createOrderInPostgres({ orderId: 202605070, order: { name: '' } }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+  });
+
+  it('INSERTs order row with phase2_dirty_at + draft (no job)', async () => {
+    queueResult({ rowCount: 1 }); // order insert
+    const r = await createOrderInPostgres({
+      orderId: 202605070,
+      order: {
+        name: 'Brochure 1000',
+        customer: 'TestCo',
+        dateIn: '2026-05-11',
+        status: 'draft',
+      },
+    });
+    expect(r).toEqual({ ok: true, orderId: 202605070, jobId: null });
+
+    const insert = findCallContaining('INSERT INTO orders');
+    expect(insert).toBeDefined();
+    // Critical — phase2_dirty_at must be set so heal cron pushes to Sheet.
+    expect(insert!.text).toContain('phase2_dirty_at');
+    expect(insert!.text).toMatch(/NOW\(\)/);
+    expect(insert!.text).toContain('ON CONFLICT (id) DO NOTHING');
+
+    expect(insert!.values[0]).toBe(202605070);
+    expect(insert!.values[1]).toBe('Brochure 1000');
+    expect(insert!.values[2]).toBe('TestCo');
+
+    // No jobs INSERT for draft path
+    expect(callsContaining('INSERT INTO jobs')).toHaveLength(0);
+  });
+
+  it('INSERTs both order + job rows with shared phase2_dirty_at', async () => {
+    queueResult({ rowCount: 1 }); // order
+    queueResult({ rowCount: 1 }); // job
+
+    const r = await createOrderInPostgres({
+      orderId: 202605071,
+      order: { name: 'Job Order', customer: 'CustB', status: 'sent' },
+      jobId: 480,
+      job: { name: 'Job Order', dept: 'graphic', staff: 'aor', dateIn: '2026-05-11' },
+    });
+    expect(r).toEqual({ ok: true, orderId: 202605071, jobId: 480 });
+
+    const orderInsert = findCallContaining('INSERT INTO orders');
+    expect(orderInsert!.text).toContain('phase2_dirty_at');
+
+    const jobInsert = findCallContaining('INSERT INTO jobs');
+    expect(jobInsert).toBeDefined();
+    expect(jobInsert!.text).toContain('phase2_dirty_at');
+    expect(jobInsert!.text).toContain('ON CONFLICT (id) DO NOTHING');
+    // jobs INSERT values: [id, orderId, name, ...]
+    expect(jobInsert!.values[0]).toBe(480);
+    expect(jobInsert!.values[1]).toBe(202605071);
+  });
+
+  it('throws when job is provided without jobId (caller bug guard)', async () => {
+    queueResult({ rowCount: 1 }); // order succeeds
+    await expect(
+      createOrderInPostgres({
+        orderId: 202605072,
+        order: { name: 'x' },
+        jobId: 0, // invalid
+        job: { name: 'x', dept: 'graphic', staff: 'aor' },
+      }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+  });
+});
+
+describe('findDuplicateOrdersInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('returns empty array when not configured', async () => {
+    setConfigured(false);
+    expect(await findDuplicateOrdersInPostgres('x', 'y')).toEqual([]);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('returns empty array for empty inputs', async () => {
+    expect(await findDuplicateOrdersInPostgres('', 'y')).toEqual([]);
+    expect(await findDuplicateOrdersInPostgres('x', '')).toEqual([]);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('queries lowercased name + customer and excludes cancelled', async () => {
+    queueResult({
+      rows: [
+        { id: 202605070, name: 'Brochure', customer: 'CustA', dateIn: '2026-05-01' },
+      ],
+    });
+    const hits = await findDuplicateOrdersInPostgres('  Brochure  ', '  CustA  ');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].id).toBe(202605070);
+
+    const select = findCallContaining('FROM orders');
+    expect(select).toBeDefined();
+    // Lowercased + trimmed lookup
+    expect(select!.values).toContain('brochure');
+    expect(select!.values).toContain('custa');
+    // Excludes cancelled
+    expect(select!.text).toMatch(/status.*!=.*'cancelled'/i);
   });
 });
 

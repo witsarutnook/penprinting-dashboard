@@ -67,9 +67,11 @@ export async function healAllDirtyRows(): Promise<FullHealResult> {
     };
   }
 
-  // For now only jobs is migrated (setCowork). Add other tables as their
-  // setRow Apps Script actions land + Phase 2 paths start writing.
+  // Heal each Phase 2-active table. setOrderRow added 2026-05-11 for the
+  // createOrder migration; setCancelledRow / setShippedRow follow as their
+  // actions migrate.
   tables.push(await healJobsDirty());
+  tables.push(await healOrdersDirty());
 
   const finishedAt = new Date();
   return {
@@ -138,6 +140,68 @@ async function healJobsDirty(): Promise<HealResult> {
 
   return {
     table: 'jobs',
+    candidates,
+    attempted,
+    healed,
+    failed,
+    errors,
+    ms: Date.now() - t0,
+  };
+}
+
+interface DirtyOrderRow {
+  id: number;
+  raw: Record<string, unknown> | null;
+}
+
+async function healOrdersDirty(): Promise<HealResult> {
+  const t0 = Date.now();
+  const errors: string[] = [];
+  let healed = 0;
+  let failed = 0;
+  let attempted = 0;
+  let candidates = 0;
+
+  try {
+    const r = await sql<DirtyOrderRow>`
+      SELECT id, raw
+      FROM orders
+      WHERE phase2_dirty_at IS NOT NULL
+      ORDER BY phase2_dirty_at ASC
+      LIMIT ${BATCH_LIMIT + 1}
+    `;
+    candidates = r.rowCount ?? 0;
+    const batch = r.rows.slice(0, BATCH_LIMIT);
+    attempted = batch.length;
+
+    for (const row of batch) {
+      const payload = (row.raw && typeof row.raw === 'object')
+        ? { ...row.raw, id: row.id }
+        : { id: row.id };
+
+      try {
+        const res = await post<{ ok?: boolean; error?: string }>(
+          'setOrderRow',
+          { data: payload },
+        );
+        if (res.error) {
+          throw new AppsScriptError('setOrderRow', res.error);
+        }
+        await sql`UPDATE orders SET phase2_dirty_at = NULL WHERE id = ${row.id}::bigint`;
+        healed++;
+      } catch (err) {
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (errors.length < 5) errors.push(`id=${row.id}: ${msg}`);
+      }
+    }
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err));
+    failed++;
+  }
+
+  return {
+    table: 'orders',
     candidates,
     attempted,
     healed,

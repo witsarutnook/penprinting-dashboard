@@ -385,6 +385,35 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ## ⚠️ Pending user actions (after 2026-05-11 session)
 
+### Phase 2 createOrder activation — 2 ขั้น (Apps Script v5.10.13 deploy + env var)
+
+✅ **Vercel code deployed** 2026-05-11 — `createOrderInPostgres` + `findDuplicateOrdersInPostgres` + route Phase 2 branch + heal cron extended for orders
+✅ **Apps Script v5.10.13 source pushed** via clasp 2026-05-11 — `setOrderRow` action added (mirror of setJobRow)
+✅ **Schema** `phase2_dirty_at` already on orders (from earlier db-migrate)
+
+ขั้นตอน:
+
+1. **Apps Script editor** → Deploy → Manage deployments → **Edit existing → New version**
+   Description: `v5.10.13 setOrderRow Phase 2 reverse-sync target`
+   ⚠️ ห้าม "New deployment" — URL ต้องเหมือนเดิม
+2. **Vercel env var** — Add `WRITE_CREATE_ORDER_TO_POSTGRES=1` (Production + Preview + Development) → redeploy
+3. **Smoke test:**
+   - เปิด `/orders/new` → สั่งงานทดสอบ ("test1" / "test2") → save
+   - **คาดหวัง**: order create ภายใน ~250ms (เร็วกว่าเดิม ~6x จาก 1.5s)
+   - **เปิด /board → คลิก card งานใหม่ → tab ประวัติ** → ควรเห็น `"สร้างใบสั่งงาน "..." (ลูกค้า: ...)"` ทันที (ไม่ต้องรอ cron 10 นาที)
+   - **Vercel logs `/api/orders/add`** → ไม่มี call `post('createOrder', ...)` Apps Script (เห็นแค่ `getNextOrderId` + `getNextId`)
+   - **รอ 5 นาที → Vercel logs `/api/cron/sync-to-sheet`** → report `{tables: [{table: 'orders', candidates: ≥1, healed: ≥1}, {table: 'jobs', candidates: ≥1, healed: ≥1}]}`
+   - **Google Sheet → tab `orders` + `jobs`** → row ใหม่ขึ้นแล้ว
+4. **Dedupe test:**
+   - สั่งงาน "test1" ครั้งที่ 2 ด้วย customer เดียวกัน → ได้ HTTP 409 + duplicate list
+   - กด "สร้างต่อ (Force)" → ผ่าน
+5. **Failure path test (optional):** temporarily rename `setOrderRow` ใน Apps Script editor → สั่งงาน → ขั้นที่ 5/6 healing fail → restore action → รอ heal cron → confirm row healed
+6. **Rollback:** unset `WRITE_CREATE_ORDER_TO_POSTGRES` → redeploy → กลับ Apps Script-first path. Existing Phase 2-only orders (ที่ heal cron ยังไม่ push) stay in Postgres + heal cron continues regardless of flag
+
+⚠️ **Trade-off:** Sheet stale ได้สูงสุด ~5 นาที (เหมือน setCowork/updateJob/addJob). Morning report 8 AM อ่านจาก Postgres-first ผ่าน v2 endpoint (ปกติ) แต่ถ้ามี external reader ที่อ่าน Sheet ตรง — อาจเห็น order ใหม่ delay ~5 นาที
+
+---
+
 ### Phase 2 addJob activation — เหลือ 1 ขั้น (db-migrate + Apps Script v5.10.11 พร้อมแล้ว)
 
 ✅ **Code deployed** 2026-05-11 — `addJobToPostgres` + route flag-gated branch ready, dormant ถ้า flag off

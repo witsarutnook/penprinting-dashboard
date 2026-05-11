@@ -306,6 +306,176 @@ export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; 
   return { ok: true, id: idNum };
 }
 
+// ─── createOrder (Phase 2 — atomic 2-table) ──────────────────────
+
+export interface CreateOrderInput {
+  /** Pre-allocated orderId from Apps Script `getNextOrderId` — keeps the
+   *  per-month YYYYMM+seq pattern that Sheet UI / morning report expect. */
+  orderId: number;
+  order: {
+    name: string;
+    customer?: string | null;
+    dateIn?: string | null;
+    dateDue?: string | null;
+    price?: string | number | null;
+    assignDept?: string | null;
+    assignStaff?: string | null;
+    orderer?: string | null;
+    status?: string;
+    details?: Record<string, unknown> | null;
+    rawData?: Record<string, unknown> | null;
+  };
+  /** Pre-allocated jobId via Apps Script `getNextId`. Null for draft mode. */
+  jobId?: number | null;
+  job?: {
+    name: string;
+    date?: string | null;
+    dateIn?: string | null;
+    staff: string;
+    dept: string;
+    status?: string;
+  } | null;
+}
+
+export interface DuplicateOrderHit {
+  id: number;
+  name: string;
+  customer: string;
+  dateIn: string;
+}
+
+/** Look up active (non-cancelled) orders with matching name+customer.
+ *  Mirrors WP Apps Script `createOrder` dedupe scan but reads from
+ *  Postgres mirror (fast). Returns up to 5 candidates for the modal. */
+export async function findDuplicateOrdersInPostgres(
+  name: string,
+  customer: string,
+): Promise<DuplicateOrderHit[]> {
+  if (!isPostgresConfigured()) return [];
+  const n = String(name || '').trim().toLowerCase();
+  const c = String(customer || '').trim().toLowerCase();
+  if (!n || !c) return [];
+  const r = await sql<DuplicateOrderHit>`
+    SELECT id, name, customer, COALESCE(date_in, '') AS "dateIn"
+    FROM orders
+    WHERE LOWER(name) = ${n}
+      AND LOWER(customer) = ${c}
+      AND COALESCE(status, '') != 'cancelled'
+    ORDER BY id DESC
+    LIMIT 5
+  `;
+  return r.rows;
+}
+
+/** Phase 2 — atomic-ish INSERT of order (always) + job (optional non-draft).
+ *  Both rows carry phase2_dirty_at = NOW() so the heal cron pushes them to
+ *  Sheet via setOrderRow + setJobRow within 5 min.
+ *
+ *  ON CONFLICT (id) DO NOTHING — idempotent retries. Worst-case partial
+ *  failure (order succeeded, job INSERT threw): caller surfaces error +
+ *  manual retry hits ON CONFLICT DO NOTHING for the order, then succeeds
+ *  for the new job. */
+export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
+  ok: true;
+  orderId: number;
+  jobId: number | null;
+}> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('createOrder', 'POSTGRES_URL env var missing');
+  }
+  const orderIdNum = Number(input.orderId);
+  if (!Number.isFinite(orderIdNum) || orderIdNum <= 0) {
+    throw new PostgresWriteError('createOrder', 'Invalid orderId');
+  }
+  const name = String(input.order.name || '').trim();
+  if (!name) throw new PostgresWriteError('createOrder', 'Missing order name');
+
+  const o = input.order;
+  const customer = o.customer != null ? String(o.customer) : null;
+  const dateIn = o.dateIn != null ? String(o.dateIn) : null;
+  const dateDue = o.dateDue != null ? String(o.dateDue) : null;
+  const price = o.price != null ? String(o.price) : null;
+  const assignDept = o.assignDept != null ? String(o.assignDept) : null;
+  const assignStaff = o.assignStaff != null ? String(o.assignStaff) : null;
+  const orderer = o.orderer != null ? String(o.orderer) : null;
+  const status = String(o.status || 'sent');
+  const details = o.details ?? null;
+  const rawData = o.rawData ?? null;
+
+  const orderRaw = {
+    id: orderIdNum,
+    name,
+    customer,
+    dateIn,
+    dateDue,
+    price,
+    assignDept,
+    assignStaff,
+    orderer,
+    status,
+    details,
+    rawData,
+  };
+  const detailsJson = details != null ? JSON.stringify(details) : null;
+  const rawDataJson = rawData != null ? JSON.stringify(rawData) : null;
+  const orderRawJson = JSON.stringify(orderRaw);
+
+  await sql`
+    INSERT INTO orders
+      (id, name, customer, date_in, date_due, price, assign_dept, assign_staff,
+       orderer, status, details, raw_data, raw, phase2_dirty_at)
+    VALUES
+      (${orderIdNum}::bigint, ${name}, ${customer}, ${dateIn}, ${dateDue},
+       ${price}, ${assignDept}, ${assignStaff}, ${orderer}, ${status},
+       ${detailsJson}::jsonb, ${rawDataJson}::jsonb, ${orderRawJson}::jsonb,
+       NOW())
+    ON CONFLICT (id) DO NOTHING
+  `;
+
+  let jobIdOut: number | null = null;
+  if (input.job) {
+    // job provided → jobId is required. Catches caller bugs early instead
+    // of silently dropping the job row.
+    const jobIdNum = Number(input.jobId);
+    if (!Number.isFinite(jobIdNum) || jobIdNum <= 0) {
+      throw new PostgresWriteError('createOrder', 'Invalid jobId');
+    }
+    const j = input.job;
+    const jName = String(j.name || '').trim();
+    if (!jName) throw new PostgresWriteError('createOrder', 'Missing job name');
+
+    const jDate = j.date != null ? String(j.date) : null;
+    const jDateIn = j.dateIn != null ? String(j.dateIn) : null;
+    const jStaff = String(j.staff);
+    const jDept = String(j.dept);
+    const jStatus = String(j.status || 'pending');
+
+    const jobRaw = {
+      id: jobIdNum,
+      name: jName,
+      date: jDate,
+      dateIn: jDateIn,
+      staff: jStaff,
+      dept: jDept,
+      status: jStatus,
+      orderId: orderIdNum,
+    };
+    const jobRawJson = JSON.stringify(jobRaw);
+
+    await sql`
+      INSERT INTO jobs
+        (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+      VALUES
+        (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
+         ${jStaff}, ${jDept}, ${jStatus}, ${null}::jsonb, ${jobRawJson}::jsonb, NOW())
+      ON CONFLICT (id) DO NOTHING
+    `;
+    jobIdOut = jobIdNum;
+  }
+
+  return { ok: true, orderId: orderIdNum, jobId: jobIdOut };
+}
+
 // ─── Phase 2 audit ───────────────────────────────────────────────
 
 export interface AuditInput {

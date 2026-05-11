@@ -4,6 +4,13 @@ import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate, bangkokTodayISO } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import {
+  createOrderInPostgres,
+  findDuplicateOrdersInPostgres,
+  appendAuditToPostgres,
+  PostgresWriteError,
+} from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -127,6 +134,23 @@ export async function POST(req: Request) {
     dept: assignDept,
     status: 'pending',
   };
+
+  // ── Phase 2 path: Postgres-first (skip Apps Script createOrder) ──────
+  // Activated by WRITE_CREATE_ORDER_TO_POSTGRES=1. Id allocation still
+  // through Apps Script (getNextOrderId + getNextId) for sequential ids
+  // that Sheet UI / morning report expect. Dedupe scan uses Postgres mirror.
+  // Sheet sync happens via heal cron `setOrderRow` + `setJobRow` within 5 min.
+  if (phase2WriteEnabled('createOrder')) {
+    return phase2CreateOrder({
+      orderPayloadBase,
+      jobPayloadBase,
+      isDraft,
+      force: !!body.force,
+      pin,
+      orderType,
+      session,
+    });
+  }
 
   // ── Fast path: single Apps Script `createOrder` action (v5.10.3+) ───
   // One round-trip does dedupe + alloc orderId + alloc jobId + writes both
@@ -290,4 +314,143 @@ export async function POST(req: Request) {
     );
   }
   return NextResponse.json({ ok: true, orderId, jobId, pin, orderType });
+}
+
+// ─── Phase 2 createOrder ──────────────────────────────────────────
+
+interface Phase2CreateOrderArgs {
+  orderPayloadBase: {
+    name: string;
+    customer: string;
+    dateIn: string;
+    dateDue: string;
+    price: string | number;
+    assignDept: string;
+    assignStaff: string;
+    orderer: string;
+    status: string;
+    details: Record<string, unknown>;
+    rawData: Record<string, unknown>;
+  };
+  jobPayloadBase: {
+    name: string;
+    date: string;
+    dateIn: string;
+    staff: string;
+    dept: string;
+    status: string;
+  } | null;
+  isDraft: boolean;
+  force: boolean;
+  pin: string;
+  orderType: string;
+  session: { role: string; user: string };
+}
+
+async function phase2CreateOrder(args: Phase2CreateOrderArgs): Promise<NextResponse> {
+  const { orderPayloadBase, jobPayloadBase, isDraft, force, pin, orderType, session } = args;
+
+  // ── Dedupe via Postgres mirror (Phase 1) ────────────────────────
+  // Mirror is fresh within ~10 min (cron) + reflects this very session's
+  // Phase 2 writes immediately, so it's the right place to check.
+  if (!isDraft && !force) {
+    try {
+      const dups = await findDuplicateOrdersInPostgres(
+        orderPayloadBase.name,
+        orderPayloadBase.customer,
+      );
+      if (dups.length > 0) {
+        return NextResponse.json(
+          {
+            error: 'duplicate',
+            duplicates: dups,
+            message: `พบใบสั่งงานคล้ายกัน ${dups.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
+          },
+          { status: 409 },
+        );
+      }
+    } catch (err) {
+      // Dedupe failure is non-fatal — surface a warning but proceed.
+      // Postgres mirror outage shouldn't block order creation; worst case
+      // duplicate orders accumulate that admin can clean up via data-audit.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[phase2-createOrder] dedupe scan failed: ${msg}`);
+    }
+  }
+
+  // ── Allocate ids via Apps Script (sequential — Sheet UI friendly) ─
+  let orderId: number;
+  let jobId: number | null = null;
+  try {
+    const [orderIdRes, jobIdRes] = await Promise.all([
+      post<{ id?: number; error?: string }>('getNextOrderId', {}),
+      isDraft || !jobPayloadBase
+        ? Promise.resolve({ nextId: 0 } as { nextId?: number; error?: string })
+        : post<{ nextId?: number; error?: string }>('getNextId', {}),
+    ]);
+    if (orderIdRes.error || !orderIdRes.id) {
+      return NextResponse.json(
+        { error: `ขอเลขใบสั่งไม่สำเร็จ — ${orderIdRes.error || 'unknown'}` },
+        { status: 502 },
+      );
+    }
+    orderId = Number(orderIdRes.id);
+    if (!isDraft && jobPayloadBase) {
+      if (jobIdRes.error || !jobIdRes.nextId) {
+        return NextResponse.json(
+          { error: `ขอ job id ไม่สำเร็จ — ${jobIdRes.error || 'unknown'}` },
+          { status: 502 },
+        );
+      }
+      jobId = Number(jobIdRes.nextId);
+    }
+  } catch (err) {
+    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `id allocation failed — ${msg}` }, { status: 502 });
+  }
+
+  // ── Postgres INSERT (atomic-ish: order then job, both ON CONFLICT DO NOTHING) ──
+  try {
+    await createOrderInPostgres({
+      orderId,
+      order: orderPayloadBase,
+      jobId,
+      job: jobPayloadBase,
+    });
+  } catch (err) {
+    const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `createOrder failed — ${msg}` }, { status: 500 });
+  }
+
+  // ── Audit log (Postgres-direct — immediate /board history visibility) ──
+  await appendAuditToPostgres({
+    action: 'createOrder',
+    role: session.role,
+    user: session.user,
+    targetId: orderId,
+    data: {
+      order: {
+        id: orderId,
+        name: orderPayloadBase.name,
+        customer: orderPayloadBase.customer,
+      },
+      job: jobId ? { id: jobId, name: jobPayloadBase?.name || '' } : undefined,
+    },
+  });
+
+  // ── Cache bust — /board + /orders reads see the new rows immediately ──
+  try {
+    const { revalidatePath } = await import('next/cache');
+    revalidatePath('/board');
+    revalidatePath('/orders');
+  } catch { /* ignore */ }
+
+  return NextResponse.json({
+    ok: true,
+    orderId,
+    jobId,
+    pin,
+    orderType,
+    draft: isDraft || undefined,
+  });
 }
