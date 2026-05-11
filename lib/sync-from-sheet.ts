@@ -1,5 +1,5 @@
 import 'server-only';
-import { loadAllWithAudit, AppsScriptError } from '@/lib/api';
+import { loadAllFromAppsScriptForSync, AppsScriptError } from '@/lib/api';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
 import { phase2OwnsTable } from '@/lib/feature-flags';
 import type { Order, Job, Shipped, Cancelled, AuditEntry, Template } from '@/lib/types';
@@ -81,7 +81,7 @@ export async function syncAllFromSheet(): Promise<SyncResult> {
 
   let snapshot;
   try {
-    snapshot = await loadAllWithAudit();
+    snapshot = await loadAllFromAppsScriptForSync();
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return {

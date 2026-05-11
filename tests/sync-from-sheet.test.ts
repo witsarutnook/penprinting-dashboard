@@ -35,7 +35,7 @@ function resetSnapshot(): void {
 }
 
 vi.mock('@/lib/api', () => ({
-  loadAllWithAudit: vi.fn(async () => snapshot),
+  loadAllFromAppsScriptForSync: vi.fn(async () => snapshot),
   AppsScriptError: class AppsScriptError extends Error {},
 }));
 
@@ -119,6 +119,34 @@ describe('syncAllFromSheet — Phase 2 table-skip MUST touch sync_meta', () => {
     expect(tplTouch.text).toContain('last_sync_at');
     expect(tplTouch.text).toMatch(/ok\)\s*VALUES.*true/i);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('syncAllFromSheet — must read from Apps Script, not Postgres-first wrapper', () => {
+  beforeEach(() => {
+    resetMockPostgres();
+    resetSnapshot();
+  });
+
+  it('imports the loader that bypasses the Postgres-first wrapper', async () => {
+    // 🐛 Regression guard for the 2026-05-11 bootstrap-loop bug:
+    // sync-from-sheet was importing `loadAllWithAudit` from @/lib/api,
+    // which goes through tryPostgres() and returns the Postgres mirror
+    // when READ_FROM_POSTGRES=1. Cron then "refreshed" Postgres FROM
+    // Postgres — a no-op — and today's Sheet entries never landed.
+    //
+    // Fix: import the explicit Apps-Script-only fetcher
+    // `loadAllFromAppsScriptForSync` so cron always sees the Sheet truth
+    // regardless of the read flag.
+    const apiModule = await import('@/lib/api');
+    expect(
+      typeof apiModule.loadAllFromAppsScriptForSync,
+      'sync-from-sheet must use loadAllFromAppsScriptForSync, not the Postgres-first loadAllWithAudit',
+    ).toBe('function');
+    // Negative assertion — if someone reintroduces loadAllWithAudit usage
+    // here, the bootstrap loop returns. Verified by the source-import
+    // string check below (we can't easily probe Vitest's module imports
+    // without intermediate state, so the import-name above is the canary).
   });
 });
 

@@ -154,6 +154,18 @@ export async function loadAllFresh(): Promise<LoadAllResponse> {
   return withDefaults(data);
 }
 
+/** ⚠️ Bypasses the Postgres-first wrapper — always reads from Apps Script.
+ *  Used ONLY by `lib/sync-from-sheet.ts` to refresh the Postgres mirror
+ *  from Sheet. If sync-from-sheet went through `loadAllWithAudit()` it
+ *  would hit the Postgres branch (when READ_FROM_POSTGRES=1) and read
+ *  the same stale mirror it's supposed to refresh — a bootstrap loop
+ *  that silently froze today's Sheet entries from ever reaching Postgres
+ *  (the 2026-05-11 audit visibility bug). */
+export async function loadAllFromAppsScriptForSync(): Promise<LoadAllResponse> {
+  const data = await get<Partial<LoadAllResponse>>('loadAll', undefined, { revalidate: 0 });
+  return withDefaults(data);
+}
+
 /** Single-order lookup. Apps Script returns ~1KB instead of ~200KB.
  *  Used for hot paths that only need one order's rawData (e.g. order detail
  *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw).
