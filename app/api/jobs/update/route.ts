@@ -4,7 +4,7 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate, validateJobInput, type JobPayload } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { phase2WriteEnabled } from '@/lib/feature-flags';
-import { updateJobInPostgres, PostgresWriteError } from '@/lib/postgres-write';
+import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
   if (body.cowork !== undefined) payload.cowork = body.cowork;
 
   if (phase2WriteEnabled('updateJob')) {
-    return phase2UpdateJob(id, payload);
+    return phase2UpdateJob(id, payload, session.role, session.user);
   }
 
   try {
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
   }
 }
 
-async function phase2UpdateJob(id: number, payload: JobPayload): Promise<NextResponse> {
+async function phase2UpdateJob(id: number, payload: JobPayload, role: string, user: string): Promise<NextResponse> {
   let found = false;
   try {
     const r = await updateJobInPostgres({
@@ -124,6 +124,18 @@ async function phase2UpdateJob(id: number, payload: JobPayload): Promise<NextRes
 
   // Postgres write succeeded — heal cron pushes to Sheet within 5 min.
   // Bust /board + /orders caches so the next render sees the new row.
+  await appendAuditToPostgres({
+    action: 'updateJob',
+    role,
+    user,
+    targetId: id,
+    data: {
+      name: payload.name,
+      dept: payload.dept,
+      staff: payload.staff,
+    },
+  });
+
   try {
     const { revalidatePath } = await import('next/cache');
     revalidatePath('/board');

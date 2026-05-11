@@ -306,6 +306,81 @@ export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; 
   return { ok: true, id: idNum };
 }
 
+// ─── Phase 2 audit ───────────────────────────────────────────────
+
+export interface AuditInput {
+  /** Action name — matches Apps Script audit.ts switch (addJob/updateJob/setCowork/etc) */
+  action: string;
+  role: string;
+  user?: string;
+  /** Target id (job/order id) — string or number, normalised to bigint or null */
+  targetId?: number | string | null;
+  /** Pre-formatted summary. If omitted, generated from action + data via
+   *  the same convention as Apps Script appendAudit (audit.ts). */
+  summary?: string;
+  /** Action body — used for summary generation. Mirrors the body shape
+   *  Apps Script doPost passes to appendAudit (data + cowork). */
+  data?: { name?: string; dept?: string; staff?: string; reason?: string; [k: string]: unknown };
+  cowork?: unknown;
+}
+
+/** Format actor as "role:user" when user differs from role — mirrors the
+ *  Apps Script appendAudit convention so v2-written and Sheet-written
+ *  entries display identically in the history tab. */
+function formatActor(role: string, user?: string): string {
+  if (!user || user === role) return role;
+  return `${role}:${user}`;
+}
+
+/** Generate the summary text for an audit entry. Mirrors the switch in
+ *  Apps Script audit.ts so Phase 2 audit entries render the same as their
+ *  legacy Apps Script counterparts in the v2 history tab. */
+function generateAuditSummary(input: AuditInput): string {
+  if (input.summary) return input.summary;
+  const d = input.data || {};
+  const targetId = String(input.targetId ?? '');
+  switch (input.action) {
+    case 'addJob':        return `เพิ่มงาน "${d.name || ''}" → ${d.dept || ''}/${d.staff || ''}`;
+    case 'updateJob':     return `อัพเดตงาน "${d.name || ''}" → ${d.dept || ''}/${d.staff || ''}`;
+    case 'deleteJob':     return `ลบงาน id=${targetId}`;
+    case 'moveToShipped': return `จัดส่งงาน "${d.name || ''}"`;
+    case 'addOrder':      return `สร้างใบสั่งงาน "${d.name || ''}" (ลูกค้า: ${(d.customer as string) || '-'})`;
+    case 'updateOrder':   return `แก้ไขใบสั่งงาน #${targetId}`;
+    case 'deleteOrder':   return `ลบใบสั่งงาน #${targetId}`;
+    case 'setCowork':     return `ตั้ง Co-work job=${targetId}: ${JSON.stringify(input.cowork || [])}`;
+    case 'cancelJob':     return `ยกเลิก "${d.name || ''}" — เหตุผล: ${d.reason || ''}`;
+    case 'restoreJob':    return `กู้คืน "${d.name || ''}" → ${d.dept || ''}/${d.staff || ''}`;
+    default:              return input.action;
+  }
+}
+
+/** Insert an audit_log entry tagged source='postgres' so the from-Sheet
+ *  cron's `DELETE WHERE source='sheet'` doesn't wipe it. Used by Phase 2
+ *  routes that bypass Apps Script (where the legacy doPost-side appendAudit
+ *  fires automatically). Never throws — audit failure must not break the
+ *  user's mutation, mirroring the Apps Script try/catch pattern. */
+export async function appendAuditToPostgres(input: AuditInput): Promise<void> {
+  if (!isPostgresConfigured()) return;
+  try {
+    const targetIdNum = input.targetId != null && String(input.targetId).trim()
+      ? Number(String(input.targetId).replace(/[^\d]/g, ''))
+      : null;
+    const targetId = Number.isFinite(targetIdNum) && targetIdNum ? targetIdNum : null;
+    const actor = formatActor(input.role, input.user);
+    const summary = generateAuditSummary(input);
+    await sql`
+      INSERT INTO audit_log
+        (timestamp, role, user_name, action, target_id, summary, source)
+      VALUES
+        (NOW(), ${actor}, ${input.user || null}, ${input.action},
+         ${targetId}::bigint, ${summary}, 'postgres')
+    `;
+  } catch {
+    // Never break the API on audit failure — Sentry already captures via
+    // Phase 2 mirror layer if applicable.
+  }
+}
+
 // ─── dirty row helpers ───────────────────────────────────────────
 
 export type DirtyTable = 'jobs' | 'orders' | 'shipped' | 'cancelled';

@@ -14,6 +14,7 @@ import {
   setCoworkInPostgres,
   updateJobInPostgres,
   addJobToPostgres,
+  appendAuditToPostgres,
   markRowClean,
   markRowDirty,
   addTemplateToPostgres,
@@ -370,6 +371,94 @@ describe('addJobToPostgres', () => {
     });
     const insert = findCallContaining('INSERT INTO jobs');
     expect(insert!.values[2]).toBe('job with spaces');
+  });
+});
+
+describe('appendAuditToPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('inserts audit_log row with source=postgres + auto-generated summary', async () => {
+    queueResult({ rowCount: 1 });
+    await appendAuditToPostgres({
+      action: 'addJob',
+      role: 'admin',
+      user: 'nook',
+      targetId: 12345,
+      data: { name: 'Brochure 1000', dept: 'graphic', staff: 'aor' },
+    });
+    const insert = findCallContaining('INSERT INTO audit_log');
+    expect(insert).toBeDefined();
+    // Critical — source must be 'postgres' so the from-Sheet cron's
+    // DELETE WHERE source='sheet' doesn't wipe Phase 2 audit entries.
+    expect(insert!.text).toContain("'postgres'");
+
+    // Bound values: [actor, user, action, targetId, summary]
+    expect(insert!.values[0]).toBe('admin:nook');  // formatActor
+    expect(insert!.values[1]).toBe('nook');
+    expect(insert!.values[2]).toBe('addJob');
+    expect(insert!.values[3]).toBe(12345);
+    // Summary follows Apps Script audit.ts convention:
+    expect(insert!.values[4]).toBe('เพิ่มงาน "Brochure 1000" → graphic/aor');
+  });
+
+  it('drops user prefix when actor matches role (matches Apps Script formatActor)', async () => {
+    queueResult({ rowCount: 1 });
+    await appendAuditToPostgres({
+      action: 'updateJob',
+      role: 'admin',
+      user: 'admin',  // same as role
+      targetId: 1,
+      data: { name: 'x', dept: 'print', staff: 'mo' },
+    });
+    const insert = findCallContaining('INSERT INTO audit_log');
+    expect(insert!.values[0]).toBe('admin');  // not 'admin:admin'
+  });
+
+  it('uses provided summary when given (no auto-generation)', async () => {
+    queueResult({ rowCount: 1 });
+    await appendAuditToPostgres({
+      action: 'customAction',
+      role: 'admin',
+      user: 'nook',
+      targetId: 99,
+      summary: 'Custom message',
+    });
+    const insert = findCallContaining('INSERT INTO audit_log');
+    expect(insert!.values[4]).toBe('Custom message');
+  });
+
+  it('generates correct summary for setCowork (matches Apps Script switch)', async () => {
+    queueResult({ rowCount: 1 });
+    await appendAuditToPostgres({
+      action: 'setCowork',
+      role: 'admin',
+      user: 'nook',
+      targetId: 100,
+      cowork: ['mo', 'top'],
+    });
+    const insert = findCallContaining('INSERT INTO audit_log');
+    expect(insert!.values[4]).toBe('ตั้ง Co-work job=100: ["mo","top"]');
+  });
+
+  it('handles non-numeric targetId gracefully (extracts digits)', async () => {
+    queueResult({ rowCount: 1 });
+    await appendAuditToPostgres({
+      action: 'updateJob',
+      role: 'admin',
+      targetId: 'job#42',  // weird input
+      data: { name: 'x', dept: 'print', staff: 'mo' },
+    });
+    const insert = findCallContaining('INSERT INTO audit_log');
+    expect(insert!.values[3]).toBe(42);
+  });
+
+  it('NEVER throws on Postgres failure — audit must not break user mutation', async () => {
+    setConfigured(false);
+    // Should silently no-op, not reject
+    await expect(
+      appendAuditToPostgres({ action: 'x', role: 'admin', targetId: 1 }),
+    ).resolves.toBeUndefined();
+    expect(sqlCalls).toHaveLength(0);
   });
 });
 

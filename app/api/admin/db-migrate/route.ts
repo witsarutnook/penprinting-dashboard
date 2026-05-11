@@ -186,6 +186,23 @@ export async function GET() {
     `;
     applied.push('CREATE TABLE sync_meta');
 
+    // ─── Phase 2 audit_log source column ──────────────────────────
+    // Distinguishes entries written by the from-Sheet cron ('sheet') from
+    // entries written directly by Phase 2 routes ('postgres'). Cron-side
+    // refresh deletes only WHERE source='sheet' so Phase 2 entries survive
+    // — without this, every TRUNCATE wiped Phase 2 audit visibility.
+    {
+      const r = await sql.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'audit_log' AND column_name = 'source' LIMIT 1`,
+      );
+      if (r.rowCount === 0) {
+        await sql.query(`ALTER TABLE audit_log ADD COLUMN source TEXT NOT NULL DEFAULT 'sheet'`);
+        await sql.query(`CREATE INDEX IF NOT EXISTS idx_audit_source ON audit_log(source)`);
+        applied.push('ALTER TABLE audit_log ADD source + index');
+      }
+    }
+
     // ─── Phase 2 dirty-row tracking ─────────────────────────────
     // phase2_dirty_at = NOT NULL means "row was just written by Phase 2,
     // Sheet is behind and needs heal-cron sync to catch up". The from-

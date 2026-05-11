@@ -9,7 +9,7 @@ import {
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { phase2WriteEnabled } from '@/lib/feature-flags';
-import { addJobToPostgres, PostgresWriteError } from '@/lib/postgres-write';
+import { addJobToPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -123,7 +123,7 @@ export async function POST(req: Request) {
   };
 
   if (phase2WriteEnabled('addJob')) {
-    return phase2AddJob(payload);
+    return phase2AddJob(payload, session.role, session.user);
   }
 
   try {
@@ -136,7 +136,7 @@ export async function POST(req: Request) {
   }
 }
 
-async function phase2AddJob(payload: JobPayload): Promise<NextResponse> {
+async function phase2AddJob(payload: JobPayload, role: string, user: string): Promise<NextResponse> {
   try {
     await addJobToPostgres({
       id: payload.id as number,
@@ -156,6 +156,18 @@ async function phase2AddJob(payload: JobPayload): Promise<NextResponse> {
   // Postgres write succeeded — heal cron pushes to Sheet via setJobRow
   // within 5 min. Bust /board + /orders caches so the next render shows
   // the new card immediately (Postgres-first reads see the new row).
+  await appendAuditToPostgres({
+    action: 'addJob',
+    role,
+    user,
+    targetId: payload.id as number,
+    data: {
+      name: payload.name,
+      dept: payload.dept,
+      staff: payload.staff,
+    },
+  });
+
   try {
     const { revalidatePath } = await import('next/cache');
     revalidatePath('/board');

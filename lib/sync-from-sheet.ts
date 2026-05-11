@@ -407,7 +407,11 @@ async function syncTemplates(templates: Template[]): Promise<TableSyncResult> {
 async function syncAuditLog(audit: AuditEntry[]): Promise<TableSyncResult> {
   const t0 = Date.now();
   try {
-    await sql`TRUNCATE TABLE audit_log RESTART IDENTITY`;
+    // Phase 2 audit entries (source='postgres') survive cron refresh —
+    // they were written directly by Phase 2 routes and aren't reflected in
+    // Sheet, so a TRUNCATE would lose them entirely. Only wipe the rows
+    // we'll re-import from Sheet.
+    await sql`DELETE FROM audit_log WHERE source = 'sheet'`;
     const rows = audit.map(r => {
       const tsIso = r.timestamp || new Date().toISOString();
       const targetIdNum = r.targetId ? Number(String(r.targetId).replace(/[^\d]/g, '')) : null;
@@ -419,14 +423,15 @@ async function syncAuditLog(audit: AuditEntry[]): Promise<TableSyncResult> {
         r.action || 'unknown',
         targetId,
         r.summary || null,
+        'sheet',  // source — Phase 2 entries use 'postgres' (preserved across cron)
       ];
     });
     const r = await bulkInsert(
       'audit_log',
-      'timestamp, role, user_name, action, target_id, summary',
+      'timestamp, role, user_name, action, target_id, summary, source',
       rows,
-      6,
-      ['timestamptz', '', '', '', 'bigint', ''],
+      7,
+      ['timestamptz', '', '', '', 'bigint', '', ''],
     );
     await recordSyncMeta('audit_log', r.inserted, !r.error, r.error);
     return { table: 'audit_log', fetched: audit.length, inserted: r.inserted, ok: !r.error, error: r.error, ms: Date.now() - t0 };
