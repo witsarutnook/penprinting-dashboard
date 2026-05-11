@@ -4,6 +4,8 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { RESTRICTED_TARGETS } from '@/lib/forward';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -96,6 +98,13 @@ export async function POST(req: Request) {
   };
   if (src.cowork !== undefined) payload.cowork = src.cowork;
 
+  // Phase 2 reuse — reassignStaff sends action='updateJob' to Apps Script
+  // (constrained to same-dept staff change), so the WRITE_UPDATE_JOB_TO_POSTGRES
+  // flag governs this path too. No separate env var needed.
+  if (phase2WriteEnabled('updateJob')) {
+    return phase2Reassign(oldId, payload, session.role, session.user);
+  }
+
   try {
     const result = await post<{ ok?: boolean; error?: string }>('updateJob', { data: payload });
     if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
@@ -104,4 +113,62 @@ export async function POST(req: Request) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });
   }
+}
+
+async function phase2Reassign(
+  id: number,
+  payload: Record<string, unknown>,
+  role: string,
+  user: string,
+): Promise<NextResponse> {
+  let found = false;
+  try {
+    const r = await updateJobInPostgres({
+      id,
+      name: String(payload.name || ''),
+      date: (payload.date as string) ?? null,
+      dateIn: (payload.dateIn as string) ?? null,
+      dept: String(payload.dept || ''),
+      staff: String(payload.staff || ''),
+      status: String(payload.status || 'pending'),
+      orderId: payload.orderId as string | number | null,
+      cowork: payload.cowork,
+    });
+    found = r.found;
+  } catch (err) {
+    const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  if (!found) {
+    // Row not in Postgres yet — fall through to legacy Apps Script so
+    // the reassignment still lands on Sheet.
+    try {
+      const result = await post<{ ok?: boolean; error?: string }>('updateJob', { data: payload });
+      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ ok: true, fallback: 'apps-script' });
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
+  }
+
+  await appendAuditToPostgres({
+    action: 'updateJob',
+    role,
+    user,
+    targetId: id,
+    data: {
+      name: String(payload.name || ''),
+      dept: String(payload.dept || ''),
+      staff: String(payload.staff || ''),
+    },
+  });
+
+  try {
+    const { revalidatePath } = await import('next/cache');
+    revalidatePath('/board');
+  } catch { /* ignore */ }
+
+  return NextResponse.json({ ok: true });
 }
