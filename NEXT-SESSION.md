@@ -385,6 +385,45 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ## ⚠️ Pending user actions (after 2026-05-11 session)
 
+### Phase 2 Batch A activation — moveToShipped + cancelJob + reassignStaff (3 ขั้น)
+
+✅ **reassignStaff** — reuses WRITE_UPDATE_JOB_TO_POSTGRES flag (already active if updateJob is). No new env var needed.
+✅ **Vercel code deployed** 2026-05-11 — moveToShipped/cancelJob helpers + tombstone infrastructure + heal cron extended
+✅ **Apps Script v5.10.14 pushed** via clasp — setShippedRow + setCancelledRow + deleteJobByIdRow actions
+
+ขั้นตอน:
+
+1. **Run db-migrate** — เปิด `https://dashboard.penprinting.co/api/admin/db-migrate` → confirm `applied` มี `"ALTER TABLE jobs ADD phase2_deleted_at + partial index"`
+2. **Apps Script editor** → Deploy → Manage deployments → **Edit existing → New version**
+   Description: `v5.10.14 setShippedRow / setCancelledRow / deleteJobByIdRow`
+3. **Vercel env vars** — Add (Production + Preview + Development):
+   - `WRITE_MOVE_TO_SHIPPED_TO_POSTGRES=1`
+   - `WRITE_CANCEL_JOB_TO_POSTGRES=1`
+   - (reassignStaff piggybacks on existing `WRITE_UPDATE_JOB_TO_POSTGRES=1`)
+   → Redeploy
+
+**Smoke test:**
+- **moveToShipped**: เปิด /board → คลิก ship (✅) บน job → expect ~250ms latency + card หายจาก Kanban ทันที + /shipped page เห็นทันที + tab ประวัติเห็น `"จัดส่งงาน"`
+- **cancelJob**: คลิก ยกเลิก บน job → ใส่เหตุผล → expect job หายจาก Kanban + /cancelled เห็นทันที + ประวัติเห็น `"ยกเลิก ..."`
+- **reassignStaff**: drag-drop ภายใน column เดียวกัน (เปลี่ยน staff ในแผนกเดียวกัน) → expect card move staff ทันที + ประวัติ updateJob
+- **รอ 5 นาที → ดู logs `/api/cron/sync-to-sheet`** → expect:
+  ```
+  tables: [
+    {table: 'jobs', candidates: 0, healed: 0},
+    {table: 'orders', candidates: 0, healed: 0},
+    {table: 'shipped', candidates: ≥1, healed: ≥1},  // ← new dirty rows
+    {table: 'cancelled', candidates: ≥1, healed: ≥1},
+    {table: 'jobs_tombstone', candidates: ≥2, healed: ≥2},  // ← tombstones cleared
+  ]
+  ```
+- **Google Sheet:** tabs `shipped` + `cancelled` มี rows ใหม่ + `jobs` row หายตามที่ ship/cancel
+
+**Rollback (per action):** unset env var → redeploy → กลับ Apps Script-first path. Tombstoned rows in Postgres heal cron continues regardless of flag. Worst case = a few rows tombstoned-but-not-deleted-from-Sheet stay for next heal cycle, then converge.
+
+⚠️ **Trade-off:** Sheet `jobs` row stays up to ~5 นาที after Phase 2 move (heal cron interval). External readers (morning report at 8 AM) read from Sheet — if a job is ship/cancel between 7:55-8:00 it may still appear in `jobs` sheet in the report. Postgres reads filter `phase2_deleted_at IS NULL` so v2 + /track see correct state immediately.
+
+---
+
 ### Phase 2 createOrder activation — 2 ขั้น (Apps Script v5.10.13 deploy + env var)
 
 ✅ **Vercel code deployed** 2026-05-11 — `createOrderInPostgres` + `findDuplicateOrdersInPostgres` + route Phase 2 branch + heal cron extended for orders

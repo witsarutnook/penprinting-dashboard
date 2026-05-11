@@ -72,7 +72,7 @@ export async function loadAllFromPostgres(opts: { audit?: boolean } = {}): Promi
   // Parallel SELECT — Postgres connection pool handles. ~20-50ms total
   // because each table read is independent + small for our row counts.
   const [jobsR, ordersR, shippedR, cancelledR, templatesR, auditR] = await Promise.all([
-    sql<{ raw: Job }>`SELECT raw FROM jobs ORDER BY id`,
+    sql<{ raw: Job }>`SELECT raw FROM jobs WHERE phase2_deleted_at IS NULL ORDER BY id`,
     sql<{ raw: Order }>`SELECT raw FROM orders ORDER BY id DESC`,
     sql<{ raw: Shipped }>`SELECT raw FROM shipped ORDER BY id DESC`,
     sql<{ raw: Cancelled }>`SELECT raw FROM cancelled ORDER BY id DESC`,
@@ -124,7 +124,7 @@ export async function loadOrderFromPostgres(orderId: number | string): Promise<L
 
   const [orderR, jobR, shippedR, cancelledR] = await Promise.all([
     sql<{ raw: Order }>`SELECT raw FROM orders WHERE id = ${id} LIMIT 1`,
-    sql<{ raw: Job }>`SELECT raw FROM jobs WHERE order_id = ${id} ORDER BY id DESC LIMIT 1`,
+    sql<{ raw: Job }>`SELECT raw FROM jobs WHERE order_id = ${id} AND phase2_deleted_at IS NULL ORDER BY id DESC LIMIT 1`,
     sql<{ raw: Shipped }>`SELECT raw FROM shipped WHERE order_id = ${id} ORDER BY id DESC LIMIT 1`,
     sql<{ raw: Cancelled }>`SELECT raw FROM cancelled WHERE order_id = ${id} ORDER BY id DESC LIMIT 1`,
   ]);

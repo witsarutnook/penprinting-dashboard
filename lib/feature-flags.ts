@@ -55,6 +55,13 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // ~1.3s on hot path (every new order/job comes through here). Heal cron
   // pushes setOrderRow + setJobRow to Sheet within 5 min.
   createOrder:    'WRITE_CREATE_ORDER_TO_POSTGRES',
+  // moveToShipped — sixth action (2026-05-11). Atomic jobs→shipped. Phase 2
+  // uses tombstone (jobs.phase2_deleted_at) + INSERT into shipped (dirty mark).
+  // Heal cron: deleteJobByIdRow for tombstone + setShippedRow for new row.
+  moveToShipped:  'WRITE_MOVE_TO_SHIPPED_TO_POSTGRES',
+  // cancelJob — seventh action (2026-05-11). Atomic jobs→cancelled. Same
+  // pattern as moveToShipped, just different target table.
+  cancelJob:      'WRITE_CANCEL_JOB_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

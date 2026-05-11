@@ -16,6 +16,8 @@ import {
   addJobToPostgres,
   createOrderInPostgres,
   findDuplicateOrdersInPostgres,
+  moveToShippedInPostgres,
+  cancelJobInPostgres,
   appendAuditToPostgres,
   markRowClean,
   markRowDirty,
@@ -491,6 +493,88 @@ describe('findDuplicateOrdersInPostgres', () => {
     expect(select!.values).toContain('custa');
     // Excludes cancelled
     expect(select!.text).toMatch(/status.*!=.*'cancelled'/i);
+  });
+});
+
+describe('moveToShippedInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('returns found:false when job missing — no INSERT, no tombstone', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const r = await moveToShippedInPostgres({
+      id: 999, name: 'ghost', shippedDate: '11/05/2026',
+    });
+    expect(r).toEqual({ ok: true, found: false });
+    expect(callsContaining('INSERT INTO shipped'), 'must not insert when job missing').toHaveLength(0);
+    expect(callsContaining('UPDATE jobs SET phase2_deleted_at'), 'must not tombstone missing job').toHaveLength(0);
+  });
+
+  it('INSERTs shipped + tombstones jobs row (atomic-ish 2-step)', async () => {
+    queueResult({ rows: [{ raw: { id: 437, dept: 'post', staff: 'top' } }], rowCount: 1 }); // SELECT
+    queueResult({ rowCount: 1 }); // INSERT shipped
+    queueResult({ rowCount: 1 }); // UPDATE jobs
+
+    const r = await moveToShippedInPostgres({
+      id: 437, name: 'ใบยืมขวดลัง', shippedDate: '11/05/2026', orderId: 202605061,
+    });
+    expect(r).toEqual({ ok: true, found: true });
+
+    const shippedInsert = findCallContaining('INSERT INTO shipped');
+    expect(shippedInsert, 'must INSERT into shipped').toBeDefined();
+    expect(shippedInsert!.text, 'shipped INSERT must mark dirty').toContain('phase2_dirty_at');
+    expect(shippedInsert!.text, 'shipped INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
+
+    const tombstone = findCallContaining('UPDATE jobs SET phase2_deleted_at');
+    expect(tombstone, 'jobs row must be tombstoned via phase2_deleted_at').toBeDefined();
+    expect(tombstone!.text).toContain('NOW()');
+  });
+
+  it('throws on invalid id', async () => {
+    await expect(
+      moveToShippedInPostgres({ id: 0, name: 'x', shippedDate: '' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+  });
+});
+
+describe('cancelJobInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('returns found:false when job missing', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const r = await cancelJobInPostgres({
+      id: 999, name: 'x', reason: 'r', cancelledBy: 'u', cancelledAt: 't',
+    });
+    expect(r).toEqual({ ok: true, found: false });
+    expect(callsContaining('INSERT INTO cancelled')).toHaveLength(0);
+  });
+
+  it('INSERTs cancelled + tombstones jobs row, inherits dept/staff from raw', async () => {
+    queueResult({
+      rows: [{ raw: { id: 478, dept: 'graphic', staff: 'aor' } }],
+      rowCount: 1,
+    });
+    queueResult({ rowCount: 1 }); // INSERT cancelled
+    queueResult({ rowCount: 1 }); // UPDATE jobs
+
+    const r = await cancelJobInPostgres({
+      id: 478,
+      name: 'job-X',
+      reason: 'ลูกค้ายกเลิก',
+      cancelledBy: 'admin:nook',
+      cancelledAt: '11/05/2026',
+    });
+    expect(r).toEqual({ ok: true, found: true });
+
+    const cancelInsert = findCallContaining('INSERT INTO cancelled');
+    expect(cancelInsert, 'must INSERT into cancelled').toBeDefined();
+    expect(cancelInsert!.text, 'cancelled INSERT must mark dirty').toContain('phase2_dirty_at');
+    expect(cancelInsert!.text, 'cancelled INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
+    // dept/staff inherited from raw (input didn't provide them)
+    const dept = cancelInsert!.values.find((v) => v === 'graphic');
+    expect(dept, 'dept must inherit from raw when not in input').toBe('graphic');
+
+    const tombstone = findCallContaining('UPDATE jobs SET phase2_deleted_at');
+    expect(tombstone).toBeDefined();
   });
 });
 

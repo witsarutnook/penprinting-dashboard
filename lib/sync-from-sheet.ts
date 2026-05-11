@@ -230,9 +230,15 @@ async function deleteCleanThenInsert(
   rows: unknown[][],
   paramsPerRow: number,
   cast: string[] = [],
+  opts: { deleteWhere?: string } = {},
 ): Promise<{ inserted: number; error?: string }> {
+  // Default predicate preserves only dirty (Phase 2-UPDATE) rows. Jobs
+  // overrides this to also preserve tombstoned rows (moveToShipped /
+  // cancelJob) so Sheet's lingering rows don't get re-inserted before the
+  // heal cron pushes deleteJobByIdRow.
+  const where = opts.deleteWhere || 'phase2_dirty_at IS NULL';
   try {
-    await sql.query(`DELETE FROM ${tableName} WHERE phase2_dirty_at IS NULL`);
+    await sql.query(`DELETE FROM ${tableName} WHERE ${where}`);
   } catch (err) {
     return { inserted: 0, error: err instanceof Error ? err.message : String(err) };
   }
@@ -258,12 +264,17 @@ async function syncJobs(jobs: Job[]): Promise<TableSyncResult> {
         JSON.stringify(j),
       ]);
     // Phase 2 dirty-row preservation — see deleteCleanThenInsert docstring.
+    // Jobs also preserves tombstoned rows (moveToShipped/cancelJob have
+    // moved the row to shipped/cancelled in Postgres; we can't let Sheet
+    // re-insert the lingering jobs row before heal cron deletes it from
+    // Sheet via deleteJobByIdRow).
     const r = await deleteCleanThenInsert(
       'jobs',
       'id, order_id, name, date, date_in, staff, dept, status, cowork, raw',
       rows,
       10,
       ['bigint', 'bigint', '', '', '', '', '', '', 'jsonb', 'jsonb'],
+      { deleteWhere: 'phase2_dirty_at IS NULL AND phase2_deleted_at IS NULL' },
     );
     await recordSyncMeta('jobs', r.inserted, !r.error, r.error);
     return { table: 'jobs', fetched: jobs.length, inserted: r.inserted, dedup: dropped, ok: !r.error, error: r.error, ms: Date.now() - t0 };

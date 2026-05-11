@@ -68,10 +68,13 @@ export async function healAllDirtyRows(): Promise<FullHealResult> {
   }
 
   // Heal each Phase 2-active table. setOrderRow added 2026-05-11 for the
-  // createOrder migration; setCancelledRow / setShippedRow follow as their
-  // actions migrate.
+  // createOrder migration; setShippedRow / setCancelledRow / deleteJobByIdRow
+  // added 2026-05-11 for moveToShipped + cancelJob.
   tables.push(await healJobsDirty());
   tables.push(await healOrdersDirty());
+  tables.push(await healShippedDirty());
+  tables.push(await healCancelledDirty());
+  tables.push(await healJobsTombstone());
 
   const finishedAt = new Date();
   return {
@@ -202,6 +205,137 @@ async function healOrdersDirty(): Promise<HealResult> {
 
   return {
     table: 'orders',
+    candidates,
+    attempted,
+    healed,
+    failed,
+    errors,
+    ms: Date.now() - t0,
+  };
+}
+
+interface DirtyRow {
+  id: number;
+  raw: Record<string, unknown> | null;
+}
+
+/** Generic heal for tables with phase2_dirty_at column + setRow action. */
+async function healDirty(
+  tableName: 'shipped' | 'cancelled',
+  appsScriptAction: 'setShippedRow' | 'setCancelledRow',
+): Promise<HealResult> {
+  const t0 = Date.now();
+  const errors: string[] = [];
+  let healed = 0;
+  let failed = 0;
+  let attempted = 0;
+  let candidates = 0;
+
+  try {
+    const r = await sql.query<DirtyRow>(
+      `SELECT id, raw FROM ${tableName} WHERE phase2_dirty_at IS NOT NULL ORDER BY phase2_dirty_at ASC LIMIT $1`,
+      [BATCH_LIMIT + 1],
+    );
+    candidates = r.rowCount ?? 0;
+    const batch = r.rows.slice(0, BATCH_LIMIT);
+    attempted = batch.length;
+
+    for (const row of batch) {
+      const payload = (row.raw && typeof row.raw === 'object')
+        ? { ...row.raw, id: row.id }
+        : { id: row.id };
+
+      try {
+        const res = await post<{ ok?: boolean; error?: string }>(
+          appsScriptAction,
+          { data: payload },
+        );
+        if (res.error) {
+          throw new AppsScriptError(appsScriptAction, res.error);
+        }
+        await sql.query(
+          `UPDATE ${tableName} SET phase2_dirty_at = NULL WHERE id = $1::bigint`,
+          [row.id],
+        );
+        healed++;
+      } catch (err) {
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (errors.length < 5) errors.push(`id=${row.id}: ${msg}`);
+      }
+    }
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err));
+    failed++;
+  }
+
+  return {
+    table: tableName,
+    candidates,
+    attempted,
+    healed,
+    failed,
+    errors,
+    ms: Date.now() - t0,
+  };
+}
+
+function healShippedDirty(): Promise<HealResult> {
+  return healDirty('shipped', 'setShippedRow');
+}
+
+function healCancelledDirty(): Promise<HealResult> {
+  return healDirty('cancelled', 'setCancelledRow');
+}
+
+/** Tombstone heal — pushes deleteJobByIdRow for rows with phase2_deleted_at,
+ *  then hard-DELETEs the row from Postgres on success. From-Sheet cron's
+ *  ON CONFLICT (id) DO NOTHING handles the in-flight window where Sheet
+ *  still has the row + Postgres tombstone is preventing re-insert. */
+async function healJobsTombstone(): Promise<HealResult> {
+  const t0 = Date.now();
+  const errors: string[] = [];
+  let healed = 0;
+  let failed = 0;
+  let attempted = 0;
+  let candidates = 0;
+
+  try {
+    const r = await sql<{ id: number }>`
+      SELECT id FROM jobs
+      WHERE phase2_deleted_at IS NOT NULL
+      ORDER BY phase2_deleted_at ASC
+      LIMIT ${BATCH_LIMIT + 1}
+    `;
+    candidates = r.rowCount ?? 0;
+    const batch = r.rows.slice(0, BATCH_LIMIT);
+    attempted = batch.length;
+
+    for (const row of batch) {
+      try {
+        const res = await post<{ ok?: boolean; error?: string }>(
+          'deleteJobByIdRow',
+          { data: { id: row.id } },
+        );
+        if (res.error) {
+          throw new AppsScriptError('deleteJobByIdRow', res.error);
+        }
+        // Sheet caught up — hard-delete the tombstoned row from Postgres.
+        await sql`DELETE FROM jobs WHERE id = ${row.id}::bigint`;
+        healed++;
+      } catch (err) {
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (errors.length < 5) errors.push(`id=${row.id}: ${msg}`);
+      }
+    }
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err));
+    failed++;
+  }
+
+  return {
+    table: 'jobs_tombstone',
     candidates,
     attempted,
     healed,

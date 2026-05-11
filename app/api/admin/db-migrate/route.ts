@@ -227,6 +227,28 @@ export async function GET() {
       }
     }
 
+    // ─── Phase 2 tombstone tracking (jobs only for now) ─────────────
+    // moveToShipped / cancelJob need to DELETE the row from jobs in Sheet
+    // after the row has been moved to shipped/cancelled in Postgres. The
+    // tombstone column marks the row as "Sheet still has it but should not
+    // — heal cron must call deleteJobByIdRow on Apps Script". On success
+    // the row is hard-DELETED from Postgres. Until then, from-Sheet cron
+    // skips ids that are tombstoned (else Sheet would re-insert them).
+    {
+      const r = await sql.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'jobs' AND column_name = 'phase2_deleted_at' LIMIT 1`,
+      );
+      if (r.rowCount === 0) {
+        await sql.query(`ALTER TABLE jobs ADD COLUMN phase2_deleted_at TIMESTAMPTZ`);
+        await sql.query(
+          `CREATE INDEX IF NOT EXISTS idx_jobs_phase2_deleted
+             ON jobs(phase2_deleted_at) WHERE phase2_deleted_at IS NOT NULL`,
+        );
+        applied.push('ALTER TABLE jobs ADD phase2_deleted_at + partial index');
+      }
+    }
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
     for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates']) {

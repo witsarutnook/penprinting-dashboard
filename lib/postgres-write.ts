@@ -476,6 +476,146 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
   return { ok: true, orderId: orderIdNum, jobId: jobIdOut };
 }
 
+// ─── moveToShipped / cancelJob (atomic 2-table — Phase 2 tombstone) ──
+
+export interface MoveToShippedInput {
+  id: number;
+  /** Display name — for the shipped row (also used in audit summary). */
+  name: string;
+  shippedDate: string;
+  orderId?: number | string | null;
+}
+
+/** Phase 2 — atomic-ish move of jobs row → shipped:
+ *  1. INSERT row into shipped (phase2_dirty_at=NOW())
+ *  2. Mark jobs.phase2_deleted_at=NOW() (tombstone — heal cron will delete
+ *     the Sheet row + hard-delete the Postgres row once that's done)
+ *  /board reads filter `phase2_deleted_at IS NULL` so the job hides instantly.
+ *  Returns { ok, found } where found=false means the job wasn't in Postgres
+ *  (caller falls through to legacy Apps Script). */
+export async function moveToShippedInPostgres(input: MoveToShippedInput): Promise<{
+  ok: true;
+  found: boolean;
+}> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('moveToShipped', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('moveToShipped', 'Invalid job id');
+  }
+
+  // Need to verify the job exists in Postgres before tombstoning. Returning
+  // found:false lets the route fall back to legacy Apps Script (matches the
+  // setCowork/updateJob row-missing fallback contract).
+  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1`;
+  if (cur.rows.length === 0) {
+    return { ok: true, found: false };
+  }
+
+  const orderIdRaw = input.orderId == null || input.orderId === '' ? null : Number(input.orderId);
+  const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
+  const name = String(input.name || '').trim();
+  const shippedDate = String(input.shippedDate || '');
+
+  const shippedRaw = {
+    id: idNum,
+    orderId,
+    name,
+    shippedDate,
+  };
+  const shippedRawJson = JSON.stringify(shippedRaw);
+
+  await sql`
+    INSERT INTO shipped (id, order_id, name, shipped_date, raw, phase2_dirty_at)
+    VALUES (${idNum}::bigint, ${orderId}::bigint, ${name}, ${shippedDate}, ${shippedRawJson}::jsonb, NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      order_id = EXCLUDED.order_id,
+      name = EXCLUDED.name,
+      shipped_date = EXCLUDED.shipped_date,
+      raw = EXCLUDED.raw,
+      phase2_dirty_at = NOW()
+  `;
+  await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
+
+  return { ok: true, found: true };
+}
+
+export interface CancelJobInput {
+  id: number;
+  name: string;
+  /** Optional pre-fetched fields. If absent, picks from raw. */
+  dept?: string;
+  staff?: string;
+  reason: string;
+  cancelledBy: string;
+  cancelledAt: string;
+  orderId?: number | string | null;
+}
+
+/** Phase 2 — atomic-ish move of jobs row → cancelled. Same shape as
+ *  moveToShippedInPostgres, different target table. */
+export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
+  ok: true;
+  found: boolean;
+}> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('cancelJob', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('cancelJob', 'Invalid job id');
+  }
+
+  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1`;
+  if (cur.rows.length === 0) {
+    return { ok: true, found: false };
+  }
+  const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+
+  const orderIdRaw = input.orderId == null || input.orderId === '' ? null : Number(input.orderId);
+  const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
+  const name = String(input.name || '').trim();
+  const dept = input.dept != null ? String(input.dept) : (oldRaw.dept != null ? String(oldRaw.dept) : null);
+  const staff = input.staff != null ? String(input.staff) : (oldRaw.staff != null ? String(oldRaw.staff) : null);
+  const reason = String(input.reason || '');
+  const cancelledBy = String(input.cancelledBy || '');
+  const cancelledAt = String(input.cancelledAt || '');
+
+  const cancelledRaw = {
+    id: idNum,
+    orderId,
+    name,
+    dept,
+    staff,
+    cancelledBy,
+    cancelledAt,
+    reason,
+  };
+  const cancelledRawJson = JSON.stringify(cancelledRaw);
+
+  await sql`
+    INSERT INTO cancelled
+      (id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw, phase2_dirty_at)
+    VALUES
+      (${idNum}::bigint, ${orderId}::bigint, ${name}, ${dept}, ${staff},
+       ${cancelledBy}, ${cancelledAt}, ${reason}, ${cancelledRawJson}::jsonb, NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      order_id = EXCLUDED.order_id,
+      name = EXCLUDED.name,
+      dept = EXCLUDED.dept,
+      staff = EXCLUDED.staff,
+      cancelled_by = EXCLUDED.cancelled_by,
+      cancelled_at = EXCLUDED.cancelled_at,
+      reason = EXCLUDED.reason,
+      raw = EXCLUDED.raw,
+      phase2_dirty_at = NOW()
+  `;
+  await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
+
+  return { ok: true, found: true };
+}
+
 // ─── Phase 2 audit ───────────────────────────────────────────────
 
 export interface AuditInput {
