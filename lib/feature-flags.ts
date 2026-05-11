@@ -34,6 +34,12 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // Sheet sync (idempotent UPDATE) + heal cron uses `setJobRow` for
   // post-failure retries. First user of phase2_dirty_at infrastructure.
   setCowork:      'WRITE_COWORK_TO_POSTGRES',
+  // updateJob — third action migrated (2026-05-11). Multi-field UPDATE
+  // (name/date/dept/staff/status/orderId/cowork). Drops inline Apps Script
+  // sync — relies on heal cron's setJobRow within 5 min. Reads through
+  // Postgres (Phase 1 mirror) so /board card moves columns instantly when
+  // dept/staff change without round-tripping the Sheet.
+  updateJob:      'WRITE_UPDATE_JOB_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

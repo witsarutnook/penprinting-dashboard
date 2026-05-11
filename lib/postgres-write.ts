@@ -155,6 +155,88 @@ export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: 
   return { ok: true, found: true };
 }
 
+export interface UpdateJobInput {
+  id: number | string;
+  name?: string;
+  date?: string | null;
+  dateIn?: string | null;
+  dept?: string;
+  staff?: string;
+  status?: string;
+  /** '' or null → orphan (no parent order), otherwise number-coerced. */
+  orderId?: string | number | null;
+  /** Pass through unchanged when undefined; pass [] (or null) to clear. */
+  cowork?: unknown;
+}
+
+/** Phase 2 — atomic UPDATE of a job's editable fields + mark dirty. The
+ *  caller (route) is responsible for input validation; this function
+ *  trusts the payload but defends against missing rows by returning
+ *  `found:false` so the route can fall through to the legacy Apps Script
+ *  path (matches the setCoworkInPostgres contract).
+ *
+ *  The merge strategy preserves any raw fields not in `UpdateJobInput`
+ *  (e.g. `notes`, `assignedAt`, future schema extensions) so a Phase 2
+ *  edit can't accidentally erase data the v2 form doesn't surface yet.
+ *
+ *  After this returns, the row carries `phase2_dirty_at = NOW()`. The
+ *  heal cron (`/api/cron/sync-to-sheet`, every 5 min) will push the new
+ *  state to Sheet via `setJobRow` and clear the dirty marker on success. */
+export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: true; found: boolean }> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('updateJob', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('updateJob', 'Invalid job id');
+  }
+
+  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint LIMIT 1`;
+  if (cur.rows.length === 0) {
+    return { ok: true, found: false };
+  }
+
+  const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+  const merged: AnyRow = { ...oldRaw, id: idNum };
+  if (input.name !== undefined) merged.name = String(input.name);
+  if (input.date !== undefined) merged.date = input.date == null ? null : String(input.date);
+  if (input.dateIn !== undefined) merged.dateIn = input.dateIn == null ? null : String(input.dateIn);
+  if (input.dept !== undefined) merged.dept = String(input.dept);
+  if (input.staff !== undefined) merged.staff = String(input.staff);
+  if (input.status !== undefined) merged.status = String(input.status);
+  if (input.orderId !== undefined) {
+    const oid = input.orderId === '' || input.orderId == null ? null : Number(input.orderId);
+    merged.orderId = Number.isFinite(oid) && oid !== 0 ? oid : null;
+  }
+  if (input.cowork !== undefined) merged.cowork = input.cowork;
+
+  const orderId = merged.orderId != null ? Number(merged.orderId) : null;
+  const name = String(merged.name || '');
+  const date = merged.date != null ? String(merged.date) : null;
+  const dateIn = merged.dateIn != null ? String(merged.dateIn) : null;
+  const staff = merged.staff != null ? String(merged.staff) : null;
+  const dept = merged.dept != null ? String(merged.dept) : null;
+  const status = merged.status != null ? String(merged.status) : null;
+  const coworkJson = merged.cowork == null ? null : JSON.stringify(merged.cowork);
+  const newRawJson = JSON.stringify(merged);
+
+  await sql`
+    UPDATE jobs SET
+      order_id = ${orderId}::bigint,
+      name = ${name},
+      date = ${date},
+      date_in = ${dateIn},
+      staff = ${staff},
+      dept = ${dept},
+      status = ${status},
+      cowork = ${coworkJson}::jsonb,
+      raw = ${newRawJson}::jsonb,
+      phase2_dirty_at = NOW()
+    WHERE id = ${idNum}::bigint
+  `;
+  return { ok: true, found: true };
+}
+
 // ─── dirty row helpers ───────────────────────────────────────────
 
 export type DirtyTable = 'jobs' | 'orders' | 'shipped' | 'cancelled';

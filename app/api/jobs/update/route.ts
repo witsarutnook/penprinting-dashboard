@@ -3,6 +3,8 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate, validateJobInput, type JobPayload } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { updateJobInPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -12,6 +14,13 @@ export const maxDuration = 30;
  *
  * Request body: { id, name, date, dateIn?, dept, staff, orderId?, status?, cowork? }
  * → Apps Script payload = full JOBS_HEADERS row (id required, status defaults preserved)
+ *
+ * Phase 2 — when WRITE_UPDATE_JOB_TO_POSTGRES=1, Postgres is authoritative.
+ * UPDATE goes to Postgres + marks phase2_dirty_at; the heal cron pushes to
+ * Sheet via setJobRow within 5 min. Mirrors the setCowork Phase 2 pattern:
+ * /board reads from Postgres so the card moves columns instantly when
+ * dept/staff change without waiting for Apps Script. Falls through to
+ * legacy when the row isn't in Postgres yet (Phase 1.7 stragglers).
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
@@ -65,6 +74,10 @@ export async function POST(req: Request) {
   // but we don't want updateJob to wipe an existing assignment.
   if (body.cowork !== undefined) payload.cowork = body.cowork;
 
+  if (phase2WriteEnabled('updateJob')) {
+    return phase2UpdateJob(id, payload);
+  }
+
   try {
     const result = await post<{ ok?: boolean; error?: string }>('updateJob', { data: payload });
     if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
@@ -73,4 +86,49 @@ export async function POST(req: Request) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });
   }
+}
+
+async function phase2UpdateJob(id: number, payload: JobPayload): Promise<NextResponse> {
+  let found = false;
+  try {
+    const r = await updateJobInPostgres({
+      id,
+      name: payload.name,
+      date: payload.date ?? null,
+      dateIn: payload.dateIn ?? null,
+      dept: payload.dept,
+      staff: payload.staff,
+      status: payload.status,
+      orderId: payload.orderId,
+      cowork: payload.cowork,
+    });
+    found = r.found;
+  } catch (err) {
+    const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  if (!found) {
+    // Row not in Postgres yet — fall through to legacy Apps Script so the
+    // user's edit lands on Sheet. The next from-Sheet cron will pick it up
+    // into Postgres so the next edit lands in the Phase 2 path.
+    try {
+      const result = await post<{ ok?: boolean; error?: string }>('updateJob', { data: payload });
+      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ ok: true, fallback: 'apps-script' });
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
+  }
+
+  // Postgres write succeeded — heal cron pushes to Sheet within 5 min.
+  // Bust /board + /orders caches so the next render sees the new row.
+  try {
+    const { revalidatePath } = await import('next/cache');
+    revalidatePath('/board');
+    revalidatePath('/orders');
+  } catch { /* ignore */ }
+
+  return NextResponse.json({ ok: true });
 }

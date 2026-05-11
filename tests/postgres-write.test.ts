@@ -12,6 +12,7 @@ vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 
 import {
   setCoworkInPostgres,
+  updateJobInPostgres,
   markRowClean,
   markRowDirty,
   addTemplateToPostgres,
@@ -121,6 +122,142 @@ describe('markRowClean / markRowDirty', () => {
     await markRowClean('jobs', 0);
     await markRowDirty('jobs', -1);
     expect(sqlCalls).toHaveLength(0);
+  });
+});
+
+describe('updateJobInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws PostgresWriteError when Postgres is not configured', async () => {
+    setConfigured(false);
+    await expect(
+      updateJobInPostgres({ id: 1, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('throws PostgresWriteError on invalid id', async () => {
+    await expect(
+      updateJobInPostgres({ id: 0, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(
+      updateJobInPostgres({ id: 'abc', name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('returns found:false WITHOUT issuing UPDATE when row missing in Postgres', async () => {
+    queueResult({ rows: [], rowCount: 0 });  // SELECT empty
+    const r = await updateJobInPostgres({
+      id: 999, name: 'ghost', dept: 'print', staff: 'mo',
+    });
+    expect(r).toEqual({ ok: true, found: false });
+    expect(callsContaining('SELECT raw FROM jobs')).toHaveLength(1);
+    expect(callsContaining('UPDATE jobs')).toHaveLength(0);
+  });
+
+  it('updates all fields, sets phase2_dirty_at, merges raw with old snapshot', async () => {
+    const oldRaw = {
+      id: 42,
+      name: 'old-name',
+      date: '2026-05-09',
+      dateIn: '2026-05-08',
+      dept: 'graphic',
+      staff: 'aor',
+      status: 'pending',
+      orderId: 100,
+      cowork: ['mo'],   // ← preserved when input doesn't include cowork
+      notes: 'extra',   // ← preserved (not part of input shape)
+    };
+    queueResult({ rows: [{ raw: oldRaw }], rowCount: 1 });  // SELECT
+    queueResult({ rowCount: 1 });  // UPDATE
+
+    const r = await updateJobInPostgres({
+      id: 42,
+      name: 'new-name',
+      date: '2026-05-10',
+      dateIn: '2026-05-09',
+      dept: 'print',
+      staff: 'top',
+      status: 'pending',
+      orderId: 100,
+    });
+    expect(r).toEqual({ ok: true, found: true });
+
+    const update = findCallContaining('UPDATE jobs SET');
+    expect(update).toBeDefined();
+
+    // Critical: phase2_dirty_at MUST be set so heal cron pushes to Sheet.
+    expect(update!.text).toContain('phase2_dirty_at = NOW()');
+    expect(update!.text).toContain('order_id =');
+    expect(update!.text).toContain('name =');
+    expect(update!.text).toContain('dept =');
+    expect(update!.text).toContain('staff =');
+    expect(update!.text).toContain('cowork =');
+    expect(update!.text).toContain('raw =');
+
+    // The merged raw payload — verify by parsing the JSON parameter that
+    // ends up in the `raw = $N::jsonb` slot.
+    const rawParam = update!.values.find(
+      (v) => typeof v === 'string' && v.startsWith('{'),
+    ) as string | undefined;
+    expect(rawParam).toBeDefined();
+    const merged = JSON.parse(rawParam!);
+    expect(merged.id).toBe(42);
+    expect(merged.name).toBe('new-name');
+    expect(merged.date).toBe('2026-05-10');
+    expect(merged.dept).toBe('print');
+    expect(merged.staff).toBe('top');
+    // Untouched fields survive merge:
+    expect(merged.cowork).toEqual(['mo']);
+    expect(merged.notes).toBe('extra');
+  });
+
+  it('overwrites cowork when explicitly passed in input (matches v2 form intent)', async () => {
+    queueResult({ rows: [{ raw: { id: 5, cowork: ['old'] } }], rowCount: 1 });
+    queueResult({ rowCount: 1 });
+
+    await updateJobInPostgres({
+      id: 5, name: 'x', dept: 'print', staff: 'mo',
+      cowork: ['new1', 'new2'],
+    });
+    const update = findCallContaining('UPDATE jobs SET');
+    const rawParam = update!.values.find(
+      (v) => typeof v === 'string' && v.startsWith('{'),
+    ) as string;
+    const merged = JSON.parse(rawParam);
+    expect(merged.cowork).toEqual(['new1', 'new2']);
+  });
+
+  it('handles null orderId as null (not coerced to 0)', async () => {
+    queueResult({ rows: [{ raw: { id: 7 } }], rowCount: 1 });
+    queueResult({ rowCount: 1 });
+
+    await updateJobInPostgres({
+      id: 7, name: 'standalone', dept: 'print', staff: 'mo',
+      orderId: '',  // form sends '' for "no parent order"
+    });
+    const update = findCallContaining('UPDATE jobs SET');
+    // First parameter slot in the SET list is order_id — it should be null
+    // (not 0 — bigint NULL is the orphan-job convention).
+    expect(update!.values[0]).toBeNull();
+  });
+
+  it('treats undefined raw column as empty object (defensive)', async () => {
+    queueResult({ rows: [{ raw: null }], rowCount: 1 });
+    queueResult({ rowCount: 1 });
+
+    const r = await updateJobInPostgres({
+      id: 11, name: 'recovery', dept: 'print', staff: 'mo',
+    });
+    expect(r).toEqual({ ok: true, found: true });
+    const update = findCallContaining('UPDATE jobs SET');
+    const rawParam = update!.values.find(
+      (v) => typeof v === 'string' && v.startsWith('{'),
+    ) as string;
+    const merged = JSON.parse(rawParam);
+    expect(merged.id).toBe(11);
+    expect(merged.name).toBe('recovery');
   });
 });
 
