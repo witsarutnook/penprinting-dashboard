@@ -300,6 +300,46 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Phase 2 mega-session (2026-05-11) — 11 actions migrated + tombstone infra + UX overhaul
+
+19+ commits + 5 Apps Script clasp pushes + 28→72 vitest tests in one ~17-hour day. End state: virtually all hot-path mutations on jobs + orders run Postgres-first.
+
+**P1 guardrails first** (`a7082f0` + `521292d`):
+- husky 9 pre-commit hook: tsc + lint + vitest blocks every commit. Verified teeth (bad TS → refused).
+- vitest 4.1 + 28 initial tests covering `lib/feature-flags`, `lib/postgres-write`, `lib/sync-from-sheet`. TDD red-phase verified retroactively for every Phase 2 migration after this point. Mock helper `tests/helpers/mock-postgres.ts` records both tagged-template and `.query()` invocations.
+
+**Phase 2 jobs hot-path** (`a52381e`, `fda396d`, `825857e`, `d1fb66e`, `1746946`) — 8 actions migrated. Each: new `*InPostgres` helper in [lib/postgres-write.ts](lib/postgres-write.ts) + flag in [lib/feature-flags.ts](lib/feature-flags.ts) + route phase2 branch + `appendAuditToPostgres` for instant `/board` history visibility. Heal cron `/api/cron/sync-to-sheet` pushes dirty rows to Sheet within ~5 min. New Apps Script actions per migration (setOrderRow, setShippedRow, setCancelledRow, deleteJobByIdRow), all idempotent upserts mirroring setJobRow/setTemplateRow pattern.
+
+**Tombstone pattern** (`825857e`) — new `jobs.phase2_deleted_at` column unblocks moveToShipped/cancelJob/bulkForward (operations that "move row out of jobs sheet"):
+- Phase 2 path tombstones the jobs row (`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = X`)
+- `/board` queries filter `phase2_deleted_at IS NULL` so the card disappears instantly
+- Heal cron `healJobsTombstone()` calls Apps Script `deleteJobByIdRow` per tombstone, then hard-DELETEs from Postgres on success
+- From-Sheet cron predicate updated to `phase2_dirty_at IS NULL AND phase2_deleted_at IS NULL` so tombstones aren't re-inserted by Sheet refresh
+
+**Phase 2 orders** (`b3d6515`, `010cf35`) — 4 actions: createOrder (hot path), updateOrder + cascade rename, promoteDraft, cancelOrder (cascade-cancel all jobs of order). `deleteOrder` + `deleteOrderCascade` intentionally skipped after verifying zero v2 UI callers — no need for order tombstone infrastructure.
+
+**Audit log full pipeline** (`48a3127`, `242db89`, `d19ba75`, `f524fbd` + Apps Script v5.10.12 push) — 5-layer fix discovered via /diagnose skill loop:
+- L1 audit.ts: extract `d.order.id` for createOrder action
+- L2 write.ts: `data.order.id = orderId` mutation after allocation so appendAudit sees it
+- L3 ★ sync-from-sheet bootstrap loop — was importing `loadAllWithAudit` (Postgres-first when READ_FROM_POSTGRES=1), refreshing Postgres FROM Postgres = no-op. Fixed via new `loadAllFromAppsScriptForSync()` that bypasses wrapper
+- L4 syncAuditLog: `TRUNCATE` → `DELETE WHERE source='sheet'` so Phase 2-written entries (source='postgres') survive cron passes
+- L5 `appendAuditToPostgres` helper — Phase 2 routes write audit direct to Postgres for instant `/board` history
+- Schema: `audit_log.source TEXT DEFAULT 'sheet'` via db-migrate (idempotent ALTER)
+
+**promote-draft Postgres-first** (`1f62d3b`) — new `loadOrderAndJobsForPromote()` helper in lib/api.ts bypasses Sheet stale-read so Phase 2 createOrder orders can be promoted immediately. Without this, draft promote failed with "ไม่พบใบสั่งงาน" for orders just created via Phase 2 (Sheet not yet healed).
+
+**UX combined button** (`e9c60a9` + `030dabf`) — edit-draft footer gets `"บันทึก + ส่งเข้าระบบ"` button (orange, next to "บันทึกการแก้ไข"). OrderForm `submit()` mode `'submitAndPromote'` chains `/api/orders/update` → `/api/orders/promote-draft` → toast + auto-redirect `/board`. `busy=true` stays throughout chain (no "เงียบ" flash). Removed the redundant amber-banner promote button — single source of truth.
+
+**UX spec restructured** (`e2094c0`) — `lib/spec-format.ts` builds WP-aligned section list (ขนาด & จำนวน / กระดาษ & สี / PLATE / งานบิล / เข้าเล่ม / เคลือบ-ปั๊ม / อื่นๆ / catch-all). Boolean flags render as `✓ <label>` chips. Size pairs with sizeUnit, qty with qtyUnit. Hidden header keys (name/customer/dateIn/dateDue/pin) no longer leak into spec body.
+
+**Diagnostic endpoints** — `/api/admin/diagnose-audit?id=&test=1` + `/api/admin/diagnose-order?id=` — surface Postgres flat + raw + Sheet state + validation pass/fail per source. Used to pin every bug today (audit-log stale, promote-draft Sheet 404, draft assignStaff empty).
+
+**Lessons captured** (memory + lessons in this file):
+- Phase 2 stale-read pattern recurring (any write-then-read path through Apps Script direct misses Postgres). Pattern fix: Postgres-first helpers with Apps Script fallback for Phase 1.7 stragglers.
+- /diagnose skill loop saved multiple bugs. Initial fixes were wrong direction; Phase 4 instrumentation (read Vercel route source) pinned actual cause.
+- Combined-action UX requires busy state spanning entire chain. `setBusy(false)` before chained fetch flickers button back to idle = "เงียบ" symptom.
+- Legacy `addJob` Apps Script double-bumps nextId (calls incrementConfig after getNextId already bumped) → id gaps in Sheet. Phase 2 addJob eliminates by skipping addJob Apps Script call.
+
 ### Phase 1.7 dual-write mirror + 2 bug fixes (2026-05-10 afternoon batch 2)
 
 User-reported bug after Phase 1 cutover: writes "เด้งกลับหมด" — every drag-drop forward / create order / move card appeared to fail. Root cause: 10-min Postgres mirror cron lag meant `loadAll()` Postgres-first returned the OLD snapshot after every write, the optimistic UI commit revealed pre-write state, and the user concluded the write didn't go through.

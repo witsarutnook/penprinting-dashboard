@@ -2,27 +2,44 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-11 (P1 + Phase 2 updateJob + addJob + audit-log full pipeline):** ✅
-> - **Audit log Phase 2 visibility** (`48a3127`, `242db89`, `d19ba75`, `f524fbd` + Apps Script v5.10.12 push) — multi-hour /diagnose-driven debug. 5 layers:
->   - L1 audit.ts: extract `d.order.id` for createOrder action — patched via clasp
->   - L2 write.ts: mutate `data.order.id = orderId` after allocation so audit sees it — patched via clasp (2nd push)
->   - L3 sync-from-sheet: ★ bootstrap loop — was importing `loadAllWithAudit` (Postgres-first when READ_FROM_POSTGRES=1), refreshing Postgres FROM Postgres = no-op. Fixed via new `loadAllFromAppsScriptForSync()` that bypasses wrapper
->   - L4 syncAuditLog: changed `TRUNCATE` to `DELETE WHERE source='sheet'` so Phase 2-written entries (source='postgres') survive cron passes
->   - L5 appendAuditToPostgres helper — Phase 2 routes (setCowork/updateJob/addJob) write audit direct to Postgres for immediate v2 history visibility
->   - Schema: added `source TEXT DEFAULT 'sheet'` column via db-migrate (idempotent ALTER)
->   - Diagnostic endpoint `/api/admin/diagnose-audit?id=<n>&test=1` exposes column list, row counts by source, Phase 2 flag state, optional INSERT test
-> - **Verified end-to-end** — created test order "ggg" (orderId 202605063), history tab shows `"สร้างใบสั่งงาน "ggg" (ลูกค้า: test)"` ✅
-> - **Note on Job #479 ("1111")** — created BEFORE fix, its createOrder audit row has empty target_id. Optional backfill via Sheet edit; otherwise its history will populate from next action onward.
-> - **Lesson** — /diagnose skill loop saved this. Initial v5.10.12 fix (audit.ts only) was wrong direction; only after Phase 4 instrumentation (read Vercel route source) revealed body.data.order.id was absent at appendAudit call time
-> - **P1.a** (`a7082f0`) — husky 9 pre-commit hook. Blocks commits that fail `tsc --noEmit && next lint && vitest run`. Verified hook teeth: bad TS → commit refused with husky error code.
-> - **P1.b** (`521292d`) — vitest 4.1 + 28 unit tests covering Phase 2 lib paths:
->   - `tests/feature-flags.test.ts` (8) — phase2WriteEnabled / phase2OwnsTable purity, literal "1" guard against accidental "true"/"yes"
->   - `tests/postgres-write.test.ts` (17) — setCowork dirty-mark contract, raw merge, mark dirty/clean SQL parameterization, addTemplate / deleteTemplate
->   - `tests/sync-from-sheet.test.ts` (3) — ★ regression guard for table-skip MUST call recordSyncMetaTouch (the 2026-05-10 setCowork bug). Verified teeth: removed touch line → test failed with message naming the memory file.
->   - Infra: `tests/helpers/mock-postgres.ts` shared SQL recorder (tagged + .query() shapes), `tests/shims/server-only.ts` no-op, `vitest.config.ts` native tsconfigPaths
-> - **Phase 2 updateJob** (`a52381e`) — third action migrated. Mirrors setCowork pattern (Postgres-first + dirty mark, drop inline Apps Script, heal cron pushes via setJobRow within 5 min). 7 new tests extending postgres-write.test.ts. ✅ Activated by คุณนุ๊ก at production (smoke test passed, db-migrate confirmed phase2_dirty_at column exists).
-> - **Phase 2 addJob** — fourth action migrated. INSERT + dirty mark. Keeps Apps Script `getNextId` for sequential id (Sheet UI / morning report stay readable) but skips `addJob` Apps Script call → eliminates legacy double-bump (legacy addJob bumps nextId AGAIN after getNextId, leaving id gaps). Heal cron pushes via setJobRow. 7 new tests. Default-off behind `WRITE_ADD_JOB_TO_POSTGRES`. ⏳ Pending activation.
-> - **Total**: 4 commits + 42/42 tests green. Pre-commit chain runs in ~250ms.
+> **Session 2026-05-11 ★ MEGA SESSION (P1 guardrails + Phase 2 jobs + orders + tombstone + audit pipeline + UX overhaul):** ✅
+>
+> **19+ commits + 5 Apps Script clasp pushes + 28→72 tests. Phase 2 migration covers virtually all hot-path mutations.**
+>
+> ### Phase 2 actions migrated (11 total — jobs + orders hot-path)
+> | # | Action | Commit | Status |
+> |---|---|---|---|
+> | 1 | setCowork (from 2026-05-10) | — | ✅ live (earlier) |
+> | 2 | updateJob | `a52381e` | ✅ live |
+> | 3 | addJob | `fda396d` | ✅ live |
+> | 4 | createOrder | `b3d6515` | ✅ live |
+> | 5 | reassignStaff (piggybacks updateJob flag) | `1746946` | ✅ live |
+> | 6 | moveToShipped | `825857e` | ⏳ pending activation |
+> | 7 | cancelJob | `825857e` | ⏳ pending activation |
+> | 8 | bulkForward + single forward | `d1fb66e` | ⏳ pending activation |
+> | 9 | updateOrder | `010cf35` | ⏳ pending activation |
+> | 10 | promoteDraft | `010cf35` | ⏳ pending activation |
+> | 11 | cancelOrder | `010cf35` | ⏳ pending activation |
+>
+> **Skipped (intentional — dead UI paths):** deleteJob (admin-only data-audit tool), deleteOrder + deleteOrderCascade (zero callers in v2 UI), addOrder (createOrder covers).
+>
+> ### Infrastructure built today
+> - **P1.a husky pre-commit** (`a7082f0`) — tsc + lint + vitest blocks every commit
+> - **P1.b vitest** (`521292d`) — 28 initial tests; grew to **72 tests by EOD**, TDD red-phase verified for every migration
+> - **Tombstone pattern** (`825857e`) — `jobs.phase2_deleted_at` + heal cron `healJobsTombstone` + from-Sheet cron predicate. Solves "move row out of jobs sheet" for moveToShipped/cancelJob/bulkForward
+> - **6 new Apps Script actions** (v5.10.12/v5.10.13/v5.10.14 — clasp-pushed) — setOrderRow, setShippedRow, setCancelledRow, deleteJobByIdRow, setJobRow patches, audit.ts createOrder targetId fix
+> - **Audit log pipeline** (`48a3127`, `242db89`, `d19ba75`, `f524fbd`) — schema source column + DELETE-not-TRUNCATE + appendAuditToPostgres + bootstrap loop fix in sync-from-sheet
+> - **UX spec restructured** (`e2094c0`) — WP-style sections + chip flags via `lib/spec-format.ts`
+> - **UX combined button** (`e9c60a9`) — "บันทึก + ส่งเข้าระบบ" on edit-draft footer: 1-click save+promote chain via `submitAndPromote` mode in OrderForm
+> - **promote-draft Postgres-first** (`1f62d3b`) — new `loadOrderAndJobsForPromote()` helper bypasses Sheet stale-read so Phase 2 createOrder orders can be promoted immediately
+> - **UX busy continuity** (`030dabf`) — kept `busy=true` through entire save→promote chain + added toast
+> - **Diagnostic endpoints** — `/api/admin/diagnose-audit?id=&test=1` + `/api/admin/diagnose-order?id=` for next-session debugging
+>
+> ### Lessons (memory)
+> - **/diagnose skill loop saved multiple bugs today** — initial fixes were wrong direction on audit-log + promote-draft until Phase 4 instrumentation pinned actual root cause
+> - **Phase 2 stale-read trap recurring** — any write path that LATER reads via Apps Script direct (`loadAllFresh`) will see stale data when Phase 2 wrote to Postgres only. Pattern fix: write Postgres-first helpers that read Postgres direct, fall back to Apps Script only for Phase 1.7 stragglers
+> - **Combined-action UX requires busy state spanning entire chain** — `setBusy(false)` before chained fetch flickers button back to idle ("เงียบ" symptom)
+> - **Pre-existing bug found by /diagnose** — Apps Script legacy `addJob` double-bumps nextId (calls incrementConfig AFTER getNextId already bumped) → id gaps. Phase 2 addJob path eliminates this
 >
 > **Session 2026-05-10 (afternoon batch 5 — Phase 2 setCowork sync_meta bug fix):** ✅
 > - **Symptom**: หลัง activate `WRITE_COWORK_TO_POSTGRES=1` + drop inline Apps Script sync, /board cards ไม่ render cowork chip ใหม่ ทั้งที่ toast success + Postgres state ถูกต้อง
@@ -385,31 +402,59 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ## ⚠️ Pending user actions (after 2026-05-11 session)
 
-### Phase 2 order lifecycle activation — 3 ขั้น (updateOrder + promoteDraft + cancelOrder)
+### 🎯 Phase 2 master activation runbook (all flags)
 
-✅ **Code deployed** 2026-05-11 — updateOrderInPostgres + promoteDraftInPostgres + cancelOrderInPostgres + 3 new flags
-✅ **Apps Script**: ใช้ setOrderRow + setJobRow + setCancelledRow + deleteJobByIdRow ที่ deploy แล้ว — **ไม่ต้อง push เพิ่ม**
-✅ **Schema**: ไม่ต้อง db-migrate ใหม่ — orders.phase2_dirty_at มีอยู่แล้ว, ไม่ต้องเพิ่ม phase2_deleted_at เพราะ deleteOrder/deleteOrderCascade ถูก skip (dead UI)
+**Status of prerequisites (one-time setup):**
 
-ขั้นตอน — Vercel env vars (Production + Preview + Development):
+| Prereq | State | How to verify |
+|---|---|---|
+| `phase2_dirty_at` columns (jobs/orders/shipped/cancelled) | ✅ live | `/api/admin/db-migrate` shows no ALTER in applied |
+| `phase2_deleted_at` column on jobs | ✅ live (Batch A, 2026-05-11) | Same — ALTER not in applied |
+| `audit_log.source` column | ✅ live | Same |
+| Apps Script v5.10.14 deployed | ⏳ verify | Editor → Deployments → version description should mention `setShippedRow / setCancelledRow / deleteJobByIdRow` |
 
-1. `WRITE_UPDATE_ORDER_TO_POSTGRES=1` — edit order (admin)
-2. `WRITE_PROMOTE_DRAFT_TO_POSTGRES=1` — promote draft → sent (admin+sales)
-3. `WRITE_CANCEL_ORDER_TO_POSTGRES=1` — soft-cancel order + cascade jobs (admin)
+**If Apps Script v5.10.14 NOT yet deployed:** Apps Script editor → Deploy → Manage deployments → **Edit existing → New version** (⚠️ ห้าม "New deployment"). Description: `v5.10.14 setShippedRow / setCancelledRow / deleteJobByIdRow + setOrderRow + audit createOrder fix`.
 
-→ Redeploy
+**Flag activation table — set ALL in Vercel env vars (Production + Preview + Development) → Redeploy once:**
 
-**Smoke test sequence:**
-- **updateOrder**: /orders → คลิก order → แก้ไข name/customer/dateDue → save → expect ~250ms latency + cascade rename if name changed (matching jobs updated) + audit instant
-- **promoteDraft**: /orders → คลิก draft order → "ส่งเข้าระบบ" → expect order flip status=sent + new Job appears on /board + audit `"ส่งใบสั่งงาน #X เข้าระบบ"`
-- **cancelOrder**: /orders → คลิก order → "ยกเลิกใบสั่ง" → expect cascade cancel all linked jobs (จาก Postgres SELECT WHERE order_id=X) + order flip status=cancelled + audit `"ยกเลิกใบสั่งงาน #X — cascade N งาน"`
-- **รอ 5 นาที → /api/cron/sync-to-sheet logs** → expect Phase 2 healing across all touched tables
+| Flag | Action covered | Activated? |
+|---|---|---|
+| `WRITE_COWORK_TO_POSTGRES=1` | setCowork | ✅ already on |
+| `WRITE_UPDATE_JOB_TO_POSTGRES=1` | updateJob + reassignStaff (piggyback) | ✅ already on |
+| `WRITE_CREATE_ORDER_TO_POSTGRES=1` | createOrder (hot path) | ✅ already on |
+| `WRITE_ADD_JOB_TO_POSTGRES=1` | addJob (data-audit modal) | ⏳ pending |
+| `WRITE_MOVE_TO_SHIPPED_TO_POSTGRES=1` | moveToShipped | ⏳ pending |
+| `WRITE_CANCEL_JOB_TO_POSTGRES=1` | cancelJob | ⏳ pending |
+| `WRITE_BULK_FORWARD_TO_POSTGRES=1` | bulkForward + single forward | ⏳ pending |
+| `WRITE_UPDATE_ORDER_TO_POSTGRES=1` | updateOrder + cascade rename | ⏳ pending |
+| `WRITE_PROMOTE_DRAFT_TO_POSTGRES=1` | promote draft → sent | ⏳ pending |
+| `WRITE_CANCEL_ORDER_TO_POSTGRES=1` | cancelOrder (cascade) | ⏳ pending |
+| `WRITE_TEMPLATES_TO_POSTGRES=1` | add/delete template | ⏳ pending (low priority) |
 
-**Rollback:** unset env var per action → redeploy → กลับ Apps Script-first path
+**Master smoke test (one pass covers most actions, ~10 min):**
+
+1. /orders/new → สร้าง order ทดสอบ → expect ~250ms create + history shows `"สร้างใบสั่งงาน..."` ทันที (createOrder)
+2. /board → คลิก ✏️ → เปลี่ยน dept/staff → save → expect card moves columns ทันที (updateJob)
+3. /board → drag-drop card ข้ามคอลัมน์ → expect ~250ms + per-job audit `"ส่งต่องาน..."` (bulkForward)
+4. /board → คลิก ship ✓ → expect card หายจาก Kanban ทันที + /shipped row ใหม่ (moveToShipped + tombstone)
+5. /board → คลิก ยกเลิก → ใส่เหตุผล → expect cancel + /cancelled row ใหม่ (cancelJob)
+6. /orders → คลิก order → แก้ไข name → save → expect cascade rename of attached jobs (updateOrder + cascadeRename)
+7. /orders → คลิก draft → กด "บันทึก + ส่งเข้าระบบ" → expect save+promote+/board redirect (promoteDraft 1-click)
+8. /orders → คลิก order → ยกเลิกใบสั่ง → expect cascade cancel jobs + order flips (cancelOrder)
+9. **รอ 5 นาที** → `/api/cron/sync-to-sheet` logs → expect `jobs_tombstone`, `shipped`, `cancelled`, `orders` healed
+10. **เปิด Google Sheet** → tabs ทั้งหมด → confirm rows sync ครบ
+
+**Rollback (per action or all):** Vercel → unset env var(s) → redeploy → กลับ legacy path. Heal cron runs regardless of flag → dirty rows still get pushed to Sheet eventually. Tombstoned rows: `phase2_deleted_at IS NOT NULL` → cron sends `deleteJobByIdRow` until cleared. Worst-case rollback window = ~5 min until heal cron converges.
+
+**Trade-off** (applies to all Phase 2 mutations):
+- Sheet stale ≤5 min after each mutation (heal cron interval). v2 reads from Postgres so user-facing always fresh.
+- Morning report 8 AM reads from Sheet — mutations between 7:55-8:00 may not appear in report that day. Low impact in practice.
 
 ---
 
-### Phase 2 bulkForward activation — 1 ขั้น (Apps Script ครอบคลุมแล้ว + tombstone infra พร้อม)
+### Legacy per-action activation details (superseded by master runbook above)
+
+#### Phase 2 bulkForward activation — 1 ขั้น (Apps Script ครอบคลุมแล้ว + tombstone infra พร้อม)
 
 ✅ **Code deployed** 2026-05-11 — `bulkForwardInPostgres` per-item best-effort + appendAuditToPostgres per item
 ✅ **Apps Script v5.10.14 พร้อม** (จาก Batch A — setJobRow + deleteJobByIdRow ครอบคลุม)
@@ -430,7 +475,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ---
 
-### Phase 2 Batch A activation — moveToShipped + cancelJob + reassignStaff (3 ขั้น)
+#### Phase 2 Batch A activation — moveToShipped + cancelJob + reassignStaff (3 ขั้น)
 
 ✅ **reassignStaff** — reuses WRITE_UPDATE_JOB_TO_POSTGRES flag (already active if updateJob is). No new env var needed.
 ✅ **Vercel code deployed** 2026-05-11 — moveToShipped/cancelJob helpers + tombstone infrastructure + heal cron extended
@@ -469,7 +514,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ---
 
-### Phase 2 createOrder activation — 2 ขั้น (Apps Script v5.10.13 deploy + env var)
+#### Phase 2 createOrder activation — 2 ขั้น (Apps Script v5.10.13 deploy + env var)
 
 ✅ **Vercel code deployed** 2026-05-11 — `createOrderInPostgres` + `findDuplicateOrdersInPostgres` + route Phase 2 branch + heal cron extended for orders
 ✅ **Apps Script v5.10.13 source pushed** via clasp 2026-05-11 — `setOrderRow` action added (mirror of setJobRow)
@@ -498,7 +543,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ---
 
-### Phase 2 addJob activation — เหลือ 1 ขั้น (db-migrate + Apps Script v5.10.11 พร้อมแล้ว)
+#### Phase 2 addJob activation — เหลือ 1 ขั้น (db-migrate + Apps Script v5.10.11 พร้อมแล้ว)
 
 ✅ **Code deployed** 2026-05-11 — `addJobToPostgres` + route flag-gated branch ready, dormant ถ้า flag off
 ✅ **Apps Script v5.10.11** ใช้ `setJobRow` (deploy แล้วจาก setCowork rollout)
@@ -521,7 +566,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ⚠️ **Trade-off** — Sheet stale ได้สูงสุด ~5 นาทีหลัง add (เหมือน updateJob). Morning report 8 AM อ่านจาก Sheet — ถ้าสร้างงาน 7:55-8:00 อาจตกหล่นรายงานวันนั้น
 
-### Phase 2 updateJob activation — เหลือ 1 ขั้น (ถ้า setCowork ยังไม่ activate ทำพร้อมกันเลย)
+#### Phase 2 updateJob activation — เหลือ 1 ขั้น (ถ้า setCowork ยังไม่ activate ทำพร้อมกันเลย)
 
 ✅ **Code deployed** 2026-05-11 (`a52381e`) — `updateJobInPostgres` + route flag-gated branch ready, dormant ถ้า flag off
 ✅ **Apps Script v5.10.11** ใช้ `setJobRow` ที่ deploy แล้ว (จาก setCowork rollout) — ไม่ต้อง push เพิ่ม
@@ -541,7 +586,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ⚠️ **Trade-off ที่ต้องรับ** — Sheet จะ stale ได้สูงสุด ~5 นาทีหลัง update (เหมือน setCowork). Morning report ที่ 8 AM อ่านจาก Sheet — ถ้า user แก้งาน 7:55-8:00 ก่อนรายงาน อาจเห็น dept/staff เก่า. /track ปกติเพราะ Postgres-first
 
-### Phase 2 setCowork activation (3 ขั้น — ต้องรัน db-migrate + push Apps Script + flag)
+#### Phase 2 setCowork activation (3 ขั้น — ต้องรัน db-migrate + push Apps Script + flag)
 
 ก่อน activate ต้องเตรียม schema + Apps Script ก่อน:
 
@@ -558,7 +603,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 **Rollback:** unset `WRITE_COWORK_TO_POSTGRES` → redeploy → กลับ Apps Script-first path. Existing dirty rows ใน Postgres ที่ยัง pending heal: heal cron ยังรันได้ (ไม่ขึ้นกับ flag) → จะค่อยๆ heal จนเสร็จภายในไม่กี่ cron cycles
 
-### Phase 2 templates activation — เหลือ 1 ขั้น
+#### Phase 2 templates activation — เหลือ 1 ขั้น
 
 ✅ **Apps Script v5.10.10 deployed** 2026-05-10 — `setTemplateRow` action live (dormant ถ้า flag off)
 
