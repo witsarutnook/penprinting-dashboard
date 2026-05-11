@@ -385,6 +385,27 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ## ⚠️ Pending user actions (after 2026-05-11 session)
 
+### Phase 2 bulkForward activation — 1 ขั้น (Apps Script ครอบคลุมแล้ว + tombstone infra พร้อม)
+
+✅ **Code deployed** 2026-05-11 — `bulkForwardInPostgres` per-item best-effort + appendAuditToPostgres per item
+✅ **Apps Script v5.10.14 พร้อม** (จาก Batch A — setJobRow + deleteJobByIdRow ครอบคลุม)
+✅ **Tombstone infrastructure** active
+
+ขั้นตอน:
+1. **Vercel env var** — Add `WRITE_BULK_FORWARD_TO_POSTGRES=1` (Production + Preview + Development) → redeploy
+2. **Smoke test** drag-drop /board:
+   - Drag job → drop ที่ target column (เช่น graphic → print) → expect ~250ms latency
+   - **เปิด /board → คลิก new job → tab ประวัติ** → expect `"ส่งต่องาน "..." id=X→Y"` ทันที
+   - **Multi-select bulk forward** → drag-drop 2-5 jobs at once → ทุก card move + audit per item
+   - **รอ 5 นาที → cron logs** → expect:
+     - `jobs: candidates ≥N` (new dirty rows)
+     - `jobs_tombstone: candidates ≥N` (old tombstones cleared)
+3. **Failure path** — drag job ที่ Phase 1.7 mirror ยังไม่มี (rare) → expect `error: "Job not in Postgres mirror"` → user retries หรือ wait cron
+
+**Rollback:** unset `WRITE_BULK_FORWARD_TO_POSTGRES` → redeploy → กลับ Apps Script bulkForward (mirror writes via lib/api.ts post() ปกติ)
+
+---
+
 ### Phase 2 Batch A activation — moveToShipped + cancelJob + reassignStaff (3 ขั้น)
 
 ✅ **reassignStaff** — reuses WRITE_UPDATE_JOB_TO_POSTGRES flag (already active if updateJob is). No new env var needed.

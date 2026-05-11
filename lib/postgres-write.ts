@@ -616,6 +616,124 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
   return { ok: true, found: true };
 }
 
+// ─── bulkForward (Phase 2 — multi-row tombstone + insert) ─────────
+
+export interface BulkForwardItem {
+  oldId: number;
+  newJob: {
+    id: number;
+    name: string;
+    date?: string | null;
+    dateIn?: string | null;
+    staff: string;
+    dept: string;
+    status?: string;
+    orderId?: number | string | null;
+  };
+}
+
+export interface BulkForwardResult {
+  ok: true;
+  succeeded: Array<{ oldId: number; newId: number; name: string }>;
+  failed: Array<{ oldId: number; name: string; error: string }>;
+}
+
+/** Phase 2 multi-row forward. For each item:
+ *  1. Verify oldId exists in Postgres (not tombstoned). If missing, add to
+ *     failed[] — caller can fall back to legacy bulkForward Apps Script for
+ *     just those items.
+ *  2. INSERT newJob (with phase2_dirty_at=NOW(), ON CONFLICT DO NOTHING)
+ *  3. Tombstone oldJob (UPDATE jobs SET phase2_deleted_at=NOW())
+ *
+ *  Best-effort per item — one item's failure doesn't block the others.
+ *  Mirrors the Apps Script `bulkForward` semantic from write.ts. */
+export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<BulkForwardResult> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('bulkForward', 'POSTGRES_URL env var missing');
+  }
+  const succeeded: BulkForwardResult['succeeded'] = [];
+  const failed: BulkForwardResult['failed'] = [];
+
+  for (const item of items) {
+    const oldIdNum = Number(item.oldId);
+    const newIdNum = Number(item.newJob.id);
+    const name = String(item.newJob.name || '').trim();
+
+    if (!Number.isFinite(oldIdNum) || oldIdNum <= 0) {
+      failed.push({ oldId: item.oldId, name, error: 'Invalid oldId' });
+      continue;
+    }
+    if (!Number.isFinite(newIdNum) || newIdNum <= 0) {
+      failed.push({ oldId: oldIdNum, name, error: 'Invalid newId' });
+      continue;
+    }
+    if (!name) {
+      failed.push({ oldId: oldIdNum, name: '', error: 'Missing job name' });
+      continue;
+    }
+
+    try {
+      // Row-missing check — Phase 1.7 straggler not yet in mirror.
+      const cur = await sql<{ id: number }>`
+        SELECT id FROM jobs
+        WHERE id = ${oldIdNum}::bigint AND phase2_deleted_at IS NULL
+        LIMIT 1
+      `;
+      if (cur.rows.length === 0) {
+        failed.push({
+          oldId: oldIdNum,
+          name,
+          error: 'Job not in Postgres mirror — wait for sync or retry',
+        });
+        continue;
+      }
+
+      // Build new job row.
+      const orderIdRaw = item.newJob.orderId == null || item.newJob.orderId === ''
+        ? null
+        : Number(item.newJob.orderId);
+      const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
+      const date = item.newJob.date != null ? String(item.newJob.date) : null;
+      const dateIn = item.newJob.dateIn != null ? String(item.newJob.dateIn) : null;
+      const staff = String(item.newJob.staff);
+      const dept = String(item.newJob.dept);
+      const status = String(item.newJob.status || 'pending');
+
+      const newRaw = {
+        id: newIdNum,
+        name,
+        date,
+        dateIn,
+        dept,
+        staff,
+        status,
+        orderId,
+      };
+      const newRawJson = JSON.stringify(newRaw);
+
+      // INSERT new (with dirty mark) + tombstone old. Two statements, not
+      // transactional — retries hit ON CONFLICT DO NOTHING + the tombstone
+      // UPDATE is idempotent (NOW() override is fine).
+      await sql`
+        INSERT INTO jobs
+          (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+        VALUES
+          (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
+           ${staff}, ${dept}, ${status}, ${null}::jsonb, ${newRawJson}::jsonb, NOW())
+        ON CONFLICT (id) DO NOTHING
+      `;
+      await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${oldIdNum}::bigint`;
+
+      succeeded.push({ oldId: oldIdNum, newId: newIdNum, name });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failed.push({ oldId: oldIdNum, name, error: msg });
+    }
+  }
+
+  return { ok: true, succeeded, failed };
+}
+
 // ─── Phase 2 audit ───────────────────────────────────────────────
 
 export interface AuditInput {

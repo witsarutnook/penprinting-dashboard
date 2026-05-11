@@ -18,6 +18,7 @@ import {
   findDuplicateOrdersInPostgres,
   moveToShippedInPostgres,
   cancelJobInPostgres,
+  bulkForwardInPostgres,
   appendAuditToPostgres,
   markRowClean,
   markRowDirty,
@@ -575,6 +576,62 @@ describe('cancelJobInPostgres', () => {
 
     const tombstone = findCallContaining('UPDATE jobs SET phase2_deleted_at');
     expect(tombstone).toBeDefined();
+  });
+});
+
+describe('bulkForwardInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('row-missing item goes to failed[] — does NOT block other items', async () => {
+    // Item 1: row exists (SELECT returns row, then INSERT + UPDATE)
+    queueResult({ rows: [{ id: 100 }], rowCount: 1 });
+    queueResult({ rowCount: 1 }); // INSERT new
+    queueResult({ rowCount: 1 }); // UPDATE old (tombstone)
+    // Item 2: row missing (SELECT empty)
+    queueResult({ rows: [], rowCount: 0 });
+
+    const r = await bulkForwardInPostgres([
+      { oldId: 100, newJob: { id: 500, name: 'job-A', dept: 'print', staff: 'mo' } },
+      { oldId: 999, newJob: { id: 501, name: 'job-B', dept: 'print', staff: 'mo' } },
+    ]);
+    expect(r.succeeded).toHaveLength(1);
+    expect(r.succeeded[0]).toMatchObject({ oldId: 100, newId: 500, name: 'job-A' });
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].oldId).toBe(999);
+    expect(r.failed[0].error).toMatch(/not in Postgres mirror/i);
+  });
+
+  it('successful item INSERTs new with dirty mark + tombstones old', async () => {
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 });
+    queueResult({ rowCount: 1 });
+    queueResult({ rowCount: 1 });
+
+    await bulkForwardInPostgres([
+      { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top', orderId: 202605061 } },
+    ]);
+
+    const inserts = callsContaining('INSERT INTO jobs');
+    expect(inserts, 'must INSERT new jobs row').toHaveLength(1);
+    expect(inserts[0].text, 'new job must mark dirty').toContain('phase2_dirty_at');
+    expect(inserts[0].text, 'INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
+
+    const tombstones = callsContaining('UPDATE jobs SET phase2_deleted_at');
+    expect(tombstones, 'old job must be tombstoned').toHaveLength(1);
+  });
+
+  it('per-item invalid input goes to failed without throwing', async () => {
+    const r = await bulkForwardInPostgres([
+      { oldId: 0, newJob: { id: 500, name: 'x', dept: 'print', staff: 'mo' } },
+      { oldId: 200, newJob: { id: 0, name: 'x', dept: 'print', staff: 'mo' } },
+      { oldId: 200, newJob: { id: 501, name: '', dept: 'print', staff: 'mo' } },
+    ]);
+    expect(r.succeeded).toHaveLength(0);
+    expect(r.failed).toHaveLength(3);
+    expect(r.failed[0].error).toMatch(/Invalid oldId/);
+    expect(r.failed[1].error).toMatch(/Invalid newId/);
+    expect(r.failed[2].error).toMatch(/Missing job name/);
+    // No SQL ran for invalid items
+    expect(sqlCalls).toHaveLength(0);
   });
 });
 

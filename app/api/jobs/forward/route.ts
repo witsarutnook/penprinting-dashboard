@@ -3,6 +3,8 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { bulkForwardInPostgres, appendAuditToPostgres } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -102,6 +104,31 @@ export async function POST(req: Request) {
     // Cowork is intentionally cleared on forward — matches WP behavior
     // (submitForward at production-monitoring.js:1267 omits cowork).
   };
+
+  // Single-item forward — reuses bulkForward semantics. Phase 2 path uses
+  // bulkForwardInPostgres for consistency with /api/jobs/bulk-forward.
+  if (phase2WriteEnabled('bulkForward')) {
+    const r = await bulkForwardInPostgres([{ oldId, newJob }]);
+    if (r.failed.length > 0) {
+      return NextResponse.json({ error: r.failed[0].error }, { status: 502 });
+    }
+    const s = r.succeeded[0];
+    if (!s) {
+      return NextResponse.json({ error: 'ส่งต่อไม่สำเร็จ — no succeeded item' }, { status: 502 });
+    }
+    await appendAuditToPostgres({
+      action: 'bulkForward',
+      role: session.role,
+      user: session.user,
+      targetId: s.newId,
+      summary: `ส่งต่องาน "${s.name}" id=${s.oldId}→${s.newId}`,
+    });
+    try {
+      const { revalidatePath } = await import('next/cache');
+      revalidatePath('/board');
+    } catch { /* ignore */ }
+    return NextResponse.json({ ok: true, newId: s.newId });
+  }
 
   try {
     const result = await post<{

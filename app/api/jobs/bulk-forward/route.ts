@@ -3,6 +3,8 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { bulkForwardInPostgres, appendAuditToPostgres, type BulkForwardItem } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -142,6 +144,46 @@ export async function POST(req: Request) {
       // Cowork cleared on forward — matches WP submitForward
     },
   }));
+
+  if (phase2WriteEnabled('bulkForward')) {
+    // Convert buildItems (Record<string, unknown> shape compatible with Apps
+    // Script bulkForward) into the strict BulkForwardItem[] the helper needs.
+    const phase2Items: BulkForwardItem[] = cleaned.map((it, idx) => ({
+      oldId: it.id,
+      newJob: {
+        id: allocatedIds[idx],
+        name: String(it.src.name || ''),
+        date: toISODate(String(it.src.date || '')) || null,
+        dateIn: toISODate(String(it.src.dateIn || '')) || null,
+        staff: it.targetStaff,
+        dept: it.targetDept,
+        status: 'pending',
+        orderId: it.src.orderId ? Number(it.src.orderId) : null,
+      },
+    }));
+    const r = await bulkForwardInPostgres(phase2Items);
+    // Audit per successful item — gives each new job's history tab its own
+    // "ส่งต่องาน" entry (better than Apps Script's single batch entry).
+    for (const s of r.succeeded) {
+      await appendAuditToPostgres({
+        action: 'bulkForward',
+        role: session.role,
+        user: session.user,
+        targetId: s.newId,
+        summary: `ส่งต่องาน "${s.name}" id=${s.oldId}→${s.newId}`,
+      });
+    }
+    try {
+      const { revalidatePath } = await import('next/cache');
+      revalidatePath('/board');
+    } catch { /* ignore */ }
+    return NextResponse.json({
+      ok: true,
+      processed: r.succeeded.length + r.failed.length,
+      succeeded: r.succeeded,
+      failed: r.failed,
+    });
+  }
 
   try {
     const result = await post<{

@@ -62,6 +62,10 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // cancelJob — seventh action (2026-05-11). Atomic jobs→cancelled. Same
   // pattern as moveToShipped, just different target table.
   cancelJob:      'WRITE_CANCEL_JOB_TO_POSTGRES',
+  // bulkForward — eighth action (2026-05-11). Drag-drop forward (1-25 jobs).
+  // Tombstone old + INSERT new per item, per-item best-effort. Reuses
+  // getNextIds Apps Script for newId allocation. Hot path for /board.
+  bulkForward:    'WRITE_BULK_FORWARD_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first
