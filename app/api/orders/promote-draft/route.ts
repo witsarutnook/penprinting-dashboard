@@ -93,7 +93,12 @@ export async function POST(req: Request) {
   }
   if (missing.length > 0) {
     return NextResponse.json(
-      { error: `แบบร่างยังไม่ครบ — ขาด: ${missing.join(', ')}. โปรดแก้ไขใบสั่งก่อน` },
+      {
+        error: `แบบร่างยังไม่ครบ — ขาด: ${missing.join(', ')}.` +
+          ` ⚠️ หากเพิ่งแก้ไขฟอร์ม โปรดกด "บันทึก" ก่อน "ส่งเข้าระบบ"` +
+          ` (การกรอกข้อมูลในฟอร์มยังไม่ได้บันทึกจนกว่าจะกดปุ่ม "บันทึก")`,
+        missing,
+      },
       { status: 400 },
     );
   }

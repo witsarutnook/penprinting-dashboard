@@ -81,7 +81,7 @@ export function OrderEditClient({
           <div className="flex-grow min-w-0">
             <h2 className="text-sm font-semibold text-amber-900">ใบสั่งนี้ยังเป็นแบบร่าง</h2>
             <p className="text-xs text-amber-800 mt-0.5">
-              บันทึกการแก้ไขเพื่ออัปเดตข้อมูลในแบบร่าง — หรือกด &quot;ส่งเข้าระบบ&quot; เพื่อสร้าง Job เข้าสายผลิต
+              <span className="font-semibold">ขั้นตอน:</span> กรอก ผู้รับงาน (กราฟิก/พิมพ์) ในฟอร์มด้านล่าง → กด <b>&quot;บันทึก&quot;</b> ในฟอร์ม → แล้วจึงกด <b>&quot;ส่งเข้าระบบ&quot;</b> เพื่อสร้าง Job เข้าสายผลิต
             </p>
           </div>
           <button
