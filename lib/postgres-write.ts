@@ -476,6 +476,125 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
   return { ok: true, orderId: orderIdNum, jobId: jobIdOut };
 }
 
+// ─── updateOrder (single UPDATE on orders) ──────────────────────
+
+export interface UpdateOrderInput {
+  id: number;
+  name?: string;
+  customer?: string;
+  dateIn?: string | null;
+  dateDue?: string | null;
+  price?: string | number | null;
+  assignDept?: string;
+  assignStaff?: string;
+  orderer?: string;
+  status?: string;
+  details?: Record<string, unknown> | null;
+  rawData?: Record<string, unknown> | null;
+}
+
+/** Phase 2 — single UPDATE on orders with merge-into-raw + dirty mark.
+ *  Mirrors updateJobInPostgres for the orders table. Returns found:false
+ *  for row-missing fallback to legacy. */
+export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ ok: true; found: boolean }> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('updateOrder', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('updateOrder', 'Invalid order id');
+  }
+
+  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM orders WHERE id = ${idNum}::bigint LIMIT 1`;
+  if (cur.rows.length === 0) {
+    return { ok: true, found: false };
+  }
+  const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+
+  const merged: AnyRow = { ...oldRaw, id: idNum };
+  if (input.name !== undefined) merged.name = String(input.name);
+  if (input.customer !== undefined) merged.customer = String(input.customer);
+  if (input.dateIn !== undefined) merged.dateIn = input.dateIn == null ? null : String(input.dateIn);
+  if (input.dateDue !== undefined) merged.dateDue = input.dateDue == null ? null : String(input.dateDue);
+  if (input.price !== undefined) merged.price = input.price == null ? null : String(input.price);
+  if (input.assignDept !== undefined) merged.assignDept = String(input.assignDept);
+  if (input.assignStaff !== undefined) merged.assignStaff = String(input.assignStaff);
+  if (input.orderer !== undefined) merged.orderer = String(input.orderer);
+  if (input.status !== undefined) merged.status = String(input.status);
+  if (input.details !== undefined) merged.details = input.details;
+  if (input.rawData !== undefined) merged.rawData = input.rawData;
+
+  const name = String(merged.name || '');
+  const customer = merged.customer != null ? String(merged.customer) : null;
+  const dateIn = merged.dateIn != null ? String(merged.dateIn) : null;
+  const dateDue = merged.dateDue != null ? String(merged.dateDue) : null;
+  const price = merged.price != null ? String(merged.price) : null;
+  const assignDept = merged.assignDept != null ? String(merged.assignDept) : null;
+  const assignStaff = merged.assignStaff != null ? String(merged.assignStaff) : null;
+  const orderer = merged.orderer != null ? String(merged.orderer) : null;
+  const status = merged.status != null ? String(merged.status) : null;
+  const detailsJson = merged.details != null ? JSON.stringify(merged.details) : null;
+  const rawDataJson = merged.rawData != null ? JSON.stringify(merged.rawData) : null;
+  const newRawJson = JSON.stringify(merged);
+
+  await sql`
+    UPDATE orders SET
+      name = ${name},
+      customer = ${customer},
+      date_in = ${dateIn},
+      date_due = ${dateDue},
+      price = ${price},
+      assign_dept = ${assignDept},
+      assign_staff = ${assignStaff},
+      orderer = ${orderer},
+      status = ${status},
+      details = ${detailsJson}::jsonb,
+      raw_data = ${rawDataJson}::jsonb,
+      raw = ${newRawJson}::jsonb,
+      phase2_dirty_at = NOW()
+    WHERE id = ${idNum}::bigint
+  `;
+  return { ok: true, found: true };
+}
+
+/** Cascade rename — update matching jobs when order name/dateDue changes.
+ *  Returns { cascaded, failedJobIds } matching legacy route behavior. */
+export async function cascadeRenameJobsInPostgres(
+  orderId: number,
+  oldName: string,
+  newName: string,
+  newDateDue: string | null,
+  applyNameChange: boolean,
+  applyDateChange: boolean,
+): Promise<{ cascaded: number; failedJobIds: number[] }> {
+  if (!isPostgresConfigured() || (!applyNameChange && !applyDateChange)) {
+    return { cascaded: 0, failedJobIds: [] };
+  }
+  // Match jobs by orderId + oldName (matches legacy filter in route.ts).
+  const matching = await sql<{ id: number; raw: AnyRow | null }>`
+    SELECT id, raw FROM jobs
+    WHERE order_id = ${orderId}::bigint
+      AND name = ${oldName}
+      AND phase2_deleted_at IS NULL
+  `;
+
+  let cascaded = 0;
+  const failedJobIds: number[] = [];
+  for (const row of matching.rows) {
+    try {
+      await updateJobInPostgres({
+        id: row.id,
+        name: applyNameChange ? newName : undefined,
+        date: applyDateChange ? newDateDue : undefined,
+      });
+      cascaded++;
+    } catch {
+      failedJobIds.push(row.id);
+    }
+  }
+  return { cascaded, failedJobIds };
+}
+
 // ─── moveToShipped / cancelJob (atomic 2-table — Phase 2 tombstone) ──
 
 export interface MoveToShippedInput {
@@ -614,6 +733,168 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
   await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
 
   return { ok: true, found: true };
+}
+
+// ─── promoteDraft (atomic draft→sent + addJob) ────────────────────
+
+export interface PromoteDraftInput {
+  /** Pre-allocated job id from Apps Script getNextId. */
+  jobId: number;
+  orderId: number;
+  job: {
+    name: string;
+    date?: string | null;
+    dateIn?: string | null;
+    staff: string;
+    dept: string;
+  };
+}
+
+/** Phase 2 promoteDraft — INSERT new job + flip orders.status='sent'.
+ *  Verifies order exists + status='draft' before mutating. */
+export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<{
+  ok: true;
+  orderId: number;
+  jobId: number;
+  found: boolean;
+}> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('promoteDraft', 'POSTGRES_URL env var missing');
+  }
+  const orderIdNum = Number(input.orderId);
+  const jobIdNum = Number(input.jobId);
+  if (!Number.isFinite(orderIdNum) || orderIdNum <= 0) {
+    throw new PostgresWriteError('promoteDraft', 'Invalid orderId');
+  }
+  if (!Number.isFinite(jobIdNum) || jobIdNum <= 0) {
+    throw new PostgresWriteError('promoteDraft', 'Invalid jobId');
+  }
+
+  // Verify order exists (don't require status=draft — let caller decide;
+  // matches Apps Script lenient semantics).
+  const cur = await sql<{ raw: AnyRow | null; status: string | null }>`
+    SELECT raw, status FROM orders WHERE id = ${orderIdNum}::bigint LIMIT 1
+  `;
+  if (cur.rows.length === 0) {
+    return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: false };
+  }
+  const oldOrderRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+
+  const j = input.job;
+  const jName = String(j.name || '').trim();
+  if (!jName) throw new PostgresWriteError('promoteDraft', 'Missing job name');
+  const jDate = j.date != null ? String(j.date) : null;
+  const jDateIn = j.dateIn != null ? String(j.dateIn) : null;
+  const jStaff = String(j.staff);
+  const jDept = String(j.dept);
+
+  const jobRaw = {
+    id: jobIdNum,
+    name: jName,
+    date: jDate,
+    dateIn: jDateIn,
+    staff: jStaff,
+    dept: jDept,
+    status: 'pending',
+    orderId: orderIdNum,
+  };
+  const jobRawJson = JSON.stringify(jobRaw);
+
+  await sql`
+    INSERT INTO jobs
+      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+    VALUES
+      (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
+       ${jStaff}, ${jDept}, 'pending', ${null}::jsonb, ${jobRawJson}::jsonb, NOW())
+    ON CONFLICT (id) DO NOTHING
+  `;
+
+  // Flip order status draft→sent + mark dirty.
+  const newOrderRaw = { ...oldOrderRaw, status: 'sent' };
+  const newOrderRawJson = JSON.stringify(newOrderRaw);
+  await sql`
+    UPDATE orders SET
+      status = 'sent',
+      raw = ${newOrderRawJson}::jsonb,
+      phase2_dirty_at = NOW()
+    WHERE id = ${orderIdNum}::bigint
+  `;
+
+  return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: true };
+}
+
+// ─── cancelOrder (cascade-cancel jobs + flip order status) ────────
+
+export interface CancelOrderInput {
+  orderId: number;
+  reason: string;
+  cancelledBy: string;
+  cancelledAt: string;
+}
+
+/** Phase 2 cancelOrder — for every active job of the order:
+ *  INSERT cancelled (with phase2_dirty_at) + tombstone job (phase2_deleted_at).
+ *  Then flip orders.status='cancelled' + dirty mark.
+ *  Returns { cancelledJobs: [id...] } so caller can report cascade count. */
+export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
+  ok: true;
+  orderId: number;
+  cancelledJobs: number[];
+  found: boolean;
+}> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('cancelOrder', 'POSTGRES_URL env var missing');
+  }
+  const orderIdNum = Number(input.orderId);
+  if (!Number.isFinite(orderIdNum) || orderIdNum <= 0) {
+    throw new PostgresWriteError('cancelOrder', 'Invalid orderId');
+  }
+
+  // Verify order exists.
+  const orderCur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM orders WHERE id = ${orderIdNum}::bigint LIMIT 1`;
+  if (orderCur.rows.length === 0) {
+    return { ok: true, orderId: orderIdNum, cancelledJobs: [], found: false };
+  }
+  const oldOrderRaw = (orderCur.rows[0]?.raw && typeof orderCur.rows[0].raw === 'object') ? orderCur.rows[0].raw : {};
+
+  // Find all active (non-tombstoned) jobs for this order.
+  const jobs = await sql<{ id: number; raw: AnyRow | null }>`
+    SELECT id, raw FROM jobs
+    WHERE order_id = ${orderIdNum}::bigint AND phase2_deleted_at IS NULL
+  `;
+
+  const cancelledJobIds: number[] = [];
+  for (const row of jobs.rows) {
+    const jraw = (row.raw && typeof row.raw === 'object') ? row.raw : {};
+    try {
+      await cancelJobInPostgres({
+        id: row.id,
+        name: String(jraw.name || ''),
+        dept: jraw.dept != null ? String(jraw.dept) : undefined,
+        staff: jraw.staff != null ? String(jraw.staff) : undefined,
+        reason: input.reason,
+        cancelledBy: input.cancelledBy,
+        cancelledAt: input.cancelledAt,
+        orderId: orderIdNum,
+      });
+      cancelledJobIds.push(row.id);
+    } catch {
+      // Continue — best-effort cascade. Caller surfaces count via return.
+    }
+  }
+
+  // Flip order status to cancelled.
+  const newOrderRaw = { ...oldOrderRaw, status: 'cancelled' };
+  const newOrderRawJson = JSON.stringify(newOrderRaw);
+  await sql`
+    UPDATE orders SET
+      status = 'cancelled',
+      raw = ${newOrderRawJson}::jsonb,
+      phase2_dirty_at = NOW()
+    WHERE id = ${orderIdNum}::bigint
+  `;
+
+  return { ok: true, orderId: orderIdNum, cancelledJobs: cancelledJobIds, found: true };
 }
 
 // ─── bulkForward (Phase 2 — multi-row tombstone + insert) ─────────

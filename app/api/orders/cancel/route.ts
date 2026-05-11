@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { allSettledLimit } from '@/lib/concurrency';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import {
+  cancelOrderInPostgres,
+  appendAuditToPostgres,
+  PostgresWriteError,
+} from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -36,6 +42,41 @@ export async function POST(req: Request) {
   const id = Number(body.id);
   if (!id || !Number.isFinite(id)) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
+  }
+
+  // ── Phase 2 path ────────────────────────────────────────────────
+  // Atomic Postgres-side cancel: tombstone all active jobs + INSERT cancelled
+  // rows + flip order status. No Apps Script call. Heal cron pushes the
+  // cancelled rows + jobs deletions to Sheet within 5 min.
+  if (phase2WriteEnabled('cancelOrder')) {
+    try {
+      const r = await cancelOrderInPostgres({
+        orderId: id,
+        reason: `ใบสั่งงาน #${id} ถูกยกเลิก (cascade)`,
+        cancelledBy: `${session.role}:${session.user}`,
+        cancelledAt: new Date().toISOString(),
+      });
+      if (!r.found) {
+        return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
+      }
+      await appendAuditToPostgres({
+        action: 'cancelOrder',
+        role: session.role,
+        user: session.user,
+        targetId: id,
+        summary: `ยกเลิกใบสั่งงาน #${id} — cascade ${r.cancelledJobs.length} งาน`,
+      });
+      try {
+        const { revalidatePath } = await import('next/cache');
+        revalidatePath('/board');
+        revalidatePath('/orders');
+        revalidatePath('/cancelled');
+      } catch { /* ignore */ }
+      return NextResponse.json({ ok: true, cancelledJobs: r.cancelledJobs });
+    } catch (err) {
+      const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
   }
 
   // ── Fast path: atomic Apps Script action (v5.10.4+) ──

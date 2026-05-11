@@ -5,6 +5,13 @@ import { type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 import type { Job } from '@/lib/types';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import {
+  updateOrderInPostgres,
+  cascadeRenameJobsInPostgres,
+  appendAuditToPostgres,
+  PostgresWriteError,
+} from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -171,6 +178,50 @@ export async function POST(req: Request) {
     orderId: id,
     cowork: j.cowork ?? undefined,
   }));
+
+  // ── Phase 2 path ────────────────────────────────────────────────
+  if (phase2WriteEnabled('updateOrder')) {
+    let found = false;
+    try {
+      const r = await updateOrderInPostgres(orderPayload);
+      found = r.found;
+    } catch (err) {
+      const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+    if (!found) {
+      // Row not in Postgres yet — fall through to legacy below.
+    } else {
+      const cascade = await cascadeRenameJobsInPostgres(
+        id,
+        oldName,
+        name,
+        dateDue || null,
+        nameChanged,
+        dueChanged,
+      );
+      await appendAuditToPostgres({
+        action: 'updateOrder',
+        role: session.role,
+        user: session.user,
+        targetId: id,
+        data: { name, customer },
+      });
+      try {
+        const { revalidatePath } = await import('next/cache');
+        revalidatePath('/board');
+        revalidatePath('/orders');
+      } catch { /* ignore */ }
+      return NextResponse.json({
+        ok: true,
+        orderId: id,
+        cascaded: cascade.cascaded,
+        cascadeFailed: cascade.failedJobIds,
+        nameChanged,
+        dueChanged,
+      });
+    }
+  }
 
   const orderTask = post<{ ok?: boolean; error?: string }>('updateOrder', { data: orderPayload });
   const cascadeTasks = cascadePayloads.map((data) =>

@@ -66,6 +66,18 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // Tombstone old + INSERT new per item, per-item best-effort. Reuses
   // getNextIds Apps Script for newId allocation. Hot path for /board.
   bulkForward:    'WRITE_BULK_FORWARD_TO_POSTGRES',
+  // updateOrder — ninth action (2026-05-11). Single UPDATE orders + cascade
+  // rename jobs (if name/dateDue change). Uses cascadeRenameJobsInPostgres.
+  updateOrder:    'WRITE_UPDATE_ORDER_TO_POSTGRES',
+  // promoteDraft — tenth action (2026-05-11). Atomic draft→sent: addJob
+  // (Postgres INSERT) + UPDATE orders SET status='sent'. Uses Apps Script
+  // getNextId for sequential job id.
+  promoteDraft:   'WRITE_PROMOTE_DRAFT_TO_POSTGRES',
+  // cancelOrder — eleventh action (2026-05-11). Cascade-cancel all jobs
+  // of an order (tombstone each, INSERT each into cancelled) + flip order
+  // status='cancelled'. No order tombstone (cancelled orders stay listed
+  // in /orders with status='cancelled' — admin can re-open if needed).
+  cancelOrder:    'WRITE_CANCEL_ORDER_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

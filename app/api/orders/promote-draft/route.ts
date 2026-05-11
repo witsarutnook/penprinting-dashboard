@@ -3,6 +3,12 @@ import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import {
+  promoteDraftInPostgres,
+  appendAuditToPostgres,
+  PostgresWriteError,
+} from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -98,6 +104,50 @@ export async function POST(req: Request) {
   // promote-draft button would create duplicate jobs.
   const existingJob = snap.jobs.find((j) => Number(j.orderId) === id);
   let jobId: number;
+
+  // ── Phase 2 path ──────────────────────────────────────────────
+  if (phase2WriteEnabled('promoteDraft') && !existingJob) {
+    if (speculativeJobIdErr || speculativeJobId == null) {
+      return NextResponse.json(
+        { error: `ขอ job id ไม่สำเร็จ — ${speculativeJobIdErr || 'unknown'}` },
+        { status: 502 },
+      );
+    }
+    try {
+      const r = await promoteDraftInPostgres({
+        jobId: speculativeJobId,
+        orderId: id,
+        job: {
+          name: order.name,
+          date: dateDue,
+          dateIn: dateIn || dateDue,
+          staff: assignStaff,
+          dept: assignDept,
+        },
+      });
+      if (!r.found) {
+        // Order not in Postgres yet — fall through to legacy below.
+      } else {
+        await appendAuditToPostgres({
+          action: 'promoteDraft',
+          role: session.role,
+          user: session.user,
+          targetId: id,
+          summary: `ส่งใบสั่งงาน #${id} เข้าระบบ (job=${r.jobId})`,
+        });
+        try {
+          const { revalidatePath } = await import('next/cache');
+          revalidatePath('/board');
+          revalidatePath('/orders');
+        } catch { /* ignore */ }
+        return NextResponse.json({ ok: true, jobId: r.jobId, orderId: id });
+      }
+    } catch (err) {
+      const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+  }
+
   if (existingJob) {
     jobId = Number(existingJob.id);
   } else {

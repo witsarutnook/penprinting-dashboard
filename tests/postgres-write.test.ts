@@ -19,6 +19,9 @@ import {
   moveToShippedInPostgres,
   cancelJobInPostgres,
   bulkForwardInPostgres,
+  updateOrderInPostgres,
+  promoteDraftInPostgres,
+  cancelOrderInPostgres,
   appendAuditToPostgres,
   markRowClean,
   markRowDirty,
@@ -632,6 +635,121 @@ describe('bulkForwardInPostgres', () => {
     expect(r.failed[2].error).toMatch(/Missing job name/);
     // No SQL ran for invalid items
     expect(sqlCalls).toHaveLength(0);
+  });
+});
+
+describe('updateOrderInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('returns found:false when order missing', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const r = await updateOrderInPostgres({ id: 999, name: 'x' });
+    expect(r).toEqual({ ok: true, found: false });
+    expect(callsContaining('UPDATE orders SET')).toHaveLength(0);
+  });
+
+  it('UPDATEs order with merged fields + dirty mark', async () => {
+    queueResult({ rows: [{ raw: { id: 202605061, name: 'old', customer: 'Cust' } }], rowCount: 1 });
+    queueResult({ rowCount: 1 });
+    const r = await updateOrderInPostgres({
+      id: 202605061,
+      name: 'new-name',
+      customer: 'Cust',
+      dateDue: '2026-05-20',
+    });
+    expect(r).toEqual({ ok: true, found: true });
+    const upd = findCallContaining('UPDATE orders SET');
+    expect(upd, 'must UPDATE orders').toBeDefined();
+    expect(upd!.text, 'orders UPDATE must mark dirty').toContain('phase2_dirty_at = NOW()');
+    expect(upd!.text).toContain('name =');
+    expect(upd!.text).toContain('date_due =');
+  });
+});
+
+describe('promoteDraftInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('returns found:false when order missing', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const r = await promoteDraftInPostgres({
+      orderId: 999, jobId: 500,
+      job: { name: 'x', dept: 'graphic', staff: 'aor' },
+    });
+    expect(r.found).toBe(false);
+    expect(callsContaining('INSERT INTO jobs')).toHaveLength(0);
+    expect(callsContaining('UPDATE orders')).toHaveLength(0);
+  });
+
+  it('INSERTs job + flips order to sent + marks both dirty', async () => {
+    queueResult({ rows: [{ raw: { id: 202605061, status: 'draft', name: 'order-X' }, status: 'draft' }], rowCount: 1 });
+    queueResult({ rowCount: 1 });  // INSERT jobs
+    queueResult({ rowCount: 1 });  // UPDATE orders
+
+    const r = await promoteDraftInPostgres({
+      orderId: 202605061,
+      jobId: 510,
+      job: { name: 'order-X', dept: 'graphic', staff: 'aor', dateIn: '2026-05-11' },
+    });
+    expect(r).toEqual({ ok: true, orderId: 202605061, jobId: 510, found: true });
+
+    const jobInsert = findCallContaining('INSERT INTO jobs');
+    expect(jobInsert, 'must INSERT new job').toBeDefined();
+    expect(jobInsert!.text).toContain('phase2_dirty_at');
+    expect(jobInsert!.text).toContain('ON CONFLICT (id) DO NOTHING');
+
+    const orderUpdate = findCallContaining('UPDATE orders SET');
+    expect(orderUpdate, 'must flip order status').toBeDefined();
+    expect(orderUpdate!.text, "must set status='sent'").toMatch(/status\s*=\s*'sent'/);
+    expect(orderUpdate!.text).toContain('phase2_dirty_at');
+  });
+});
+
+describe('cancelOrderInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('returns found:false when order missing', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const r = await cancelOrderInPostgres({
+      orderId: 999, reason: 'r', cancelledBy: 'u', cancelledAt: 't',
+    });
+    expect(r.found).toBe(false);
+  });
+
+  it('cascade-cancels all active jobs + flips order status', async () => {
+    queueResult({ rows: [{ raw: { id: 202605061, status: 'sent' } }], rowCount: 1 }); // SELECT order
+    queueResult({
+      rows: [
+        { id: 100, raw: { id: 100, name: 'job-A', dept: 'graphic', staff: 'aor' } },
+        { id: 101, raw: { id: 101, name: 'job-B', dept: 'print', staff: 'mo' } },
+      ],
+      rowCount: 2,
+    }); // SELECT jobs
+    // For each job in cascade: SELECT raw + INSERT cancelled + UPDATE jobs tombstone (= 3 calls × 2 jobs)
+    for (let i = 0; i < 2; i++) {
+      queueResult({ rows: [{ raw: { id: 100 + i, name: 'job-' + i } }], rowCount: 1 });
+      queueResult({ rowCount: 1 });
+      queueResult({ rowCount: 1 });
+    }
+    queueResult({ rowCount: 1 }); // UPDATE orders status
+
+    const r = await cancelOrderInPostgres({
+      orderId: 202605061,
+      reason: 'ลูกค้ายกเลิก',
+      cancelledBy: 'admin:nook',
+      cancelledAt: '2026-05-11T...',
+    });
+    expect(r.found).toBe(true);
+    expect(r.cancelledJobs).toEqual([100, 101]);
+
+    const cancelInserts = callsContaining('INSERT INTO cancelled');
+    expect(cancelInserts, 'must INSERT cancelled per job').toHaveLength(2);
+
+    const tombstones = callsContaining('UPDATE jobs SET phase2_deleted_at');
+    expect(tombstones, 'must tombstone each cascaded job').toHaveLength(2);
+
+    const orderFlip = findCallContaining('UPDATE orders SET');
+    expect(orderFlip, 'must flip order status').toBeDefined();
+    expect(orderFlip!.text).toMatch(/status\s*=\s*'cancelled'/);
   });
 });
 

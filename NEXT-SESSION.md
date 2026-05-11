@@ -385,6 +385,30 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 
 ## ⚠️ Pending user actions (after 2026-05-11 session)
 
+### Phase 2 order lifecycle activation — 3 ขั้น (updateOrder + promoteDraft + cancelOrder)
+
+✅ **Code deployed** 2026-05-11 — updateOrderInPostgres + promoteDraftInPostgres + cancelOrderInPostgres + 3 new flags
+✅ **Apps Script**: ใช้ setOrderRow + setJobRow + setCancelledRow + deleteJobByIdRow ที่ deploy แล้ว — **ไม่ต้อง push เพิ่ม**
+✅ **Schema**: ไม่ต้อง db-migrate ใหม่ — orders.phase2_dirty_at มีอยู่แล้ว, ไม่ต้องเพิ่ม phase2_deleted_at เพราะ deleteOrder/deleteOrderCascade ถูก skip (dead UI)
+
+ขั้นตอน — Vercel env vars (Production + Preview + Development):
+
+1. `WRITE_UPDATE_ORDER_TO_POSTGRES=1` — edit order (admin)
+2. `WRITE_PROMOTE_DRAFT_TO_POSTGRES=1` — promote draft → sent (admin+sales)
+3. `WRITE_CANCEL_ORDER_TO_POSTGRES=1` — soft-cancel order + cascade jobs (admin)
+
+→ Redeploy
+
+**Smoke test sequence:**
+- **updateOrder**: /orders → คลิก order → แก้ไข name/customer/dateDue → save → expect ~250ms latency + cascade rename if name changed (matching jobs updated) + audit instant
+- **promoteDraft**: /orders → คลิก draft order → "ส่งเข้าระบบ" → expect order flip status=sent + new Job appears on /board + audit `"ส่งใบสั่งงาน #X เข้าระบบ"`
+- **cancelOrder**: /orders → คลิก order → "ยกเลิกใบสั่ง" → expect cascade cancel all linked jobs (จาก Postgres SELECT WHERE order_id=X) + order flip status=cancelled + audit `"ยกเลิกใบสั่งงาน #X — cascade N งาน"`
+- **รอ 5 นาที → /api/cron/sync-to-sheet logs** → expect Phase 2 healing across all touched tables
+
+**Rollback:** unset env var per action → redeploy → กลับ Apps Script-first path
+
+---
+
 ### Phase 2 bulkForward activation — 1 ขั้น (Apps Script ครอบคลุมแล้ว + tombstone infra พร้อม)
 
 ✅ **Code deployed** 2026-05-11 — `bulkForwardInPostgres` per-item best-effort + appendAuditToPostgres per item
