@@ -166,6 +166,46 @@ export async function loadAllFromAppsScriptForSync(): Promise<LoadAllResponse> {
   return withDefaults(data);
 }
 
+/** Postgres-first single-order lookup with active jobs.
+ *  Reads Postgres directly (no cache) so Phase 2 writes are visible
+ *  immediately. Falls back to Apps Script for Phase 1.7 stragglers
+ *  (rows mirrored but not yet in Postgres).
+ *
+ *  Used by promote-draft to resolve the order + existingJob check
+ *  without hitting Sheet's stale read for orders just created via
+ *  Phase 2 createOrder (heal-cron has not yet pushed the row to Sheet). */
+export async function loadOrderAndJobsForPromote(id: number): Promise<{
+  order: Record<string, unknown> | null;
+  jobs: Array<Record<string, unknown>>;
+}> {
+  const { isPostgresConfigured, sql } = await import('@/lib/postgres');
+  if (isPostgresConfigured()) {
+    try {
+      const oR = await sql<{ raw: Record<string, unknown> | null }>`
+        SELECT raw FROM orders WHERE id = ${id}::bigint LIMIT 1
+      `;
+      if (oR.rows[0]?.raw) {
+        const jR = await sql<{ raw: Record<string, unknown> | null }>`
+          SELECT raw FROM jobs
+          WHERE order_id = ${id}::bigint AND phase2_deleted_at IS NULL
+        `;
+        return {
+          order: oR.rows[0].raw,
+          jobs: jR.rows.map((r) => r.raw).filter((r): r is Record<string, unknown> => !!r),
+        };
+      }
+      // Order not in Postgres — fall through to Apps Script
+    } catch {
+      // Fall through to Apps Script
+    }
+  }
+  const snap = await loadAllFresh();
+  return {
+    order: (snap.orders.find((o) => Number(o.id) === id) ?? null) as Record<string, unknown> | null,
+    jobs: snap.jobs.filter((j) => Number(j.orderId) === id) as unknown as Array<Record<string, unknown>>,
+  };
+}
+
 /** Single-order lookup. Apps Script returns ~1KB instead of ~200KB.
  *  Used for hot paths that only need one order's rawData (e.g. order detail
  *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw).

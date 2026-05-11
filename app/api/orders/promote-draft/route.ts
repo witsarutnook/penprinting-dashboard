@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, loadOrderAndJobsForPromote, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
@@ -38,16 +38,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
   }
 
-  // Parallelize the snapshot read with the speculative job-id allocation —
-  // we need the snapshot anyway to validate, and getNextId is a lock-safe
+  // Parallelize the order lookup with the speculative job-id allocation —
+  // we need the order anyway to validate, and getNextId is a lock-safe
   // monotonic counter so allocating early just burns one id slot if the
   // promote is rejected (acceptable trade for ~1s perceived latency).
-  let snap: Awaited<ReturnType<typeof loadAllFresh>>;
+  //
+  // loadOrderAndJobsForPromote is Postgres-first — required for Phase 2
+  // createOrder orders that haven't been heal-cron-synced to Sheet yet
+  // (the 2026-05-11 "ไม่พบใบสั่งงาน" stale read bug).
+  let snap: Awaited<ReturnType<typeof loadOrderAndJobsForPromote>>;
   let speculativeJobId: number | null = null;
   let speculativeJobIdErr: string | null = null;
   try {
     const [snapResult, idResult] = await Promise.all([
-      loadAllFresh(),
+      loadOrderAndJobsForPromote(id),
       post<{ nextId?: number; error?: string }>('getNextId', {}).catch(
         (err): { nextId?: number; error?: string } => ({
           error: err instanceof Error ? err.message : String(err),
@@ -65,7 +69,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
-  const order = snap.orders.find((o) => Number(o.id) === id);
+  const order = snap.order;
   if (!order) {
     return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
   }
@@ -77,8 +81,8 @@ export async function POST(req: Request) {
   // Validate full required set — same gate as POST /api/orders/add (non-draft path)
   const missing: string[] = [];
   const customer = String(order.customer || '').trim();
-  const dateDue = toISODate(order.dateDue);
-  const dateIn = toISODate(order.dateIn);
+  const dateDue = toISODate(String(order.dateDue || ''));
+  const dateIn = toISODate(String(order.dateIn || ''));
   const orderer = String(order.orderer || '').trim();
   const assignDept = String(order.assignDept || '').trim() as Dept | '';
   const assignStaff = String(order.assignStaff || '').trim();
@@ -107,7 +111,9 @@ export async function POST(req: Request) {
   // (e.g. addJob succeeded but updateOrder failed on a previous attempt),
   // reuse its id and SKIP the addJob step. Without this, retrying the
   // promote-draft button would create duplicate jobs.
-  const existingJob = snap.jobs.find((j) => Number(j.orderId) === id);
+  // (snap.jobs from loadOrderAndJobsForPromote is already filtered to this
+  // order, so take the first one.)
+  const existingJob = snap.jobs[0];
   let jobId: number;
 
   // ── Phase 2 path ──────────────────────────────────────────────
@@ -123,7 +129,7 @@ export async function POST(req: Request) {
         jobId: speculativeJobId,
         orderId: id,
         job: {
-          name: order.name,
+          name: String(order.name || ''),
           date: dateDue,
           dateIn: dateIn || dateDue,
           staff: assignStaff,
