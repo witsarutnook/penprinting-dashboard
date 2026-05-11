@@ -549,75 +549,13 @@ function parseCoworkArray(cowork: unknown): CoworkEntry[] {
   return out;
 }
 
-// ─── Spec rendering — formats rawData into readable rows ──────────
+// ─── Spec rendering — formats rawData into structured sections ──────
+//
+// Label dictionary + section grouping + value formatting all live in
+// lib/spec-format.ts so /orders modal + /board card detail share the
+// same UX (mirrors WP `renderJobSpecTab` + printOrderHtml sections).
 
-/** Friendly Thai labels for known rawData keys. Mirror of `lb` map in
- *  WP frontend (production-monitoring.js ~line 1109) and DETAIL_LABELS
- *  in board/card.tsx — same render shape so /orders + /board feel
- *  consistent. */
-const SPEC_LABELS: Record<string, string> = {
-  size: 'ขนาด',
-  qty: 'จำนวน',
-  paperCover: 'กระดาษปก',
-  paperInner: 'กระดาษเนื้อใน',
-  coverColor: 'สีปก',
-  coverColorNote: 'หมายเหตุสีปก',
-  innerColor: 'สีเนื้อใน',
-  innerColorNote: 'หมายเหตุสีเนื้อใน',
-  plateOld: 'ใช้ Plate เก่า',
-  plateNew: 'Plate ใหม่',
-  copyprint: 'Copyprint',
-  inkjet: 'Inkjet',
-  digital: 'Digital',
-  plateSize: 'ขนาดเพลท',
-  billPerSet: 'บิล/ชุด',
-  setPerBook: 'ชุด/เล่ม',
-  sheetPerBook: 'แผ่น/เล่ม',
-  billColors: 'สีบิล',
-  perf: 'ปรุ',
-  perfPos: 'ตำแหน่งปรุ',
-  runNo: 'หมายเลขรัน',
-  runBook: 'รันเล่ม',
-  runNum: 'รันหมายเลข',
-  glue: 'ทากาว',
-  saddle: 'เย็บมุงหลังคา',
-  sew: 'เย็บกี่',
-  spine: 'สันธรรมดา',
-  glueHead: 'ทากาวหัว',
-  glueSide: 'ทากาวข้าง',
-  sewHead: 'เย็บหัว',
-  sewSide: 'เย็บข้าง',
-  sewCorner: 'เย็บมุม',
-  sewThread: 'เย็บด้าย',
-  sewSideTape: 'เย็บข้าง+เทป',
-  coatGloss: 'เคลือบเงา',
-  coatMatte: 'เคลือบด้าน',
-  coatUV: 'เคลือบ UV',
-  coatSpotUV: 'เคลือบ Spot UV',
-  stampColor: 'ปั๊มสี',
-  stampColorNote: 'หมายเหตุปั๊มสี',
-  emboss: 'ปั๊มนูน',
-  diecut: 'ไดคัท',
-  diecutSelf: 'ไดคัท(เอง)',
-  notes: 'หมายเหตุ',
-  orderer: 'ผู้สั่งงาน',
-};
-
-const SPEC_HIDDEN_KEYS = new Set([
-  'name', 'customer', 'dateIn', 'dateDue',
-  'pin', 'orderType', 'photobookItems', 'photobook',
-  'cowork', 'assignDept', 'assignStaff', 'forwardPrint', 'sizeUnit', 'qtyUnit',
-]);
-
-// For photobook orders the spec tab uses a WHITELIST instead of the
-// printing-flavoured blacklist above. Reason: v2 OrderForm seeds the
-// whole printing schema (plate / billColors / paperCover / coatGloss / ...)
-// then flips orderType=photobook on top, so a photobook order's rawData
-// carries dozens of irrelevant printing fields. The photobook items
-// already render in their own table — the only generic fields a
-// photobook customer cares about here are the freeform notes and who
-// placed the order.
-const PHOTOBOOK_VISIBLE_KEYS = new Set(['notes', 'orderer']);
+import { buildSpecSections } from '@/lib/spec-format';
 
 interface PhotobookItem {
   size?: string;
@@ -636,33 +574,9 @@ function SpecSection({ raw }: { raw: RawData }) {
       ? (raw.photobook as PhotobookItem[])
       : [];
 
-  // Filter rawData entries: drop the keys we hide + empty/false values.
-  const sizeUnit = String(raw.sizeUnit || '').trim();
-  const qtyUnit = String(raw.qtyUnit || '').trim();
+  const sections = buildSpecSections(raw as Record<string, unknown>, isPhotobook);
 
-  const entries = Object.entries(raw).filter(([k, v]) => {
-    // Empty / falsy filters always apply.
-    if (v === null || v === undefined) return false;
-    if (typeof v === 'string' && v.trim() === '') return false;
-    if (typeof v === 'boolean' && v === false) return false;
-    if (Array.isArray(v) && v.length === 0) return false;
-    if (Array.isArray(v) && v.every((x) => !x)) return false;
-    // Mode-aware key filter: photobook = whitelist (printing fields hide),
-    // normal = the legacy blacklist of header / system keys.
-    if (isPhotobook) return PHOTOBOOK_VISIBLE_KEYS.has(k);
-    return !SPEC_HIDDEN_KEYS.has(k);
-  });
-
-  // Pretty value formatting — pair size with sizeUnit, qty with qtyUnit, etc.
-  const formatValue = (k: string, v: unknown): string => {
-    if (k === 'size' && sizeUnit) return `${v} ${sizeUnit}`;
-    if (k === 'qty' && qtyUnit) return `${v} ${qtyUnit}`;
-    if (typeof v === 'boolean') return v ? '✓' : '—';
-    if (Array.isArray(v)) return v.filter(Boolean).join(', ') || '—';
-    return String(v);
-  };
-
-  if (entries.length === 0 && photobookItems.length === 0) {
+  if (sections.length === 0 && photobookItems.length === 0) {
     return <p className="text-sm text-stone-400 text-center py-4">ไม่มีสเปคงาน</p>;
   }
 
@@ -703,21 +617,44 @@ function SpecSection({ raw }: { raw: RawData }) {
         </section>
       )}
 
-      {entries.length > 0 && (
-        <section>
+      {sections.map((section) => (
+        <section key={section.title}>
           <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
-            รายละเอียดงาน
+            {section.title}
           </h3>
-          <div className="rounded-lg border border-stone-200 divide-y divide-stone-100 bg-stone-50/40">
-            {entries.map(([k, v]) => (
-              <div key={k} className="flex items-baseline gap-3 px-3 py-2 text-sm">
-                <span className="text-stone-500 min-w-[100px] shrink-0">{SPEC_LABELS[k] || k}</span>
-                <span className="text-stone-900 break-words">{formatValue(k, v)}</span>
-              </div>
-            ))}
-          </div>
+          {section.chips ? (
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {section.entries.map((e) => (
+                <span
+                  key={e.key}
+                  className="inline-flex items-center gap-1 rounded-full bg-stone-100 text-stone-700 px-2.5 py-1 text-xs"
+                >
+                  {e.display === '✓' ? (
+                    <>
+                      <span className="text-emerald-600 font-bold">✓</span>
+                      {e.label}
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-stone-500">{e.label}:</span>
+                      <span className="font-medium">{e.display}</span>
+                    </>
+                  )}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-stone-200 divide-y divide-stone-100 bg-stone-50/40">
+              {section.entries.map((e) => (
+                <div key={e.key} className="flex items-baseline gap-3 px-3 py-2 text-sm">
+                  <span className="text-stone-500 min-w-[100px] shrink-0">{e.label}</span>
+                  <span className="text-stone-900 break-words">{e.display}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
-      )}
+      ))}
     </div>
   );
 }

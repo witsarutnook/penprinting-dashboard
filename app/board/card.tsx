@@ -12,6 +12,7 @@ import {
   coworkPrintStaffIds,
 } from '@/lib/board';
 import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
+import { buildSpecSections } from '@/lib/spec-format';
 import { broadcastWrite } from '@/lib/auto-sync';
 import { displayDate } from '@/lib/jobs';
 import { useBulkMode } from '@/components/board/bulk-context';
@@ -1594,35 +1595,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 
 // Friendly labels for known detail keys (port of `lb` map in WP frontend ~line 1109)
-const DETAIL_LABELS: Record<string, string> = {
-  size: 'ขนาด',
-  qty: 'จำนวน',
-  paperCover: 'กระดาษปก',
-  paperInner: 'กระดาษเนื้อใน',
-  coverColor: 'สีปก',
-  innerColor: 'สีเนื้อใน',
-  plate: 'PLATE/Copy',
-  plateSize: 'ขนาดเพลท',
-  billPerSet: 'บิล/ชุด',
-  setPerBook: 'ชุด/เล่ม',
-  sheetPerBook: 'แผ่น/เล่ม',
-  billColors: 'สีบิล',
-  perf: 'ปรุ',
-  runNo: 'หมายเลขรัน',
-  binding: 'เข้าเล่ม',
-  coating: 'เคลือบ',
-  stamp: 'ปั๊ม/ไดคัท',
-  forwardPrint: 'ส่งต่อพิมพ์',
-  orderer: 'ผู้สั่งงาน',
-  notes: 'หมายเหตุ',
-  photobook: 'รายการ Photobook',
-};
-
-// For photobook orders the spec table only shows notes + orderer — printing
-// fields (plate / billColors / coatGloss / etc.) are seeded by OrderForm but
-// meaningless for photobook. Mirrors PHOTOBOOK_VISIBLE_KEYS in
-// app/orders/orders-table.tsx so card detail and orders modal stay aligned.
-const PHOTOBOOK_DETAIL_VISIBLE_KEYS = new Set(['notes', 'orderer']);
+// Spec rendering now lives in lib/spec-format.ts (shared with /orders modal).
+// DETAIL_LABELS + PHOTOBOOK_DETAIL_VISIBLE_KEYS removed in favor of buildSpecSections().
 
 interface PhotobookItemShape {
   size?: string;
@@ -1670,28 +1644,46 @@ function DetailsTable({
   details: Record<string, unknown>;
   isPhotobook?: boolean;
 }) {
-  // Filter empty + sort with known keys first
-  const entries = Object.entries(details).filter(([k, v]) => {
-    if (v === null || v === undefined) return false;
-    if (typeof v === 'string' && v.trim() === '') return false;
-    if (typeof v === 'boolean') return v === true; // hide false flags
-    if (Array.isArray(v) && v.length === 0) return false;
-    if (Array.isArray(v) && v.every((x) => !x)) return false;
-    // Photobook items render in PhotobookItemsTable, not here.
-    if (k === 'photobook' || k === 'photobookItems') return false;
-    // Mode-aware: photobook = whitelist (notes / orderer only); normal = all.
-    if (isPhotobook) return PHOTOBOOK_DETAIL_VISIBLE_KEYS.has(k);
-    return true;
-  });
-  if (entries.length === 0) return <div className="px-3 py-2 text-sm text-stone-400">—</div>;
+  const sections = buildSpecSections(details, isPhotobook);
+  if (sections.length === 0) return <div className="px-3 py-2 text-sm text-stone-400">—</div>;
   return (
     <>
-      {entries.map(([k, v]) => (
-        <div key={k} className="flex items-baseline gap-3 px-3 py-2 text-sm">
-          <span className="text-stone-500 min-w-[100px] shrink-0">{DETAIL_LABELS[k] || k}</span>
-          <span className="text-stone-900 break-words">
-            {typeof v === 'object' ? <code className="text-xs">{JSON.stringify(v)}</code> : String(v)}
-          </span>
+      {sections.map((section, sIdx) => (
+        <div key={section.title}>
+          {sections.length > 1 && (
+            <div className={`px-3 ${sIdx === 0 ? 'py-1.5' : 'pt-3 pb-1.5'} text-[11px] font-semibold text-stone-500 uppercase tracking-wide`}>
+              {section.title}
+            </div>
+          )}
+          {section.chips ? (
+            <div className="flex flex-wrap gap-1.5 px-3 py-1.5">
+              {section.entries.map((e) => (
+                <span
+                  key={e.key}
+                  className="inline-flex items-center gap-1 rounded-full bg-stone-100 text-stone-700 px-2.5 py-0.5 text-xs"
+                >
+                  {e.display === '✓' ? (
+                    <>
+                      <span className="text-emerald-600 font-bold">✓</span>
+                      {e.label}
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-stone-500">{e.label}:</span>
+                      <span className="font-medium">{e.display}</span>
+                    </>
+                  )}
+                </span>
+              ))}
+            </div>
+          ) : (
+            section.entries.map((e) => (
+              <div key={e.key} className="flex items-baseline gap-3 px-3 py-2 text-sm">
+                <span className="text-stone-500 min-w-[100px] shrink-0">{e.label}</span>
+                <span className="text-stone-900 break-words">{e.display}</span>
+              </div>
+            ))
+          )}
         </div>
       ))}
     </>
