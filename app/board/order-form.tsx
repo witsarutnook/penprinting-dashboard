@@ -358,7 +358,7 @@ export function OrderForm({
 
   async function submit(
     force = false,
-    mode: 'submit' | 'draft' | 'print' = 'submit',
+    mode: 'submit' | 'draft' | 'print' | 'submitAndPromote' = 'submit',
     printWindow?: Window | null,
   ) {
     setError(null);
@@ -415,6 +415,33 @@ export function OrderForm({
         isEdit,
         cascaded: respJson.cascaded,
       };
+
+      // ── Chain: save → promote-draft (skips the success modal so user
+      //  doesn't have to click "เสร็จสิ้น" between save and promote) ──
+      if (mode === 'submitAndPromote' && successInfo.orderId) {
+        try {
+          const promoteRes = await fetch('/api/orders/promote-draft', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: successInfo.orderId }),
+          });
+          const promoteJson = await promoteRes.json().catch(() => ({}));
+          if (!promoteRes.ok) {
+            setError(promoteJson?.error || `ส่งเข้าระบบไม่สำเร็จ — HTTP ${promoteRes.status}`);
+            return;
+          }
+          broadcastWrite('/api/orders/promote-draft');
+          startTransition(() => router.refresh());
+          setSuccess({ ...successInfo, jobId: Number(promoteJson.jobId) || successInfo.jobId });
+          // Auto-navigate to /board after a brief success flash
+          setTimeout(() => router.push('/board'), 800);
+          return;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'ส่งเข้าระบบไม่สำเร็จ — เครือข่ายขัดข้อง');
+          return;
+        }
+      }
+
       setSuccess(successInfo);
       if (mode === 'print' && successInfo.orderId) {
         const printUrl = `/orders/${successInfo.orderId}/print`;
@@ -853,6 +880,16 @@ export function OrderForm({
                 <IconCheck size={14} />
                 {busy ? 'กำลังบันทึก...' : isEdit ? 'บันทึกการแก้ไข' : 'ส่งใบสั่งงาน'}
               </button>
+              {/* Edit-draft shortcut: one-click save + promote. Avoids the
+                  multi-step "บันทึก → เสร็จสิ้น → ส่งเข้าระบบ" UX trap. */}
+              {isEdit && initial?.status === 'draft' && (
+                <button type="button" onClick={() => submit(false, 'submitAndPromote')} disabled={busy}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+                  title="บันทึกฟอร์ม แล้วส่งเข้าสายผลิตในคลิกเดียว">
+                  <IconCheck size={14} />
+                  {busy ? 'กำลังส่ง...' : 'บันทึก + ส่งเข้าระบบ'}
+                </button>
+              )}
               {!isEdit && (
                 <button type="button" onClick={handleSubmitAndPrint} disabled={busy}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50"
