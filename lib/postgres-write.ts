@@ -358,7 +358,10 @@ function generateAuditSummary(input: AuditInput): string {
  *  cron's `DELETE WHERE source='sheet'` doesn't wipe it. Used by Phase 2
  *  routes that bypass Apps Script (where the legacy doPost-side appendAudit
  *  fires automatically). Never throws — audit failure must not break the
- *  user's mutation, mirroring the Apps Script try/catch pattern. */
+ *  user's mutation, mirroring the Apps Script try/catch pattern.
+ *
+ *  Logs the actual error to Vercel logs + Sentry so silent failures don't
+ *  hide a genuine schema/permission issue (the 2026-05-11 bug). */
 export async function appendAuditToPostgres(input: AuditInput): Promise<void> {
   if (!isPostgresConfigured()) return;
   try {
@@ -375,9 +378,13 @@ export async function appendAuditToPostgres(input: AuditInput): Promise<void> {
         (NOW(), ${actor}, ${input.user || null}, ${input.action},
          ${targetId}::bigint, ${summary}, 'postgres')
     `;
-  } catch {
-    // Never break the API on audit failure — Sentry already captures via
-    // Phase 2 mirror layer if applicable.
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[phase2-audit] appendAuditToPostgres failed for action=${input.action}:`, msg);
+    try {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureException(err, { tags: { layer: 'phase2-audit', action: input.action } });
+    } catch { /* ignore */ }
   }
 }
 

@@ -28,6 +28,28 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const targetIdRaw = url.searchParams.get('id');
   const targetId = targetIdRaw ? Number(targetIdRaw) : null;
+  const runTest = url.searchParams.get('test') === '1';
+
+  // Optional INSERT test — proves whether appendAuditToPostgres-shaped
+  // INSERT actually succeeds in this runtime (not just our test mocks).
+  // Returns the captured error message instead of swallowing.
+  let testInsert: { ok: boolean; error?: string } | null = null;
+  if (runTest) {
+    try {
+      const ts = new Date().toISOString();
+      await sql`
+        INSERT INTO audit_log
+          (timestamp, role, user_name, action, target_id, summary, source)
+        VALUES
+          (NOW(), 'admin:diagnostic', 'diagnostic',
+           'diagnose-audit-test', NULL::bigint,
+           ${`Diagnostic test ${ts}`}, 'postgres')
+      `;
+      testInsert = { ok: true };
+    } catch (err) {
+      testInsert = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   // 1. Schema — column list of audit_log
   const colCheck = await sql.query(
@@ -114,8 +136,9 @@ export async function GET(req: Request) {
     targetRows,
     syncMeta: meta.rows[0] || null,
     flags,
+    testInsert,
     hint: hasSource
-      ? 'source column EXISTS — if Phase 2 audit entries missing, check appendAuditToPostgres call path'
+      ? 'source column EXISTS — if Phase 2 audit entries missing, check appendAuditToPostgres call path. Pass ?test=1 to attempt a real INSERT and surface any error.'
       : '🚨 source column MISSING — code 48a3127 not deployed yet, OR db-migrate ALTER skip query matched a false positive',
   });
 }
