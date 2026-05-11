@@ -2,7 +2,18 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-11 (P1 guardrails + Phase 2 updateJob + addJob):** ✅
+> **Session 2026-05-11 (P1 + Phase 2 updateJob + addJob + audit-log full pipeline):** ✅
+> - **Audit log Phase 2 visibility** (`48a3127`, `242db89`, `d19ba75`, `f524fbd` + Apps Script v5.10.12 push) — multi-hour /diagnose-driven debug. 5 layers:
+>   - L1 audit.ts: extract `d.order.id` for createOrder action — patched via clasp
+>   - L2 write.ts: mutate `data.order.id = orderId` after allocation so audit sees it — patched via clasp (2nd push)
+>   - L3 sync-from-sheet: ★ bootstrap loop — was importing `loadAllWithAudit` (Postgres-first when READ_FROM_POSTGRES=1), refreshing Postgres FROM Postgres = no-op. Fixed via new `loadAllFromAppsScriptForSync()` that bypasses wrapper
+>   - L4 syncAuditLog: changed `TRUNCATE` to `DELETE WHERE source='sheet'` so Phase 2-written entries (source='postgres') survive cron passes
+>   - L5 appendAuditToPostgres helper — Phase 2 routes (setCowork/updateJob/addJob) write audit direct to Postgres for immediate v2 history visibility
+>   - Schema: added `source TEXT DEFAULT 'sheet'` column via db-migrate (idempotent ALTER)
+>   - Diagnostic endpoint `/api/admin/diagnose-audit?id=<n>&test=1` exposes column list, row counts by source, Phase 2 flag state, optional INSERT test
+> - **Verified end-to-end** — created test order "ggg" (orderId 202605063), history tab shows `"สร้างใบสั่งงาน "ggg" (ลูกค้า: test)"` ✅
+> - **Note on Job #479 ("1111")** — created BEFORE fix, its createOrder audit row has empty target_id. Optional backfill via Sheet edit; otherwise its history will populate from next action onward.
+> - **Lesson** — /diagnose skill loop saved this. Initial v5.10.12 fix (audit.ts only) was wrong direction; only after Phase 4 instrumentation (read Vercel route source) revealed body.data.order.id was absent at appendAudit call time
 > - **P1.a** (`a7082f0`) — husky 9 pre-commit hook. Blocks commits that fail `tsc --noEmit && next lint && vitest run`. Verified hook teeth: bad TS → commit refused with husky error code.
 > - **P1.b** (`521292d`) — vitest 4.1 + 28 unit tests covering Phase 2 lib paths:
 >   - `tests/feature-flags.test.ts` (8) — phase2WriteEnabled / phase2OwnsTable purity, literal "1" guard against accidental "true"/"yes"
