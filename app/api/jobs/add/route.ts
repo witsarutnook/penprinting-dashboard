@@ -8,6 +8,8 @@ import {
   type JobPayload,
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { addJobToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -20,6 +22,13 @@ export const maxDuration = 30;
  *
  * Note: addJob in Apps Script ROLE_REQUIREMENTS is open to all roles, but the
  * WP frontend gates create paths to admin+sales — we mirror that here.
+ *
+ * Phase 2 — when WRITE_ADD_JOB_TO_POSTGRES=1, Postgres is authoritative.
+ * id allocation still goes through Apps Script getNextId (keeps Sheet's
+ * nextId counter in sync + ids stay sequential for admin UI), but the
+ * Sheet write is skipped — heal cron pushes setJobRow within 5 min. Eliminates
+ * the legacy double-bump (addJob calls incrementConfig after getNextId
+ * already bumped) so Phase 2 ids land contiguously instead of with gaps.
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);
@@ -113,6 +122,10 @@ export async function POST(req: Request) {
     orderId: body.orderId ? Number(body.orderId) : '',
   };
 
+  if (phase2WriteEnabled('addJob')) {
+    return phase2AddJob(payload);
+  }
+
   try {
     const result = await post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: payload });
     if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
@@ -121,4 +134,33 @@ export async function POST(req: Request) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });
   }
+}
+
+async function phase2AddJob(payload: JobPayload): Promise<NextResponse> {
+  try {
+    await addJobToPostgres({
+      id: payload.id as number,
+      name: payload.name,
+      date: payload.date ?? null,
+      dateIn: payload.dateIn ?? null,
+      dept: payload.dept,
+      staff: payload.staff,
+      status: payload.status,
+      orderId: payload.orderId,
+    });
+  } catch (err) {
+    const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  // Postgres write succeeded — heal cron pushes to Sheet via setJobRow
+  // within 5 min. Bust /board + /orders caches so the next render shows
+  // the new card immediately (Postgres-first reads see the new row).
+  try {
+    const { revalidatePath } = await import('next/cache');
+    revalidatePath('/board');
+    revalidatePath('/orders');
+  } catch { /* ignore */ }
+
+  return NextResponse.json({ ok: true, id: payload.id });
 }

@@ -237,6 +237,75 @@ export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: 
   return { ok: true, found: true };
 }
 
+export interface AddJobInput {
+  /** Pre-allocated id (typically from Apps Script getNextId). Required —
+   *  Phase 2 deliberately keeps id allocation in Apps Script so the Sheet
+   *  nextId counter stays accurate and ids stay sequential for admin UI. */
+  id: number;
+  name: string;
+  date?: string | null;
+  dateIn?: string | null;
+  dept: string;
+  staff: string;
+  status?: string;
+  /** '' / null → standalone job (orphan, no parent order). */
+  orderId?: string | number | null;
+}
+
+/** Phase 2 — atomic INSERT into jobs + mark dirty. The caller (route) is
+ *  responsible for input validation and pre-allocating `id` via Apps Script
+ *  getNextId so Sheet's nextId counter stays in sync.
+ *
+ *  Skips the legacy Apps Script `addJob` round-trip (which appends to Sheet
+ *  + bumps nextId AGAIN, causing id gaps). The heal cron pushes the new
+ *  row to Sheet via `setJobRow` within 5 min, which doesn't touch nextId.
+ *  Net result: cleaner sequential ids + ~600ms saved per add.
+ *
+ *  New jobs start with cowork=null (the form doesn't surface cowork on add)
+ *  and phase2_dirty_at=NOW() so the heal cron sees them. */
+export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; id: number }> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('addJob', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('addJob', 'Invalid job id');
+  }
+  const name = String(input.name || '').trim();
+  if (!name) {
+    throw new PostgresWriteError('addJob', 'Missing job name');
+  }
+
+  const orderIdRaw = input.orderId === '' || input.orderId == null ? null : Number(input.orderId);
+  const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
+  const date = input.date == null ? null : String(input.date);
+  const dateIn = input.dateIn == null ? null : String(input.dateIn);
+  const dept = String(input.dept);
+  const staff = String(input.staff);
+  const status = String(input.status || 'pending');
+
+  const raw = {
+    id: idNum,
+    name,
+    date,
+    dateIn,
+    dept,
+    staff,
+    status,
+    orderId,
+  };
+  const rawJson = JSON.stringify(raw);
+
+  await sql`
+    INSERT INTO jobs
+      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+    VALUES
+      (${idNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
+       ${staff}, ${dept}, ${status}, ${null}::jsonb, ${rawJson}::jsonb, NOW())
+  `;
+  return { ok: true, id: idNum };
+}
+
 // ─── dirty row helpers ───────────────────────────────────────────
 
 export type DirtyTable = 'jobs' | 'orders' | 'shipped' | 'cancelled';

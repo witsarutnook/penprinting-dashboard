@@ -13,6 +13,7 @@ vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 import {
   setCoworkInPostgres,
   updateJobInPostgres,
+  addJobToPostgres,
   markRowClean,
   markRowDirty,
   addTemplateToPostgres,
@@ -258,6 +259,117 @@ describe('updateJobInPostgres', () => {
     const merged = JSON.parse(rawParam);
     expect(merged.id).toBe(11);
     expect(merged.name).toBe('recovery');
+  });
+});
+
+describe('addJobToPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws PostgresWriteError when Postgres is not configured', async () => {
+    setConfigured(false);
+    await expect(
+      addJobToPostgres({ id: 100, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('throws PostgresWriteError on invalid id', async () => {
+    await expect(
+      addJobToPostgres({ id: 0, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(
+      addJobToPostgres({ id: 'abc' as unknown as number, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('throws PostgresWriteError on missing name', async () => {
+    await expect(
+      addJobToPostgres({ id: 100, name: '', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(
+      addJobToPostgres({ id: 100, name: '   ', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('inserts with all fields + sets phase2_dirty_at', async () => {
+    queueResult({ rowCount: 1 });
+    const r = await addJobToPostgres({
+      id: 12345,
+      name: 'Brochure 1000',
+      date: '2026-05-15',
+      dateIn: '2026-05-11',
+      dept: 'graphic',
+      staff: 'aor',
+      status: 'pending',
+      orderId: 100,
+    });
+    expect(r).toEqual({ ok: true, id: 12345 });
+
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert).toBeDefined();
+    // Critical — Phase 2 INSERT must mark dirty so heal cron pushes to Sheet.
+    expect(insert!.text).toContain('phase2_dirty_at');
+    expect(insert!.text).toMatch(/VALUES.*NOW\(\)/);
+
+    // Bound values: [id, orderId, name, date, dateIn, staff, dept, status, cowork, raw]
+    expect(insert!.values[0]).toBe(12345);
+    expect(insert!.values[1]).toBe(100);
+    expect(insert!.values[2]).toBe('Brochure 1000');
+    expect(insert!.values[3]).toBe('2026-05-15');
+    expect(insert!.values[4]).toBe('2026-05-11');
+    expect(insert!.values[5]).toBe('aor');
+    expect(insert!.values[6]).toBe('graphic');
+    expect(insert!.values[7]).toBe('pending');
+    expect(insert!.values[8]).toBeNull(); // cowork starts null
+
+    const raw = JSON.parse(insert!.values[9] as string);
+    expect(raw).toMatchObject({
+      id: 12345,
+      name: 'Brochure 1000',
+      dept: 'graphic',
+      staff: 'aor',
+      status: 'pending',
+      orderId: 100,
+    });
+  });
+
+  it('handles null/empty orderId as null (orphan job pattern)', async () => {
+    queueResult({ rowCount: 1 });
+    await addJobToPostgres({
+      id: 200, name: 'standalone', dept: 'print', staff: 'mo',
+      orderId: '',  // form sends '' for "no parent order"
+    });
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert!.values[1]).toBeNull();
+
+    resetMockPostgres();
+    queueResult({ rowCount: 1 });
+    await addJobToPostgres({
+      id: 201, name: 'standalone', dept: 'print', staff: 'mo',
+      orderId: null,
+    });
+    const insert2 = findCallContaining('INSERT INTO jobs');
+    expect(insert2!.values[1]).toBeNull();
+  });
+
+  it('defaults status to "pending" when not provided', async () => {
+    queueResult({ rowCount: 1 });
+    await addJobToPostgres({
+      id: 300, name: 'x', dept: 'print', staff: 'mo',
+    });
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert!.values[7]).toBe('pending');
+  });
+
+  it('trims whitespace from name', async () => {
+    queueResult({ rowCount: 1 });
+    await addJobToPostgres({
+      id: 400, name: '  job with spaces  ', dept: 'print', staff: 'mo',
+    });
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert!.values[2]).toBe('job with spaces');
   });
 });
 

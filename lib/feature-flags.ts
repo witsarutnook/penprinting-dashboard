@@ -40,6 +40,14 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // Postgres (Phase 1 mirror) so /board card moves columns instantly when
   // dept/staff change without round-tripping the Sheet.
   updateJob:      'WRITE_UPDATE_JOB_TO_POSTGRES',
+  // addJob — fourth action migrated (2026-05-11). Single INSERT.
+  // Still calls Apps Script `getNextId` for sequential id allocation
+  // (Sheet UI / morning report show short readable ids), but skips the
+  // Apps Script `addJob` write — heal cron's setJobRow pushes the new
+  // row to Sheet within 5 min. Eliminates the addJob round-trip's double
+  // counter-bump (legacy `addJob` calls incrementConfig after getNextId
+  // already bumped, leaving id gaps in Sheet). Phase 2 path = clean +1.
+  addJob:         'WRITE_ADD_JOB_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

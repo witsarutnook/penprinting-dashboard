@@ -2,15 +2,16 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-11 (P1 guardrails + Phase 2 updateJob):** ✅
+> **Session 2026-05-11 (P1 guardrails + Phase 2 updateJob + addJob):** ✅
 > - **P1.a** (`a7082f0`) — husky 9 pre-commit hook. Blocks commits that fail `tsc --noEmit && next lint && vitest run`. Verified hook teeth: bad TS → commit refused with husky error code.
 > - **P1.b** (`521292d`) — vitest 4.1 + 28 unit tests covering Phase 2 lib paths:
 >   - `tests/feature-flags.test.ts` (8) — phase2WriteEnabled / phase2OwnsTable purity, literal "1" guard against accidental "true"/"yes"
 >   - `tests/postgres-write.test.ts` (17) — setCowork dirty-mark contract, raw merge, mark dirty/clean SQL parameterization, addTemplate / deleteTemplate
 >   - `tests/sync-from-sheet.test.ts` (3) — ★ regression guard for table-skip MUST call recordSyncMetaTouch (the 2026-05-10 setCowork bug). Verified teeth: removed touch line → test failed with message naming the memory file.
 >   - Infra: `tests/helpers/mock-postgres.ts` shared SQL recorder (tagged + .query() shapes), `tests/shims/server-only.ts` no-op, `vitest.config.ts` native tsconfigPaths
-> - **Phase 2 updateJob** (`a52381e`) — third action migrated. Mirrors setCowork pattern (Postgres-first + dirty mark, drop inline Apps Script, heal cron pushes via setJobRow within 5 min). 7 new tests extending postgres-write.test.ts. Default-off behind `WRITE_UPDATE_JOB_TO_POSTGRES`. ⏳ Pending user activation (see "Pending user actions" below).
-> - **Total**: 3 commits + 35/35 tests green. Pre-commit chain runs in ~150ms.
+> - **Phase 2 updateJob** (`a52381e`) — third action migrated. Mirrors setCowork pattern (Postgres-first + dirty mark, drop inline Apps Script, heal cron pushes via setJobRow within 5 min). 7 new tests extending postgres-write.test.ts. ✅ Activated by คุณนุ๊ก at production (smoke test passed, db-migrate confirmed phase2_dirty_at column exists).
+> - **Phase 2 addJob** — fourth action migrated. INSERT + dirty mark. Keeps Apps Script `getNextId` for sequential id (Sheet UI / morning report stay readable) but skips `addJob` Apps Script call → eliminates legacy double-bump (legacy addJob bumps nextId AGAIN after getNextId, leaving id gaps). Heal cron pushes via setJobRow. 7 new tests. Default-off behind `WRITE_ADD_JOB_TO_POSTGRES`. ⏳ Pending activation.
+> - **Total**: 4 commits + 42/42 tests green. Pre-commit chain runs in ~250ms.
 >
 > **Session 2026-05-10 (afternoon batch 5 — Phase 2 setCowork sync_meta bug fix):** ✅
 > - **Symptom**: หลัง activate `WRITE_COWORK_TO_POSTGRES=1` + drop inline Apps Script sync, /board cards ไม่ render cowork chip ใหม่ ทั้งที่ toast success + Postgres state ถูกต้อง
@@ -352,17 +353,17 @@ Type-check ผ่าน + production build OK ทุก commit. Vercel auto-depl
 
 ---
 
-## 🎯 Next session — Phase 2 next actions (P1 + updateJob ✅ done 2026-05-11)
+## 🎯 Next session — Phase 2 next actions (P1 + updateJob + addJob ✅ done 2026-05-11)
 
 ### Migration order (remaining hot-path actions)
 
-After updateJob, the natural next batches by risk:
+After addJob, the natural next batches by risk:
 
-1. **`addJob`** (Med risk, ~30 min) — single-row INSERT, mirror addTemplate pattern but for jobs table. Used by data-audit modal orphan-recovery + standalone job adds. Touches getNextId atomically — needs lock semantics
-2. **`bulkForward`** (Higher risk, ~1 hr) — multi-row delete-old + insert-new with server-allocated newIds. The "atomic forward" path that v2 already optimized. Translation: write all newJobs to Postgres + dirty mark + delete oldJobs in same Postgres transaction. Apps Script side already atomic — heal cron pushes via setJobRow per row
-3. **`cancelJob`** (Med risk, ~45 min) — atomic move job→cancelled. Two tables touched in one transaction
-4. **`moveToShipped`** (Med risk, ~45 min) — atomic move job→shipped. Same shape as cancelJob
-5. **`reassignStaff`** (Low risk, ~20 min) — single-field UPDATE like setCowork. Should be quick
+1. **`bulkForward`** (Higher risk, ~1 hr) — multi-row delete-old + insert-new with server-allocated newIds. The "atomic forward" path that v2 already optimized. Translation: write all newJobs to Postgres + dirty mark + delete oldJobs in same Postgres transaction. Apps Script side already atomic — heal cron pushes via setJobRow per row. ⚠️ Need batch dirty-mark for delete (`phase2_deleted_at` or row-tombstone pattern)
+2. **`cancelJob`** (Med risk, ~45 min) — atomic move job→cancelled. Two tables touched in one transaction. Patterns from `mirrorWriteToPostgres mirrorCancelOrder` reusable
+3. **`moveToShipped`** (Med risk, ~45 min) — atomic move job→shipped. Same shape as cancelJob
+4. **`reassignStaff`** (Low risk, ~20 min) — single-field UPDATE like setCowork. Should be quick
+5. **`deleteJob`** (Low risk, ~15 min) — DELETE FROM jobs. Need tombstone pattern so heal cron knows to delete from Sheet too — or add a "delete" action to setJobRow
 
 After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (full table ownership) + drop `mirrorWriteToPostgres` jobs branch
 
@@ -372,6 +373,29 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 ---
 
 ## ⚠️ Pending user actions (after 2026-05-11 session)
+
+### Phase 2 addJob activation — เหลือ 1 ขั้น (db-migrate + Apps Script v5.10.11 พร้อมแล้ว)
+
+✅ **Code deployed** 2026-05-11 — `addJobToPostgres` + route flag-gated branch ready, dormant ถ้า flag off
+✅ **Apps Script v5.10.11** ใช้ `setJobRow` (deploy แล้วจาก setCowork rollout)
+✅ **Schema** `phase2_dirty_at` already exists on jobs (confirmed by `db-migrate` ที่รัน 2026-05-11)
+
+ถ้าจะ activate Phase 2 สำหรับ addJob:
+
+1. **Set env var** — Vercel → Settings → Environment Variables → Add `WRITE_ADD_JOB_TO_POSTGRES=1` (Production + Preview + Development) → redeploy
+2. **Smoke test**:
+   - เปิด /board → toolbar "+ งานเดี่ยว" (ถ้ามี) หรือ /orders → "สร้าง Job" จาก data-audit modal
+   - กรอก name + dept + staff + (ออปชั่น orderId) → save
+   - **คาดหวัง**: card ขึ้น Kanban ทันที, ไม่มี call `post('addJob', ...)` ใน Vercel logs (มีแค่ `getNextId` + Postgres INSERT)
+   - **เปิด Sheet → tab `jobs`** → row ใหม่ ยังไม่มี (รอ heal cron 5 นาที)
+   - **รอ ≤5 นาที** → ดู Vercel logs `/api/cron/sync-to-sheet` → confirm `tables: [{table: 'jobs', candidates: ≥1, healed: ≥1}]`
+   - **เปิด Sheet `jobs` ใหม่** → row ใหม่ขึ้นแล้ว ตามที่กรอก
+   - **id check**: id ต้อง sequential (ไม่กระโดดเพราะไม่มี double-bump). ถ้าเทียบกับ jobs เดิมที่ยังเป็น legacy path = id Phase 2 ติดกันเช่น 234, 235, 236; legacy = 234, 236, 238 (gap 2)
+3. **Idempotency check still works** — ลองส่งซ้ำเร็วๆ 2 ครั้ง สำหรับ orderId เดียวกัน → ครั้งที่ 2 ควรได้ 409 พร้อม message "ใบสั่งงาน #X มี Job #Y ผูกอยู่แล้ว"
+4. **Failure path** — temporarily rename `setJobRow` action ใน Apps Script editor → addJob via /board → confirm row อยู่ใน Postgres + Sheet ไม่ update → restore action + push → รอ heal cron → confirm row healed + Sheet updated
+5. **Rollback** — unset `WRITE_ADD_JOB_TO_POSTGRES` → redeploy → กลับ Apps Script-first path (legacy double-bump resumes for new adds; existing Phase 2-added rows stay valid in both Postgres + Sheet after heal)
+
+⚠️ **Trade-off** — Sheet stale ได้สูงสุด ~5 นาทีหลัง add (เหมือน updateJob). Morning report 8 AM อ่านจาก Sheet — ถ้าสร้างงาน 7:55-8:00 อาจตกหล่นรายงานวันนั้น
 
 ### Phase 2 updateJob activation — เหลือ 1 ขั้น (ถ้า setCowork ยังไม่ activate ทำพร้อมกันเลย)
 
