@@ -391,7 +391,12 @@ export function OrderForm({
         body: JSON.stringify(body),
       });
       const respJson = await res.json().catch(() => ({}));
-      setBusy(false);
+      // Keep busy=true through the submitAndPromote chain so the button
+      // label stays "กำลังส่ง..." for the full save→promote flow instead
+      // of flashing back to idle for ~500ms between fetches (the "เงียบ"
+      // gap user reported 2026-05-11).
+      const willChain = mode === 'submitAndPromote' && res.ok && (respJson?.orderId || initial?.id);
+      if (!willChain) setBusy(false);
       if (res.status === 409 && respJson?.error === 'duplicate') {
         setDuplicate({ duplicates: respJson.duplicates || [] });
         // Close the placeholder popup — user has to confirm duplicate first.
@@ -427,16 +432,23 @@ export function OrderForm({
           });
           const promoteJson = await promoteRes.json().catch(() => ({}));
           if (!promoteRes.ok) {
+            setBusy(false);
             setError(promoteJson?.error || `ส่งเข้าระบบไม่สำเร็จ — HTTP ${promoteRes.status}`);
             return;
           }
           broadcastWrite('/api/orders/promote-draft');
           startTransition(() => router.refresh());
           setSuccess({ ...successInfo, jobId: Number(promoteJson.jobId) || successInfo.jobId });
-          // Auto-navigate to /board after a brief success flash
-          setTimeout(() => router.push('/board'), 800);
+          // Toast for explicit "ส่งเข้าระบบสำเร็จ" feedback. The success
+          // modal also flashes briefly before redirect, but the toast
+          // persists across the navigation transition.
+          toast.success(`ส่งใบสั่งงานเข้าระบบสำเร็จ — Job #${promoteJson.jobId || ''}`);
+          // Auto-navigate to /board — long enough for user to perceive
+          // the success state, short enough to feel snappy.
+          setTimeout(() => router.push('/board'), 1200);
           return;
         } catch (err) {
+          setBusy(false);
           setError(err instanceof Error ? err.message : 'ส่งเข้าระบบไม่สำเร็จ — เครือข่ายขัดข้อง');
           return;
         }
