@@ -407,18 +407,18 @@ describe('createOrderInPostgres', () => {
     expect(r).toEqual({ ok: true, orderId: 202605070, jobId: null });
 
     const insert = findCallContaining('INSERT INTO orders');
-    expect(insert).toBeDefined();
+    expect(insert, 'createOrderInPostgres must run INSERT INTO orders').toBeDefined();
     // Critical — phase2_dirty_at must be set so heal cron pushes to Sheet.
-    expect(insert!.text).toContain('phase2_dirty_at');
-    expect(insert!.text).toMatch(/NOW\(\)/);
-    expect(insert!.text).toContain('ON CONFLICT (id) DO NOTHING');
+    expect(insert!.text, 'order INSERT must include phase2_dirty_at column').toContain('phase2_dirty_at');
+    expect(insert!.text, 'phase2_dirty_at must be set via NOW()').toMatch(/NOW\(\)/);
+    expect(insert!.text, 'order INSERT must be idempotent via ON CONFLICT').toContain('ON CONFLICT (id) DO NOTHING');
 
     expect(insert!.values[0]).toBe(202605070);
     expect(insert!.values[1]).toBe('Brochure 1000');
     expect(insert!.values[2]).toBe('TestCo');
 
     // No jobs INSERT for draft path
-    expect(callsContaining('INSERT INTO jobs')).toHaveLength(0);
+    expect(callsContaining('INSERT INTO jobs'), 'draft mode must NOT INSERT INTO jobs').toHaveLength(0);
   });
 
   it('INSERTs both order + job rows with shared phase2_dirty_at', async () => {
@@ -434,12 +434,13 @@ describe('createOrderInPostgres', () => {
     expect(r).toEqual({ ok: true, orderId: 202605071, jobId: 480 });
 
     const orderInsert = findCallContaining('INSERT INTO orders');
-    expect(orderInsert!.text).toContain('phase2_dirty_at');
+    expect(orderInsert, 'order INSERT must run on non-draft createOrder').toBeDefined();
+    expect(orderInsert!.text, 'order INSERT must include phase2_dirty_at').toContain('phase2_dirty_at');
 
     const jobInsert = findCallContaining('INSERT INTO jobs');
-    expect(jobInsert).toBeDefined();
-    expect(jobInsert!.text).toContain('phase2_dirty_at');
-    expect(jobInsert!.text).toContain('ON CONFLICT (id) DO NOTHING');
+    expect(jobInsert, 'job INSERT must run when input.job provided').toBeDefined();
+    expect(jobInsert!.text, 'job INSERT must include phase2_dirty_at').toContain('phase2_dirty_at');
+    expect(jobInsert!.text, 'job INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
     // jobs INSERT values: [id, orderId, name, ...]
     expect(jobInsert!.values[0]).toBe(480);
     expect(jobInsert!.values[1]).toBe(202605071);
