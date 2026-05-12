@@ -94,6 +94,8 @@
 >
 > **Total session 2026-05-12**: 5 commits / 10 audit findings closed (M3 + M-restore + L2 + L4 + M4 + M1 + L1/L2/L4 + Sprint1×6 + Sprint2×4) / 0 user-visible regressions / type-check ✅ / 72 tests ✅ / build ✅
 >
+> **Follow-up chore (same day, after Sentry report):** `6131e8b` — Sentry `ignoreErrors` filter expanded to drop browser-extension `sendMessage` + "Extension context invalidated" noise. Triggered by Sentry-reported `TypeError: Cannot read properties of undefined (reading 'sendMessage')` on `/board?dept=print` (2026-05-12T08:47Z) — not our code, content-script context-invalidation from a user's extension. Regex stays tight (specific message text) so future real `sendMessage` errors in our own code still surface. Type-check ✅ / 72 tests ✅ / lint ✅ / pushed → Vercel auto-deploy.
+>
 > ### Audit items deferred to Sprint 3 (low ROI vs Sprint 1+2)
 > - **A04-2** APPS_SCRIPT_TOKEN 5y → 90d rotation (defensive — no breach yet)
 > - **M-A01-1** `/api/orders/raw` role-gate to admin+sales (low real risk — staff trusted)
