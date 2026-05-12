@@ -1,17 +1,31 @@
 # 🐞 Audit Backlog — Dashboard v2
 
-> Last scan: **2026-05-12** (penprinting-auditor) — รอบ regression audit หลัง `c0be3b8` loadOrder Postgres-first refactor
+> Last scan: **2026-05-12** (5-dimensional audit — 4 parallel subagents covering data/perf/a11y/security + manual architecture review)
 >
-> Latest update: **2026-05-12** — ปิด 4 items จาก audit cleanup batch:
-> - ✅ M3-jobform-stale-toast (closure capture clarity)
-> - ✅ M-restore-cancelled-parent (block restore at cancelled parent)
-> - ✅ L2-currentactor-edge-comment (doc clarity)
-> - ✅ L4-data-audit-modal-sales-no-action (hide button for non-admin)
+> Latest update: **2026-05-12** — **10 audit items closed across 5 commits today**:
 >
-> Plus 2 audit items closed in same-day cleanup (`f4f3474`):
-> - ✅ M4 narrow `loadOrderFromPostgres` staleness gate to `['orders']`
-> - ✅ M1 drop redundant retry in `/api/track/lookup` (loadOrder ทำ fallback ในตัวอยู่แล้ว)
-> - ✅ L1/L2/L4 (in c0be3b8) — print/page.tsx + track/lookup stale comments + loadOrder docstring
+> Morning batch (loadOrder refactor + cleanup):
+> - ✅ M3-jobform-stale-toast (closure capture clarity, `7e9fa6b`)
+> - ✅ M-restore-cancelled-parent (block restore at cancelled parent, `7e9fa6b`)
+> - ✅ L2-currentactor-edge-comment (doc clarity, `7e9fa6b`)
+> - ✅ L4-data-audit-modal-sales-no-action (hide button for non-admin, `7e9fa6b`)
+> - ✅ M4 narrow `loadOrderFromPostgres` staleness gate to `['orders']` (`f4f3474`)
+> - ✅ M1 drop redundant retry in `/api/track/lookup` (loadOrder ทำ fallback ในตัวอยู่แล้ว) (`f4f3474`)
+> - ✅ L1/L2/L4 stale comments in print/page.tsx + track/lookup + loadOrder docstring (`c0be3b8`)
+>
+> Afternoon Sprint 1 (`6e46d82`) — 6 high-impact fixes:
+> - ✅ PERF-F1 4 route-segment `loading.tsx` (board/orders/calendar/analytics)
+> - ✅ A05-1 Security headers in `next.config.mjs`
+> - ✅ PERF-B2 `allSettledLimit(cap=3)` on `/api/orders/update` cascade
+> - ✅ A11Y-R1 `<main>` landmark + skip-link + global `focus-visible:` rule
+> - ✅ A11Y-O2 Touch targets 44×44 (9 close buttons + MobileUserMenu + toast)
+> - ✅ PERF-C1 Card `arePropsEqual` field-compare (no more JSON.stringify hot path)
+>
+> Afternoon Sprint 2 (`190c5fe`) — 4 security + a11y deeper fixes:
+> - ✅ A04-1 /track 3-layer brute-force (Upstash IP + per-id PIN lockout + constant-time compare)
+> - ✅ A09-1 Login audit logging + Sentry breadcrumb
+> - ✅ A11Y-P1 Urgency badge contrast (URGENCY_BADGE Tailwind pair, 6 callsites)
+> - ✅ A11Y-U2 Form errors `role="alert"` (login + track + ForwardDialog + Reassign + BulkActions)
 >
 > Previous: **2026-05-09** — ปิด 1 user-reported perf bug (`createOrder` missing from PATHS_BY_ACTION → order create perceived 15-60s instead of ~1.5s)
 >

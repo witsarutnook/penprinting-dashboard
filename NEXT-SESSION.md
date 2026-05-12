@@ -71,6 +71,44 @@
 >
 > **Future trigger to revisit:** ถ้า Apps Script daily quota เริ่มชน 80% threshold หรือ Vercel cron latency กระทบ user → table-skip cron จะคุ้มทำ. ไม่งั้น defer ต่อ
 >
+> ### 5-dimensional audit batch + Sprint 1/2 follow-up (same session)
+>
+> After the loadOrder fix above, ran a **comprehensive audit across 5 dimensions** via 4 parallel subagents (data-doctor + perf + a11y + security) + manual architecture review:
+>
+> **Audit findings totals**: 18 a11y / 12 perf / 12 security / 6 medium tech-debt
+> **Net assessments**: 🟡 yellow across the board — production-grade with surgical gaps
+>
+> **Sprint 1 (`6e46d82`) — 6 high-impact fixes** (~3-4h):
+> - **PERF-F1** 4 route-segment `loading.tsx` files (board/orders/calendar/analytics) — eliminate blank-screen gap
+> - **A05-1** Security headers in `next.config.mjs` (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
+> - **PERF-B2** `allSettledLimit(cap=3)` on `/api/orders/update` cascade — match M5 pattern (timeout-resistant)
+> - **A11Y-R1** `<main id="main-content">` landmark + skip-to-content link in DashboardShell + global `focus-visible:` outline rule in globals.css
+> - **A11Y-O2** Touch targets 44×44 — 9 modal close buttons + MobileUserMenu trigger + toast dismiss
+> - **PERF-C1** Card `arePropsEqual` field-level compare (replaces JSON.stringify) — ~500KB string work/tick saved
+>
+> **Sprint 2 (`190c5fe`) — 4 security + a11y deeper fixes** (~3h):
+> - **A04-1** /track 3-layer brute-force resistance — IP rate-limit via Upstash + per-id PIN-failure lockout via new `peekRateLimit` + `recordFailure` helpers in `lib/rate-limit.ts` + `timingSafeStringEqual` constant-time compare
+> - **A09-1** Login audit logging (`[auth]` grep-able structured logs + Sentry breadcrumb on suspicious events) — covers success/fail/rate-limit/invalid-input
+> - **A11Y-P1** Urgency badge contrast — new `URGENCY_BADGE` paired Tailwind tokens (~8:1 vs prior ~3:1), refactored 6 callsites across board/card, orders-table, calendar/grid, calendar/page Pill
+> - **A11Y-U2** Form errors `role="alert" aria-live="assertive"` — login + /track + ForwardDialog + ReassignDialog (×3) + BulkActionsBar
+>
+> **Total session 2026-05-12**: 5 commits / 10 audit findings closed (M3 + M-restore + L2 + L4 + M4 + M1 + L1/L2/L4 + Sprint1×6 + Sprint2×4) / 0 user-visible regressions / type-check ✅ / 72 tests ✅ / build ✅
+>
+> ### Audit items deferred to Sprint 3 (low ROI vs Sprint 1+2)
+> - **A04-2** APPS_SCRIPT_TOKEN 5y → 90d rotation (defensive — no breach yet)
+> - **M-A01-1** `/api/orders/raw` role-gate to admin+sales (low real risk — staff trusted)
+> - **PERF-A1** OrdersData rawData payload trim (needs careful UX testing — /orders is admin-only, not hot path)
+> - **ARCH-OBS** Sentry DSN setup (user-deferred earlier in session)
+> - **MFA + per-user passwords** (4-user app, MFA overkill at current scale)
+> - **E2E tests (Playwright)** (72 unit + manual smoke acceptable at scale)
+> - **Phase 4.2 close-out** (drop Apps Script writes — needs Phase 2 stable ≥1 month first)
+>
+> ### User actions queued
+> 1. **Smoke test 6 Phase 2 actions** (~10 min) — checklist above
+> 2. **`/data-doctor` scan** (Apps Script `divergenceScan()` + Postgres SQL — runbook generated this session)
+> 3. **`/check-quota`** (Apps Script + Cloudflare quota trend after Phase 2 full activation)
+> 4. **Vercel Analytics watch** /track p95 24-48h (M2 monitor item — Postgres-on-edge cold-start concern)
+>
 > ---
 >
 > **Session 2026-05-11 ★ MEGA SESSION (P1 guardrails + Phase 2 jobs + orders + tombstone + audit pipeline + UX overhaul):** ✅

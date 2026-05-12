@@ -333,6 +333,29 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 **Rollback:** `git revert` — ไม่มี env flag ใหม่ (behavior strictly improves ภายใต้ `READ_FROM_POSTGRES=1` ที่ ON อยู่แล้ว). Postgres ล่ม → unset `READ_FROM_POSTGRES` → กลับ Apps Script 100% รวม path นี้
 
+### 5-dimensional audit batch + Sprint 1/2 (2026-05-12) — 10 audit findings closed
+
+After the morning's `loadOrder` Postgres-first refactor + cleanup batch, ran a comprehensive audit across 5 dimensions via 4 parallel subagents (data-doctor + perf + a11y + security) + manual architecture review. Total findings: 18 a11y / 12 perf / 12 security / 6 medium tech-debt. Net assessments: 🟡 yellow across the board — production-grade with surgical gaps.
+
+**Sprint 1** (`6e46d82`) — 6 high-impact fixes:
+- **PERF-F1** Route-segment `loading.tsx` for /board, /orders, /calendar, /analytics — eliminates blank-screen gap on navigation
+- **A05-1** HTTP security headers in `next.config.mjs` (X-Frame-Options DENY + X-Content-Type-Options + Referrer-Policy + Permissions-Policy)
+- **PERF-B2** `allSettledLimit(cap=3)` on `/api/orders/update` cascade — closes M5 consistency gap (other cascade routes already had it)
+- **A11Y-R1** `<main id="main-content">` landmark + skip-to-content link in DashboardShell + global `focus-visible:` outline rule
+- **A11Y-O2** Touch targets bumped to 44×44 — 9 modal close buttons + MobileUserMenu trigger + toast dismiss
+- **PERF-C1** Card `arePropsEqual` field-level compare replaces `JSON.stringify` on `cowork`/`order` — ~500KB string work/auto-sync tick eliminated on /board
+
+**Sprint 2** (`190c5fe`) — 4 security + a11y deeper fixes:
+- **A04-1** /track 3-layer brute-force resistance — IP rate-limit via Upstash + per-id PIN-failure lockout (5/hr/orderId) + constant-time `timingSafeStringEqual` PIN compare. New `peekRateLimit` + `recordFailure` helpers in `lib/rate-limit.ts` lets the lockout check fire WITHOUT burning the counter on legitimate lookups.
+- **A09-1** Login audit logging — `[auth]` grep-able structured `console.warn` in Vercel Logs + Sentry breadcrumb on suspicious events; covers success/fail/rate-limit/invalid-input
+- **A11Y-P1** Urgency badge contrast — new `URGENCY_BADGE` paired Tailwind tokens (~8:1 vs prior ~3:1 with `bgHex + '20'` alpha pattern); refactored 6 callsites (card.tsx ×2, orders-table.tsx, calendar/grid.tsx ×2, calendar/page.tsx Pill)
+- **A11Y-U2** Form errors gain `role="alert" aria-live="assertive"` — login + /track + ForwardDialog + ReassignDialog (×3) + BulkActionsBar; SR users now hear errors on submit
+
+**Audit items deferred to Sprint 3** (ROI lower than Sprint 1+2 per honest ROI review):
+A04-2 token rotation, M-A01-1 /api/orders/raw role gate, PERF-A1 OrdersData payload trim, MFA, E2E tests, Phase 4.2 close-out
+
+**Memory captured**: [`feedback_loadorder_postgres_first.md`](~/.claude/projects/-Users-witsarut-p/memory/feedback_loadorder_postgres_first.md) — strangler-pattern staleness lesson (write side migrates → read paths invert assumption → recurring bug factory until refactored at root).
+
 ### Phase 2 mega-session (2026-05-11) — 11 actions migrated + tombstone infra + UX overhaul
 
 19+ commits + 5 Apps Script clasp pushes + 28→72 vitest tests in one ~17-hour day. End state: virtually all hot-path mutations on jobs + orders run Postgres-first.
