@@ -228,18 +228,26 @@ export async function loadOrder(
   id: number | string,
   opts: { revalidate?: number } = {},
 ): Promise<LoadOrderResponse> {
-  // Postgres-first only when caller is OK with the 10-min cron staleness
-  // ceiling. Write-path callers pass revalidate: 0 because they need the
-  // result of THEIR own write reflected — Postgres mirror would still
-  // show the pre-write snapshot. Read-path callers pass a small revalidate
-  // (≥30s) which is a hint that staleness is fine.
-  if ((opts.revalidate ?? 0) > 0) {
-    const pg = await tryPostgres('loadOrder', async () => {
-      const { loadOrderFromPostgres } = await import('@/lib/api-postgres');
-      return loadOrderFromPostgres(id);
-    });
-    if (pg) return pg;
-  }
+  // Postgres-first always. Phase 2 (2026-05-11) made Postgres the source
+  // of truth for createOrder/updateOrder/promote/cancel/forward/move —
+  // writes land in Postgres instantly; Sheet lags up to 5 min via heal
+  // cron. The pre-Phase-2 carve-out (skip Postgres when revalidate=0)
+  // assumed the opposite staleness model and caused the 2026-05-12
+  // print-page bugs:
+  //   - "พิมพ์+ส่ง" 404 on brand-new orders (Sheet doesn't have row yet)
+  //   - print page showing pre-edit values after updateOrder
+  // Sister fix: 1f62d3b (promote-draft) added loadOrderAndJobsForPromote
+  // as a workaround helper. This refactor closes the root cause so future
+  // Phase 2 actions don't bring back the same shape of bug.
+  //
+  // loadOrderFromPostgres throws PostgresStaleError on row-not-found /
+  // mirror-stale → tryPostgres returns null → fall through to Apps
+  // Script (which is the right behavior for Phase 1.x stragglers).
+  const pg = await tryPostgres('loadOrder', async () => {
+    const { loadOrderFromPostgres } = await import('@/lib/api-postgres');
+    return loadOrderFromPostgres(id);
+  });
+  if (pg) return pg;
   const data = await get<Partial<LoadOrderResponse>>(
     'getOrder',
     { orderId: String(id) },

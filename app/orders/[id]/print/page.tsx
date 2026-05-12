@@ -5,10 +5,12 @@ import QRCode from 'qrcode';
 import { loadOrder, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 
-// "พิมพ์+สั่ง" pops this page open ~1-2s after addOrder completes. We use
-// the single-row `getOrder` action (uncached, ~200ms, ~1KB) instead of
-// loadAll → loadAllFresh fallback (~600-1200ms, ~200KB) — brand-new orders
-// don't need the full snapshot, just their own row.
+// "พิมพ์+สั่ง" pops this page open ~1-2s after addOrder completes.
+// loadOrder() is Postgres-first (with Apps Script fallback) so brand-new
+// orders created via Phase 2 createOrder are visible immediately — Sheet
+// lags up to 5 min via heal cron, so reading Apps Script direct would
+// 404. force-dynamic stops Next.js from caching the page itself across
+// print actions (each click should re-read the latest spec).
 export const dynamic = 'force-dynamic';
 import { displayDate } from '@/lib/jobs';
 import { STAFF } from '@/lib/board';

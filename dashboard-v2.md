@@ -300,6 +300,39 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Print stale-read root-cause fix (2026-05-12) — `loadOrder()` Postgres-first ทุก call
+
+**User-reported:**
+1. แก้ไขงานเสร็จ → กดพิมพ์ใบสั่งใหม่ → ค่ายังเป็นก่อนแก้
+2. กด "พิมพ์+ส่ง" / "พิมพ์" → บางครั้ง 404
+
+**Root cause (one bug, two symptoms):** [`lib/api.ts`](lib/api.ts) `loadOrder()` มี carve-out `if ((opts.revalidate ?? 0) > 0)` ที่ skip Postgres เมื่อ caller ขอ fresh read. Logic นี้ assumes "Postgres mirror lag + Sheet fresh" — true ตอน Phase 1 แต่กลับด้านหลัง Phase 2 (createOrder/updateOrder writes ลง Postgres เท่านั้น, Sheet lag ≤5 min via heal cron). Print page เรียก `loadOrder(id)` ไม่ใส่ opts → revalidate=0 → skip Postgres → Apps Script `getOrder` → ค่าเก่า (Bug 1) หรือ null=404 (Bug 2).
+
+**Sister bug ที่เคย patch:** `1f62d3b` (promote-draft) สร้าง `loadOrderAndJobsForPromote()` workaround helper. NEXT-SESSION 2026-05-11 บันทึก lesson ไว้แล้ว ("Pattern fix: write Postgres-first helpers"). Refactor นี้ปิด root cause ที่ลึกกว่า patch (ทำที่ `loadOrder` เอง แทนสร้าง helper ใหม่ทุกรอบ).
+
+**Fix** — `lib/api.ts`:
+- ลบ `if ((opts.revalidate ?? 0) > 0)` carve-out → Postgres-first ทุก call
+- `loadOrderFromPostgres` throws `PostgresStaleError` เมื่อ row not found → `tryPostgres` returns null → fall through ไป Apps Script (สำหรับ Phase 1.x stragglers ที่ mirror cron ยังไม่ทัน)
+- `app/orders/[id]/print/page.tsx` comment อัปเดต
+
+**Verified:** type-check ✅ / 72 vitest tests ✅ / production build ✅
+
+**Behavior change ของ 5 callers:**
+
+| Caller | เดิม | หลัง refactor |
+|---|---|---|
+| `/api/track/lookup` | Postgres (revalidate=30) → retry Apps Script | Postgres ทั้งคู่ + Apps Script fallback |
+| `/api/orders/raw/[id]` | Postgres-first (revalidate=30) | เหมือนเดิม |
+| `/api/jobs/restore` | Apps Script direct | **ดีขึ้น** — Postgres-first |
+| `/orders/[id]/tracking-card` | Apps Script direct | **bug fixed** (Phase 2 track 404) |
+| `/orders/[id]/print` | Apps Script direct | **bug fixed (รายงานนี้)** |
+
+**Lessons:**
+- **Strangler-pattern read paths invert staleness assumption when write side migrates.** Hard-coded staleness model = recurring bug factory จนกว่าจะ refactor ที่ root
+- **Workaround helpers signal latent root cause.** `loadOrderAndJobsForPromote` คือ helper #1 — refactor ป้องกัน helper #2 ที่ทำงานเดียวกัน
+
+**Rollback:** `git revert` — ไม่มี env flag ใหม่ (behavior strictly improves ภายใต้ `READ_FROM_POSTGRES=1` ที่ ON อยู่แล้ว). Postgres ล่ม → unset `READ_FROM_POSTGRES` → กลับ Apps Script 100% รวม path นี้
+
 ### Phase 2 mega-session (2026-05-11) — 11 actions migrated + tombstone infra + UX overhaul
 
 19+ commits + 5 Apps Script clasp pushes + 28→72 vitest tests in one ~17-hour day. End state: virtually all hot-path mutations on jobs + orders run Postgres-first.
