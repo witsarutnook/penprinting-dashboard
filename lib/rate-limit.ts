@@ -115,3 +115,47 @@ export async function checkRateLimit(
 
   return { ok: true, remaining: Math.max(0, opts.limit - count), resetIn: opts.windowSec };
 }
+
+/** Read-only counter check — does NOT increment. Use to decide if a
+ *  caller is currently locked out before performing an action whose
+ *  failure should bump the counter (via `recordFailure`). Returns ok
+ *  with remaining budget, or denied if the counter has already exceeded
+ *  the limit. Fails open. */
+export async function peekRateLimit(
+  key: string,
+  opts: { limit: number; windowSec: number },
+): Promise<RateLimitResult> {
+  const cfg = configured();
+  if (!cfg) {
+    return { ok: true, remaining: opts.limit, resetIn: opts.windowSec };
+  }
+  const fullKey = `rl:${key}`;
+  const count = await upstash<number>(cfg, 'GET', fullKey);
+  const n = typeof count === 'number' ? count : (count != null ? Number(count) : 0);
+  if (!Number.isFinite(n) || n <= 0) {
+    return { ok: true, remaining: opts.limit, resetIn: opts.windowSec };
+  }
+  if (n > opts.limit) {
+    const ttl = await upstash<number>(cfg, 'TTL', fullKey);
+    const retryIn = typeof ttl === 'number' && ttl > 0 ? ttl : opts.windowSec;
+    return { ok: false, retryIn };
+  }
+  return { ok: true, remaining: Math.max(0, opts.limit - n), resetIn: opts.windowSec };
+}
+
+/** Increment a failure counter. Use after an action fails so subsequent
+ *  `peekRateLimit` checks see the bump. Combined pattern: peek before
+ *  action, recordFailure after fail, do nothing after success. Fails
+ *  open. Returns the new count for logging (null on KV miss). */
+export async function recordFailure(
+  key: string,
+  opts: { windowSec: number },
+): Promise<number | null> {
+  const cfg = configured();
+  if (!cfg) return null;
+  const fullKey = `rl:${key}`;
+  const count = await upstash<number>(cfg, 'INCR', fullKey);
+  if (count == null) return null;
+  await upstash(cfg, 'EXPIRE', fullKey, opts.windowSec);
+  return count;
+}

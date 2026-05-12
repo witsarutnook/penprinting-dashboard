@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { displayDate } from '@/lib/jobs';
 import { broadcastWrite } from '@/lib/auto-sync';
-import { URGENCY_COLORS } from '@/lib/calendar';
+import { URGENCY_BADGE } from '@/lib/calendar';
 import {
   IconX, IconPencil, IconAlertTriangle, IconPrinter, IconAlertCircle, IconFileText,
   IconCheck, IconCornerUpRight, IconUsers, IconRefreshCw,
@@ -125,9 +125,10 @@ const OrderRowMemo = memo(function OrderRow({
   idx: number;
   onClick: (id: number) => void;
 }) {
-  const urgencyColor = o.jobUrgency in URGENCY_COLORS
-    ? URGENCY_COLORS[o.jobUrgency as 'normal']
-    : '#9ca3af';
+  // WCAG-AA badge palette — see lib/calendar.ts URGENCY_BADGE (A11Y-P1).
+  const badge = o.jobUrgency in URGENCY_BADGE
+    ? URGENCY_BADGE[o.jobUrgency as 'normal']
+    : { bg: '#f5f5f4', fg: '#44403c' };
   const showUrgencyBadge =
     o.step !== 'จัดส่งแล้ว' &&
     o.step !== 'ยกเลิก' &&
@@ -172,7 +173,7 @@ const OrderRowMemo = memo(function OrderRow({
         {showUrgencyBadge ? (
           <span
             className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium tabular-nums"
-            style={{ background: urgencyColor + '20', color: urgencyColor }}
+            style={{ background: badge.bg, color: badge.fg }}
           >
             {o.jobUrgencyLabel}
           </span>

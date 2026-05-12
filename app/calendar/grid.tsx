@@ -6,6 +6,7 @@ import {
   type Urgency,
   URGENCY_LABELS,
   URGENCY_COLORS,
+  URGENCY_BADGE,
   DEPT_LABELS,
   type Dept,
 } from '@/lib/calendar';
@@ -139,7 +140,7 @@ function DayCell({
               <span
                 key={u}
                 className="text-[10px] font-semibold rounded px-1 py-0.5 leading-none tabular-nums"
-                style={{ background: URGENCY_COLORS[u] + '25', color: URGENCY_COLORS[u] }}
+                style={{ background: URGENCY_BADGE[u].bg, color: URGENCY_BADGE[u].fg }}
               >
                 {day.counts[u]}
               </span>
@@ -186,7 +187,7 @@ function MobileDayRow({
                   <span
                     key={u}
                     className="text-[10px] font-semibold rounded px-1 py-0.5 leading-none tabular-nums"
-                    style={{ background: URGENCY_COLORS[u] + '25', color: URGENCY_COLORS[u] }}
+                    style={{ background: URGENCY_BADGE[u].bg, color: URGENCY_BADGE[u].fg }}
                   >
                     {day.counts[u]}
                   </span>

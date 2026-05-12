@@ -121,7 +121,11 @@ function LookupForm({
           <div style={FORM_TITLE}>ตรวจสอบสถานะงาน</div>
           <div style={FORM_SUB}>ใส่เลขที่ใบสั่งงานและ PIN 4 หลัก ที่ระบุในใบสั่งงาน</div>
 
-          {error && <div style={ERROR_BOX}>{error}</div>}
+          {error && (
+            <div role="alert" aria-live="assertive" style={ERROR_BOX}>
+              {error}
+            </div>
+          )}
 
           <form onSubmit={onSubmit}>
             <Field label="เลขที่ใบสั่งงาน">

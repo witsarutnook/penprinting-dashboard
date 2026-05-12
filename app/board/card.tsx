@@ -6,6 +6,7 @@ import {
   type BoardJob,
   type Dept,
   URGENCY_COLORS,
+  URGENCY_BADGE,
   URGENCY_LABELS,
   DEPT_LABELS,
   STAFF,
@@ -436,7 +437,7 @@ function CardImpl({
           </div>
           <span
             className="px-1.5 py-0.5 rounded font-medium tabular-nums whitespace-nowrap text-[10px] leading-snug"
-            style={{ background: urgencyColor + '20', color: urgencyColor }}
+            style={{ background: URGENCY_BADGE[job.urgency].bg, color: URGENCY_BADGE[job.urgency].fg }}
           >
             {URGENCY_LABELS[job.urgency]}
             {job.daysUntilDue !== null && (
@@ -757,7 +758,11 @@ function ForwardDialog({
             />
           </div>
           {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2"
+            >
               <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
@@ -921,7 +926,11 @@ function CoworkDialog({
             })}
           </div>
           {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2"
+            >
               <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
@@ -980,7 +989,7 @@ function DetailContent({
           <div className="flex items-center gap-2 flex-wrap text-[11px] mb-1">
             <span
               className="px-2 py-0.5 rounded font-semibold tabular-nums"
-              style={{ background: urgencyColor + '20', color: urgencyColor }}
+              style={{ background: URGENCY_BADGE[job.urgency].bg, color: URGENCY_BADGE[job.urgency].fg }}
             >
               {URGENCY_LABELS[job.urgency]}
             </span>
@@ -1596,7 +1605,11 @@ function ActionButtons({
         </div>
       )}
       {error && (
-        <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2"
+        >
           <IconAlertCircle size={14} className="flex-shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>

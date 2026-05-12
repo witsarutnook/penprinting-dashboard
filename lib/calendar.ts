@@ -25,6 +25,19 @@ export const URGENCY_COLORS: Record<Urgency, string> = {
   normal:  '#3b82f6', // blue
 };
 
+/** WCAG-AA-compliant badge palette per urgency (Tailwind {bg-100, text-800}
+ *  pairs). Use this instead of `URGENCY_COLORS[u] + '20'` for any element
+ *  that needs to meet 4.5:1 contrast — the alpha-suffix pattern produced
+ *  ~3.0-3.4:1 (failing AA) for the same hue. URGENCY_COLORS itself is
+ *  retained for non-text accents (dots, borders, vendor cards).
+ *  (Auditor A11Y-P1 finding, 2026-05-12.) */
+export const URGENCY_BADGE: Record<Urgency, { bg: string; fg: string }> = {
+  overdue: { bg: '#fee2e2', fg: '#991b1b' }, // red-100 / red-800     ~8.6:1
+  dday:    { bg: '#ede9fe', fg: '#5b21b6' }, // violet-100 / violet-800 ~8.4:1
+  urgent:  { bg: '#ffedd5', fg: '#9a3412' }, // orange-100 / orange-800 ~7.8:1
+  normal:  { bg: '#dbeafe', fg: '#1e40af' }, // blue-100 / blue-800   ~8.5:1
+};
+
 export const DEPT_LABELS: Record<Dept, string> = {
   graphic: 'กราฟิก',
   print:   'พิมพ์',

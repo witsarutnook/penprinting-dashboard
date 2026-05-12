@@ -6,6 +6,46 @@ import { COOKIE_NAME, COOKIE_TTL_SECONDS, lookupPassword, signSession } from '@/
 // of the day, when staff first open the dashboard each morning).
 export const runtime = 'edge';
 
+/** Structured audit log for login events. Edge runtime can't easily
+ *  write to Postgres (audit_log table) — Vercel's console.warn is
+ *  queryable in Logs tab + persisted ~30d. Sentry breadcrumb when
+ *  configured (DSN not always set — see Project-Guidelines Pillar #9).
+ *  (Auditor A09-1 finding, 2026-05-12.) */
+function logAuthEvent(
+  req: Request,
+  event: 'login-success' | 'login-fail' | 'login-rate-limit' | 'login-invalid-input',
+  detail: { user?: string; role?: string; reason?: string } = {},
+) {
+  const ip =
+    req.headers.get('x-real-ip') ||
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown';
+  const ua = req.headers.get('user-agent') || 'unknown';
+  // Single-line searchable format. Grep "[auth]" in Vercel Logs to
+  // find every login event.
+  console.warn(
+    `[auth] ${event} ip=${ip} ua=${JSON.stringify(ua)}` +
+      (detail.user ? ` user=${detail.user}` : '') +
+      (detail.role ? ` role=${detail.role}` : '') +
+      (detail.reason ? ` reason=${detail.reason}` : ''),
+  );
+  // Sentry breadcrumb best-effort. Edge runtime has Sentry support but
+  // we still wrap in try/catch to avoid breaking auth if Sentry import
+  // fails for any reason.
+  if (event === 'login-fail' || event === 'login-rate-limit') {
+    void import('@sentry/nextjs')
+      .then((Sentry) => {
+        Sentry.addBreadcrumb({
+          category: 'auth',
+          level: event === 'login-rate-limit' ? 'warning' : 'info',
+          message: event,
+          data: { ip, ua: ua.slice(0, 80), ...detail },
+        });
+      })
+      .catch(() => {});
+  }
+}
+
 /**
  * Login rate-limit via signed httpOnly cookie (auditor M-login-ratelimit-map).
  *
@@ -73,6 +113,7 @@ export async function POST(req: Request) {
   const rate = readRate(req);
   if (rate.count >= MAX_ATTEMPTS) {
     const retryInMin = Math.ceil((ATTEMPT_WINDOW_MS - (Date.now() - rate.firstAt)) / 60000);
+    logAuthEvent(req, 'login-rate-limit', { reason: `${rate.count} attempts in window` });
     const res = NextResponse.json(
       { error: `เข้าระบบผิดพลาดบ่อยเกินไป กรุณารออีก ${retryInMin} นาที` },
       { status: 429 },
@@ -106,6 +147,7 @@ export async function POST(req: Request) {
 
   if (!mapping) {
     const next: RateState = { count: rate.count + 1, firstAt: rate.firstAt };
+    logAuthEvent(req, 'login-fail', { reason: `attempt ${next.count}/${MAX_ATTEMPTS}` });
     const res = NextResponse.json({ error: 'รหัสผ่านไม่ถูกต้อง' }, { status: 401 });
     attachRateCookie(res, next);
     return res;
@@ -113,6 +155,7 @@ export async function POST(req: Request) {
 
   // Successful login — clear the rate cookie so a future failed attempt
   // starts from zero.
+  logAuthEvent(req, 'login-success', { user: mapping.user, role: mapping.role });
   const cookieValue = await signSession(mapping.role, mapping.user);
   const res = NextResponse.json({ ok: true, role: mapping.role, user: mapping.user });
   res.cookies.set({

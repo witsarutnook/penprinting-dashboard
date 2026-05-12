@@ -10,6 +10,8 @@ import {
   getBangkokToday,
   type Dept,
   type Urgency,
+  URGENCY_BADGE,
+  URGENCY_COLORS,
 } from '@/lib/calendar';
 import { CalendarGrid } from './grid';
 import { AutoSync } from '@/lib/auto-sync';
@@ -294,22 +296,24 @@ function Summary({
     <div className="bg-white rounded-xl border border-stone-200 p-3 mb-3 flex flex-wrap gap-3 items-center text-sm">
       <span className="text-stone-500">งานในเดือนนี้:</span>
       <span className="font-medium text-stone-900">{totalJobs} รายการ</span>
-      <Pill color="#ef4444" label="เลยกำหนด" count={totals.overdue} />
-      <Pill color="#7c3aed" label="วันนี้" count={totals.dday} />
-      <Pill color="#ea580c" label="ด่วน" count={totals.urgent} />
-      <Pill color="#3b82f6" label="ปกติ" count={totals.normal} />
+      <Pill urgency="overdue" label="เลยกำหนด" count={totals.overdue} />
+      <Pill urgency="dday" label="วันนี้" count={totals.dday} />
+      <Pill urgency="urgent" label="ด่วน" count={totals.urgent} />
+      <Pill urgency="normal" label="ปกติ" count={totals.normal} />
     </div>
   );
 }
 
-function Pill({ color, label, count }: { color: string; label: string; count: number }) {
+function Pill({ urgency, label, count }: { urgency: Urgency; label: string; count: number }) {
   if (count === 0) return null;
+  const badge = URGENCY_BADGE[urgency];
+  const dotColor = URGENCY_COLORS[urgency];
   return (
     <span
       className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
-      style={{ background: color + '20', color }}
+      style={{ background: badge.bg, color: badge.fg }}
     >
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />
       {label} {count}
     </span>
   );

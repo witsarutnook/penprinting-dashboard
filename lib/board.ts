@@ -1,8 +1,8 @@
 import type { Job, Order, LoadAllResponse } from './types';
 import { parseDateDMY } from './analytics';
-import { computeUrgency, getBangkokToday, type Urgency, URGENCY_COLORS, URGENCY_LABELS } from './calendar';
+import { computeUrgency, getBangkokToday, type Urgency, URGENCY_COLORS, URGENCY_LABELS, URGENCY_BADGE } from './calendar';
 
-export { URGENCY_COLORS, URGENCY_LABELS };
+export { URGENCY_COLORS, URGENCY_LABELS, URGENCY_BADGE };
 export type { Urgency };
 
 /**

@@ -179,7 +179,11 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
         </button>
       </div>
       {error && (
-        <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5"
+        >
           <IconAlertCircle size={12} className="flex-shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>

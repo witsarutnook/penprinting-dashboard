@@ -5,6 +5,7 @@ import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
 import { computeUrgency, getBangkokToday, type Urgency } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
 import type { Job, Shipped, Cancelled } from '@/lib/types';
+import { checkRateLimit, peekRateLimit, recordFailure } from '@/lib/rate-limit';
 
 // Public route — no auth, no Node-specific deps. Run on Vercel's Edge
 // runtime to skip Node.js cold starts (~150-300ms saved on the first
@@ -59,6 +60,18 @@ function attachRateCookie(res: NextResponse, state: RateState) {
   });
 }
 
+/** Constant-time string compare — defends against timing oracles on PIN
+ *  verification. With rate-limiting above this is defense-in-depth, but
+ *  it's a one-liner safety net. */
+function timingSafeStringEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 function maskName(name: string): string {
   const s = (name || '').trim();
   if (!s) return '-';
@@ -96,6 +109,26 @@ function deptStepLabel(dept: string, staff: string): string {
 }
 
 export async function POST(req: Request) {
+  // Layer 1 — IP-based rate limit via Upstash KV (survives cookie clearing).
+  // The cookie-only rate (below) was bypassable in seconds by clearing
+  // browser data; combined with a 4-digit PIN (10k space) it allowed
+  // practical brute force. Upstash key is per-IP so cookie rotation
+  // doesn't reset it. Fails open if KV not configured — cookie layer is
+  // still in place as defense-in-depth. (Auditor A04-1 finding.)
+  const ip =
+    req.headers.get('x-real-ip') ||
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown';
+  const ipRate = await checkRateLimit(`track:ip:${ip}`, { limit: 30, windowSec: 600 });
+  if (!ipRate.ok) {
+    return NextResponse.json(
+      { error: `ตรวจสอบจาก IP นี้บ่อยเกินไป — รออีก ${Math.ceil(ipRate.retryIn / 60)} นาที` },
+      { status: 429, headers: { 'Retry-After': String(ipRate.retryIn) } },
+    );
+  }
+
+  // Layer 2 — Cookie-scoped rate (kept for browsers behind shared IPs e.g.
+  // office NAT). Same 15-hits-per-hour but combined with Layer 1 above.
   const rate = readRate(req);
   if (rate.hits >= MAX_HITS) {
     const minutesLeft = Math.ceil((rate.resetAt - Date.now()) / 60000);
@@ -131,6 +164,21 @@ export async function POST(req: Request) {
     return respond({ error: 'เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง' }, 400);
   }
 
+  // Layer 3 — Per-id PIN-failure lockout. Independent of IP/cookie: even
+  // if an attacker rotates both, 5 failed PIN attempts on the SAME order
+  // id within 1h lock that id out for the remainder. The 4-digit PIN
+  // space (10k) means ~5 guesses with effectively 0 hit-rate per attempt
+  // before being locked out. PEEK here so a legitimate lookup with the
+  // correct PIN doesn't burn the counter — only `recordFailure` below on
+  // PIN mismatch increments. (Auditor A04-1.)
+  const pinLockState = await peekRateLimit(`track:pin-fail:${id}`, { limit: 5, windowSec: 3600 });
+  if (!pinLockState.ok) {
+    return respond(
+      { error: `ใบสั่งงาน #${id} ถูกล็อกชั่วคราว (ใส่ PIN ผิดเกินกำหนด) — รออีก ${Math.ceil(pinLockState.retryIn / 60)} นาที` },
+      429,
+    );
+  }
+
   // Single-order lookup is much faster than loadAll for /track:
   // public users only need ONE order — ~1KB payload vs ~200KB.
   // loadOrder() is Postgres-first with built-in Apps Script fallback
@@ -155,7 +203,13 @@ export async function POST(req: Request) {
     ? order.rawData
     : (order.details || {})) as Record<string, unknown>;
   const storedPin = String(raw.pin || '');
-  if (!storedPin || storedPin !== pin) {
+  // Constant-time PIN compare to defend against timing oracle. With the
+  // rate limits above this is mostly belt-and-suspenders, but cheap.
+  if (!storedPin || !timingSafeStringEqual(storedPin, pin)) {
+    // Record the PIN failure so the per-id lockout (Layer 3 above) sees
+    // it on subsequent attempts. Fire-and-forget — even if Upstash is
+    // down we return 401 immediately so the user sees a fast response.
+    void recordFailure(`track:pin-fail:${id}`, { windowSec: 3600 });
     return respond({ error: 'PIN ไม่ถูกต้อง' }, 401);
   }
 
