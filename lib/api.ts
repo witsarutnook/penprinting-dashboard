@@ -386,12 +386,22 @@ const PATHS_BY_ACTION: Record<string, readonly string[]> = {
   // explicitly NOT in this map so they don't bust anything.
 };
 
-/** Resolve the operator identity for audit logging. Reads the dashboard
- *  session cookie and returns "<role>:<user>" if logged in, undefined
- *  otherwise. The Apps Script side (v5.10.1+) honours `body._actor` and
- *  records the user portion in audit_log instead of the generic
- *  "admin:dashboard" service identity. Wrapping in try/catch so calls
- *  outside a request context (boot-time, scripts) silently skip. */
+/** Resolve the operator identity for audit logging.
+ *
+ *  Returns `"<role>:<user>"` (e.g. `"admin:nook"`) when called from inside
+ *  a Next.js request handler with a valid dashboard session cookie.
+ *  Returns `undefined` when:
+ *    - there's no request context (build-time, edge-instrumentation, scripts)
+ *    - the dynamic `next/headers` import fails (only available in Node
+ *      runtime; edge route handlers that need actor identity should pass
+ *      `_actor` explicitly via the `post()` body instead)
+ *    - the session cookie is missing or invalid (logged-out caller)
+ *
+ *  When `undefined`, `post()` omits `_actor` from the payload entirely —
+ *  Apps Script falls back to the service identity `"admin:dashboard"`
+ *  encoded in `APPS_SCRIPT_TOKEN`. Apps Script v5.10.1+ honours `_actor`
+ *  and overrides the service identity in audit_log entries; older
+ *  versions ignore the field. (Auditor L2 finding — doc clarity.) */
 async function currentActor(): Promise<string | undefined> {
   try {
     const { cookies } = await import('next/headers');

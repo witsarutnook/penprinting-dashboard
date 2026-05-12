@@ -60,6 +60,13 @@ export function DataAuditButton({
   const [open, setOpen] = useState(false);
   const totalIssues = orphans.length + duplicates.length;
 
+  // Hide entirely for non-admins. Sales/staff used to see the badge +
+  // could open the modal but every recover/remove action inside is
+  // admin-only — a UX leak that produced "ปุ่มกดไม่ได้สักอัน" complaints.
+  // (Auditor L4 finding, 2026-05-12.) Page-level role gate stays at
+  // admin+sales for general /orders access; this button is admin-only.
+  if (!isAdmin) return null;
+
   return (
     <>
       <button

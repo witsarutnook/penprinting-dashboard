@@ -105,6 +105,18 @@ export async function POST(req: Request) {
     try {
       const orderResult = await loadOrder(cjOrderId);
       if (orderResult.order) {
+        // Block restoring a job whose parent order has been cancelled — the
+        // restored job would point at a tombstoned parent and surface as
+        // an orphan in /board's "ผู้สั่งงาน" lookup. Admin should restore
+        // the order first (or recover via data-audit modal which already
+        // does a fresh addJob bound to an active parent). (Auditor M3-restore
+        // finding, 2026-05-12.)
+        if (String(orderResult.order.status || '').toLowerCase() === 'cancelled') {
+          return NextResponse.json(
+            { error: `ใบสั่งงาน #${cjOrderId} ถูกยกเลิกแล้ว — กรุณา restore ใบสั่งงานก่อน หรือ recover ผ่าน data-audit modal` },
+            { status: 409 },
+          );
+        }
         orderDateDue = String(orderResult.order.dateDue || '');
         orderDateIn = String(orderResult.order.dateIn || '');
       }

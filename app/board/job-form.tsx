@@ -114,10 +114,16 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
     if (submittedRef.current) return;
     submittedRef.current = true;
     setError(null);
-    // Snapshot the values BEFORE closing the modal — once `open` flips,
-    // the useEffect resets state, so reading `name`/`dateDue` etc inside
-    // the in-flight fetch closure is safe but we want the toast text now.
+    // Snapshot prop + state values BEFORE closing the modal. Once `open`
+    // flips, the parent may reopen the form with a DIFFERENT job (Job-A
+    // save → user opens Job-B); the in-flight fetch's later callbacks
+    // would otherwise reference whatever `initial?.id` resolves to on
+    // the current closure scope, which is correct for behavior but UX-
+    // confusing when the toast pops with Job-A's id while user is
+    // staring at Job-B's form. Explicit snapshot keeps toasts pinned to
+    // the row that was actually saved. (Auditor M3 finding.)
     const jobName = name.trim();
+    const editId = isEdit ? initial?.id ?? null : null;
 
     const path = isEdit ? '/api/jobs/update' : '/api/jobs/add';
     const body: Record<string, unknown> = {
@@ -140,7 +146,7 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
     // SSR re-render lands the updated card. Matches CoworkDialog
     // pattern in card.tsx — no more 300-500ms modal-still-open lag.
     onClose();
-    toast.show(isEdit ? `กำลังบันทึกงาน #${initial?.id}...` : `กำลังเพิ่มงาน "${jobName}"...`);
+    toast.show(isEdit ? `กำลังบันทึกงาน #${editId}...` : `กำลังเพิ่มงาน "${jobName}"...`);
     try {
       const res = await fetch(path, {
         method: 'POST',
@@ -153,7 +159,7 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
         return;
       }
       broadcastWrite(path);
-      toast.success(isEdit ? `บันทึก #${initial?.id} เรียบร้อย` : `เพิ่ม "${jobName}" เรียบร้อย`);
+      toast.success(isEdit ? `บันทึก #${editId} เรียบร้อย` : `เพิ่ม "${jobName}" เรียบร้อย`);
       commit(() => {});
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');

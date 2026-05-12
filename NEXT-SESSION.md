@@ -33,6 +33,44 @@
 > - **Workaround helpers (`loadOrderAndJobsForPromote`) signal latent root cause.** ถ้าเริ่มเขียน helper #2 ทำงานเดียวกัน → refactor ที่ต้นทาง ไม่ใช่เพิ่ม helper อีก
 > - **Rollback recipe:** `git revert <commit>` (ไม่มี env flag เพราะ behavior strictly improves ภายใต้ `READ_FROM_POSTGRES=1` ที่ ON อยู่แล้ว). หรือถ้า Postgres ล่ม → unset `READ_FROM_POSTGRES` → กลับ Apps Script 100% (รวมถึง path นี้)
 >
+> ### Audit cleanup follow-up (`f4f3474`) — same session
+>
+> ✅ M4 narrow staleness gate → `['orders']` (lib/api-postgres.ts) — peripheral table stale ไม่ degrade ทุก loadOrder caller
+> ✅ M1 drop redundant retry block ใน track/lookup (loadOrder ทำ fallback ในตัวอยู่แล้ว)
+> ✅ L1/L2/L4 stale comments updated
+> ⏳ M3 (deferred to backlog) — restore route ไม่ block restore job ที่ parent ถูก cancel. Pre-existing, low frequency. Tracked เป็น `M-restore-cancelled-parent` ใน AUDIT-BACKLOG.md
+> ℹ️ M2 (monitor only) — edge /track p95 ต้องดู 24-48h หลัง refactor. ถ้า regress → revert retry แต่ไป Apps Script direct
+>
+> ### Phase 2 activation verification (2026-05-12)
+>
+> User reported 2 bugs at start of session → diagnosis ระบุว่า Phase 2 fully ON. Vercel UI verification: **all 11 WRITE_* flags + READ_FROM_POSTGRES = ON, All Environments** (5 added 19-21h ago, 3 added 1-2d ago). Apps Script v5.10.14 deployed (Version 42, May 11 3:19 PM). Phase 2 migration **complete**.
+>
+> **Smoke test pending คุณนุ๊ก** (~10 min, do at convenience):
+>
+> 1. **moveToShipped** — /board → ship ✓ บน job test → card หายทันที + /shipped row ใหม่ (audit "ส่งงานเรียบร้อย...")
+> 2. **cancelJob** — /board → ยกเลิก + ใส่เหตุผล → card หาย + /cancelled row ใหม่
+> 3. **bulkForward** — /board → drag-drop card ข้าม column → ~250ms + per-job audit "ส่งต่องาน..."
+> 4. **cancelOrder** — /orders → คลิก order → ยกเลิกใบสั่ง → cascade cancel jobs + order flips
+> 5. **promoteDraft** — /orders → คลิก draft → "บันทึก + ส่งเข้าระบบ" → save + promote + /board redirect
+> 6. **addJob** — /orders → data-audit modal → "เพิ่มงาน" ที่ orphan order → job ใหม่ขึ้น
+> 7. **รอ 5 นาที → Google Sheet** — เปิด tab jobs/shipped/cancelled/orders → confirm rows sync ครบ
+>
+> updateOrder + createOrder ไม่ต้อง test เพราะ user prove แล้วว่าใช้จริงตลอดวัน (bugs ที่ surfaced วันนี้ก็คือหลักฐาน)
+>
+> **Rollback (per action):** Vercel env → unset flag → redeploy → กลับ legacy. Heal cron + tombstone infra ยังทำงานต่อ → eventual consistency.
+>
+> ### Table-skip cron — deferred (decision)
+>
+> Considered: extending `phase2OwnsTable()` ใน [lib/feature-flags.ts](lib/feature-flags.ts) สำหรับ jobs/orders/shipped/cancelled → drop Sheet→Postgres cron pass สำหรับ tables ที่ Postgres own
+>
+> **Decision: defer.** Rationale:
+> - Cron ตอนนี้ใช้ `deleteCleanThenInsert` ที่ preserve Phase 2 dirty rows อยู่แล้ว → cron ไม่ overwrite Phase 2 writes ถึงแม้ table-skip ไม่ active
+> - Benefit = ~5s + Apps Script quota call ต่อ 10-min cron pass (incremental perf, not correctness)
+> - Risk = lose Sheet→Postgres safety net สำหรับ stragglers / drift / direct admin Sheet edits (rare แต่ไม่ใช่ 0)
+> - Effort = ~30 min implementation + needs 1-2 weeks production observation ก่อน flip
+>
+> **Future trigger to revisit:** ถ้า Apps Script daily quota เริ่มชน 80% threshold หรือ Vercel cron latency กระทบ user → table-skip cron จะคุ้มทำ. ไม่งั้น defer ต่อ
+>
 > ---
 >
 > **Session 2026-05-11 ★ MEGA SESSION (P1 guardrails + Phase 2 jobs + orders + tombstone + audit pipeline + UX overhaul):** ✅
@@ -47,12 +85,12 @@
 > | 3 | addJob | `fda396d` | ✅ live |
 > | 4 | createOrder | `b3d6515` | ✅ live |
 > | 5 | reassignStaff (piggybacks updateJob flag) | `1746946` | ✅ live |
-> | 6 | moveToShipped | `825857e` | ⏳ pending activation |
-> | 7 | cancelJob | `825857e` | ⏳ pending activation |
-> | 8 | bulkForward + single forward | `d1fb66e` | ⏳ pending activation |
-> | 9 | updateOrder | `010cf35` | ⏳ pending activation |
-> | 10 | promoteDraft | `010cf35` | ⏳ pending activation |
-> | 11 | cancelOrder | `010cf35` | ⏳ pending activation |
+> | 6 | moveToShipped | `825857e` | ✅ live (2026-05-11 21h, verified 05-12) |
+> | 7 | cancelJob | `825857e` | ✅ live (2026-05-11 21h, verified 05-12) |
+> | 8 | bulkForward + single forward | `d1fb66e` | ✅ live (2026-05-11 20h, verified 05-12) |
+> | 9 | updateOrder | `010cf35` | ✅ live (2026-05-11 19h, verified 05-12) |
+> | 10 | promoteDraft | `010cf35` | ✅ live (2026-05-11 19h, verified 05-12) |
+> | 11 | cancelOrder | `010cf35` | ✅ live (2026-05-11 19h, verified 05-12) |
 >
 > **Skipped (intentional — dead UI paths):** deleteJob (admin-only data-audit tool), deleteOrder + deleteOrderCascade (zero callers in v2 UI), addOrder (createOrder covers).
 >
@@ -444,7 +482,7 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 | `phase2_dirty_at` columns (jobs/orders/shipped/cancelled) | ✅ live | `/api/admin/db-migrate` shows no ALTER in applied |
 | `phase2_deleted_at` column on jobs | ✅ live (Batch A, 2026-05-11) | Same — ALTER not in applied |
 | `audit_log.source` column | ✅ live | Same |
-| Apps Script v5.10.14 deployed | ⏳ verify | Editor → Deployments → version description should mention `setShippedRow / setCancelledRow / deleteJobByIdRow` |
+| Apps Script v5.10.14 deployed | ✅ live (verified 2026-05-12 — Version 42, May 11) | Editor → Manage deployments → Active shows `(v5.10.14)`, archived list shows v5.10.13 setOrder, v5.10.12 createOr, v5.10.11 setJobRow etc. |
 
 **If Apps Script v5.10.14 NOT yet deployed:** Apps Script editor → Deploy → Manage deployments → **Edit existing → New version** (⚠️ ห้าม "New deployment"). Description: `v5.10.14 setShippedRow / setCancelledRow / deleteJobByIdRow + setOrderRow + audit createOrder fix`.
 
@@ -457,12 +495,14 @@ After 5/5 hot-path actions migrated → consider table-skip cron for `jobs` (ful
 | `WRITE_CREATE_ORDER_TO_POSTGRES=1` | createOrder (hot path) | ✅ already on |
 | `WRITE_ADD_JOB_TO_POSTGRES=1` | addJob (data-audit modal) | ⏳ pending |
 | `WRITE_MOVE_TO_SHIPPED_TO_POSTGRES=1` | moveToShipped | ⏳ pending |
-| `WRITE_CANCEL_JOB_TO_POSTGRES=1` | cancelJob | ⏳ pending |
-| `WRITE_BULK_FORWARD_TO_POSTGRES=1` | bulkForward + single forward | ⏳ pending |
-| `WRITE_UPDATE_ORDER_TO_POSTGRES=1` | updateOrder + cascade rename | ⏳ pending |
-| `WRITE_PROMOTE_DRAFT_TO_POSTGRES=1` | promote draft → sent | ⏳ pending |
-| `WRITE_CANCEL_ORDER_TO_POSTGRES=1` | cancelOrder (cascade) | ⏳ pending |
-| `WRITE_TEMPLATES_TO_POSTGRES=1` | add/delete template | ⏳ pending (low priority) |
+| `WRITE_CANCEL_JOB_TO_POSTGRES=1` | cancelJob | ✅ on (2026-05-11, 21h ago verified 05-12) |
+| `WRITE_BULK_FORWARD_TO_POSTGRES=1` | bulkForward + single forward | ✅ on (2026-05-11, 20h ago verified 05-12) |
+| `WRITE_UPDATE_ORDER_TO_POSTGRES=1` | updateOrder + cascade rename | ✅ on (2026-05-11, 19h ago verified 05-12) |
+| `WRITE_PROMOTE_DRAFT_TO_POSTGRES=1` | promote draft → sent | ✅ on (2026-05-11, 19h ago verified 05-12) |
+| `WRITE_CANCEL_ORDER_TO_POSTGRES=1` | cancelOrder (cascade) | ✅ on (2026-05-11, 19h ago verified 05-12) |
+| `WRITE_TEMPLATES_TO_POSTGRES=1` | add/delete template | ✅ on (2026-05-10) |
+
+> **Verified 2026-05-12** via Vercel project Settings → Environment Variables: all 11 WRITE_* flags + READ_FROM_POSTGRES = on, All Environments. Phase 2 master activation **complete**. Docs above table updated from earlier "pending" status. (The print-page stale-read + 404 bugs reported earlier 2026-05-12 were the first user-visible surfacing of Phase 2 fully on — read path lagged behind write path's staleness model. Fixed at `c0be3b8` + `f4f3474`.)
 
 **Master smoke test (one pass covers most actions, ~10 min):**
 

@@ -1,8 +1,19 @@
 # 🐞 Audit Backlog — Dashboard v2
 
-> Last scan: **2026-05-08** (penprinting-auditor) — รอบ regression หลัง 2026-05-07 mega-day (16+ commits)
+> Last scan: **2026-05-12** (penprinting-auditor) — รอบ regression audit หลัง `c0be3b8` loadOrder Postgres-first refactor
 >
-> Latest update: **2026-05-09** — ปิด 1 user-reported perf bug (`createOrder` missing from PATHS_BY_ACTION → order create perceived 15-60s instead of ~1.5s)
+> Latest update: **2026-05-12** — ปิด 4 items จาก audit cleanup batch:
+> - ✅ M3-jobform-stale-toast (closure capture clarity)
+> - ✅ M-restore-cancelled-parent (block restore at cancelled parent)
+> - ✅ L2-currentactor-edge-comment (doc clarity)
+> - ✅ L4-data-audit-modal-sales-no-action (hide button for non-admin)
+>
+> Plus 2 audit items closed in same-day cleanup (`f4f3474`):
+> - ✅ M4 narrow `loadOrderFromPostgres` staleness gate to `['orders']`
+> - ✅ M1 drop redundant retry in `/api/track/lookup` (loadOrder ทำ fallback ในตัวอยู่แล้ว)
+> - ✅ L1/L2/L4 (in c0be3b8) — print/page.tsx + track/lookup stale comments + loadOrder docstring
+>
+> Previous: **2026-05-09** — ปิด 1 user-reported perf bug (`createOrder` missing from PATHS_BY_ACTION → order create perceived 15-60s instead of ~1.5s)
 >
 > Previous: **2026-05-08** — ปิด 9 (3 High + 5 Medium + 1 doc), defer 6 (M1, M3, L1-L4) ที่ audit เองแนะนำให้ defer
 >
@@ -28,17 +39,17 @@ _(ปิดครบ — ดู Closed section)_
 ## 🟡 Medium (open — defer per audit recommendation)
 
 - [ ] ⏳ **M1-card-memo-deep-compare** — `app/board/card.tsx:459-489` field-level comparator JSON-compare `a.order` vs `b.order` (O(n)). 50 cards × auto-sync × ~5KB orders → measurable iPhone CPU. **Defer reason**: audit เองระบุ "verify with profiler — if measurable, switch". ยังไม่มี profiler data + naive switch (เช่น drop deep compare) อาจ break DetailContent freshness ตอน auto-sync tick. รอ measurement จริงก่อน.
-- [ ] ⏳ **M3-jobform-stale-toast** — `app/board/job-form.tsx:132, 145` closure capture `initial?.id` ตอน submit → toast ของ Job-A pop ตอน user เปิด Job-B (cosmetic). **Defer reason**: audit เองระบุ "Probably accept the minor noise". Tracking ระดับ global จะ over-engineer สำหรับ noise น้อย.
-- [ ] ⏳ **M-restore-cancelled-parent** (2026-05-12 audit, post-`c0be3b8`) — `app/api/jobs/restore/route.ts:106-110` reads parent order via `loadOrder(cjOrderId)` to recover `dateDue`/`dateIn` for the restored job. ไม่ block กรณี parent order ถูก cancel ไปแล้ว (`status='cancelled'`) → restore job ผูกกับ parent ที่ตายแล้ว. Pre-existing bug, surfaced via post-refactor audit. **Defer reason**: low frequency (admin-only flow, ผ่าน /cancelled page), no Sheet/Postgres divergence — แค่ semantic mismatch. **Fix idea**: ถ้า `orderResult.order.status === 'cancelled'` → return 409 พร้อม message "ใบสั่งงานต้นทาง #N ถูกยกเลิกแล้ว — กรุณา restore order ก่อน". หรือ allow แต่เตือน admin ผ่าน toast.
+- [x] ✅ **M3-jobform-stale-toast** (closed 2026-05-12) — snapshot `editId` at top of `onSubmit()` ใน `app/board/job-form.tsx`. Toasts ใช้ `editId` แทน `initial?.id` ตรง — closure ยังถูกต้องอยู่แล้ว แต่ explicit snapshot ทำให้ตามอ่านง่ายขึ้น + ป้องกัน future refactor ที่อาจ break.
+- [x] ✅ **M-restore-cancelled-parent** (closed 2026-05-12) — `app/api/jobs/restore/route.ts` ตอน reattach parent order ตรวจ `orderResult.order.status === 'cancelled'` → return 409 message "ใบสั่งงาน #N ถูกยกเลิกแล้ว — กรุณา restore ใบสั่งงานก่อน หรือ recover ผ่าน data-audit modal".
 
 ---
 
 ## 🟢 Low (open — defer per audit recommendation)
 
 - [ ] ⏳ **L1-bottomnav-iphonese-truncate** — `components/bottom-nav.tsx:31, 86-96` admin 5-col @ 320px → "หลังพิมพ์ / จัดส่ง" truncate. **Defer reason**: audit เองระบุ "Acceptable (icon carries meaning)" — รอ user feedback จาก iPhone SE จริง
-- [ ] ⏳ **L2-currentactor-edge-comment** — `lib/api.ts:179-189` doc clarity — defer ก่อน, จะปรับตอน sweep doc รอบหน้า
+- [x] ✅ **L2-currentactor-edge-comment** (closed 2026-05-12) — `lib/api.ts` `currentActor()` docstring เขียนใหม่ชัดเจน: ระบุ 3 cases ที่ return undefined (no request context / edge import fail / no session) + อธิบาย service identity fallback path ของ Apps Script v5.10.1+.
 - [ ] ⏳ **L3-edge-build-warnings** — `app/api/track/lookup/route.ts:13` + `app/api/auth/{login,logout}` Vercel logs edge runtime warnings (expected) แต่ noisy. **Defer reason**: cosmetic, no functional issue
-- [ ] ⏳ **L4-data-audit-modal-sales-no-action** — `app/orders/data-audit-modal.tsx:175-184, 295-307` sales เห็นบัดจ์ count + open modal ได้ แต่ปุ่มทั้งหมด admin-only → UX leak. **Fix idea**: ซ่อน DataAuditButton สำหรับ non-admin หรือใส่ "ติดต่อ admin" hint. Defer ก่อนเพราะ low impact (sales เปิดแล้วเห็นปุ่มไม่ได้ก็ไม่กระทบ workflow ตัวเอง)
+- [x] ✅ **L4-data-audit-modal-sales-no-action** (closed 2026-05-12) — `app/orders/data-audit-modal.tsx` `DataAuditButton` return null ถ้า `!isAdmin` → sales/staff ไม่เห็นปุ่มอีกแล้ว. Page-level role gate ของ /orders ยัง admin+sales เหมือนเดิม.
 
 ---
 
