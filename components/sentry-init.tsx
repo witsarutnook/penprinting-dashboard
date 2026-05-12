@@ -55,6 +55,11 @@ export function SentryInit(): null {
         /Backpack couldn't override/i,
         /Invalid property descriptor/i,
         /Cannot redefine property/i,
+        // Browser extension content scripts whose context got invalidated
+        // (extension updated/disabled mid-page). chrome.runtime becomes undefined
+        // and any .sendMessage call throws — not our code, not our bug.
+        /Cannot read propert(y|ies) of undefined \(reading ['"]sendMessage['"]\)/i,
+        /Extension context invalidated/i,
       ],
     });
   }, []);
