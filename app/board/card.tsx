@@ -518,12 +518,42 @@ function arePropsEqual(prev: CardProps, next: CardProps): boolean {
     a.isGuest !== b.isGuest ||
     a.customer !== b.customer
   ) return false;
-  // cowork is a small array (or undefined); JSON-compare is cheap and
-  // catches every shape we care about. Order is a nested object — same
-  // treatment. Both are rarely set, so the stringify only fires for the
-  // few cards that have them.
-  if (JSON.stringify(a.cowork) !== JSON.stringify(b.cowork)) return false;
-  if (JSON.stringify(a.order) !== JSON.stringify(b.order)) return false;
+  // cowork is `unknown` (per BoardJob type) — accept any shape but
+  // narrow to array for the element-wise compare. Length + ref check
+  // per element catches set membership without stringify cost. Non-
+  // array values fall back to ref equality.
+  const ac = a.cowork;
+  const bc = b.cowork;
+  if (ac !== bc) {
+    const aArr = Array.isArray(ac) ? ac : null;
+    const bArr = Array.isArray(bc) ? bc : null;
+    if ((aArr?.length || 0) !== (bArr?.length || 0)) return false;
+    if (aArr && bArr) {
+      for (let i = 0; i < aArr.length; i++) {
+        if (aArr[i] !== bArr[i]) return false;
+      }
+    }
+  }
+  // Order is a nested object. Top-level card render only references
+  // `job.order.orderer` (in inline JobForm defaults) and DetailContent
+  // (mount-on-open) reads order.customer/orderer/details. JSON.stringify
+  // on the full order was burning ~10KB × 50 cards × every auto-sync
+  // tick — replaced with primitive field compare on the keys actually
+  // consumed in render, plus a reference check on `details` (Phase 2
+  // updateOrder always replaces the order object so the ref check fires
+  // on real edits). (Auditor PERF-C1 finding, 2026-05-12.)
+  const ao = a.order;
+  const bo = b.order;
+  if (ao !== bo) {
+    if (!ao || !bo) return false;
+    if (
+      ao.customer !== bo.customer ||
+      ao.orderer !== bo.orderer ||
+      ao.name !== bo.name ||
+      ao.dateDue !== bo.dateDue ||
+      ao.details !== bo.details
+    ) return false;
+  }
   return true;
 }
 
@@ -969,7 +999,7 @@ function DetailContent({
         <button
           type="button"
           onClick={onClose}
-          className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100 -mr-2 -mt-1"
+          className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100 -mr-2 -mt-1"
           aria-label="ปิด"
         >
           <IconX size={20} />

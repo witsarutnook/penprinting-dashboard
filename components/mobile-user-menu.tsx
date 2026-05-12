@@ -34,7 +34,7 @@ export function MobileUserMenu({ user, role }: MobileUserMenuProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="md:hidden fixed top-2 right-2 z-40 w-9 h-9 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-stone-700 hover:bg-stone-50 active:bg-stone-100"
+        className="md:hidden fixed top-2 right-2 z-40 w-11 h-11 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-stone-700 hover:bg-stone-50 active:bg-stone-100"
         aria-label={`${user} — เมนูผู้ใช้`}
         aria-expanded={open}
       >
@@ -112,7 +112,7 @@ function UserMenuSheet({
           <button
             type="button"
             onClick={onClose}
-            className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+            className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100"
             aria-label="ปิด"
           >
             <IconX size={18} />

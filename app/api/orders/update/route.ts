@@ -6,6 +6,7 @@ import { toISODate } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
 import type { Job } from '@/lib/types';
 import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { allSettledLimit } from '@/lib/concurrency';
 import {
   updateOrderInPostgres,
   cascadeRenameJobsInPostgres,
@@ -223,12 +224,21 @@ export async function POST(req: Request) {
     }
   }
 
-  const orderTask = post<{ ok?: boolean; error?: string }>('updateOrder', { data: orderPayload });
-  const cascadeTasks = cascadePayloads.map((data) =>
-    post<{ ok?: boolean; error?: string }>('updateJob', { data }),
+  // Cap concurrency at 3 on the cascade fan-out — same pattern as
+  // /api/orders/{cancel,delete} (M5 auditor finding). Wide cowork orders
+  // (5-10+ matching jobs) firing all writes at once risks Apps Script
+  // LockService.waitLock(10000) timeouts on the tail of the queue. The
+  // order write itself stays uncapped — it's the primary mutation and
+  // must land first. (Auditor PERF-B2 finding, 2026-05-12.)
+  const orderTaskFactory = () => post<{ ok?: boolean; error?: string }>('updateOrder', { data: orderPayload });
+  const cascadeTaskFactories = cascadePayloads.map((data) =>
+    () => post<{ ok?: boolean; error?: string }>('updateJob', { data }),
   );
 
-  const [orderOutcome, ...cascadeOutcomes] = await Promise.allSettled([orderTask, ...cascadeTasks]);
+  const [orderOutcome, ...cascadeOutcomes] = await allSettledLimit(
+    [orderTaskFactory, ...cascadeTaskFactories],
+    3,
+  );
 
   if (orderOutcome.status === 'rejected') {
     const msg = orderOutcome.reason instanceof Error ? orderOutcome.reason.message : String(orderOutcome.reason);

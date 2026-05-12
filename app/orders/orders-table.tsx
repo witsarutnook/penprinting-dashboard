@@ -349,7 +349,7 @@ function OrderDetailModal({
             type="button"
             onClick={onClose}
             disabled={busy !== null}
-            className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100 -mr-2 -mt-1 disabled:opacity-50"
+            className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100 -mr-2 -mt-1 disabled:opacity-50"
             aria-label="ปิด"
           >
             <IconX size={20} />

@@ -180,7 +180,7 @@ export function JobForm({ initial, defaultDept, defaultStaff, open, onClose }: J
           <button
             type="button"
             onClick={onClose}
-            className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+            className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100"
             aria-label="ปิด"
           >
             <IconX size={20} />

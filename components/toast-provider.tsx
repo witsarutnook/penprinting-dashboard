@@ -96,9 +96,9 @@ function ToastPill({
         type="button"
         onClick={onDismiss}
         aria-label="ปิด"
-        className={`flex-shrink-0 -mr-1 p-1 rounded-full ${styles.dismiss}`}
+        className={`flex-shrink-0 -mr-1 w-9 h-9 inline-flex items-center justify-center rounded-full ${styles.dismiss}`}
       >
-        <IconX size={12} />
+        <IconX size={14} />
       </button>
     </div>
   );

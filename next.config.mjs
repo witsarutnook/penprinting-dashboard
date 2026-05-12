@@ -11,6 +11,25 @@ const nextConfig = {
       { source: '/production-monitoring/:path*', destination: '/board', permanent: true },
     ];
   },
+  // Security headers — applied to every response. HSTS is handled by
+  // Vercel platform; we add clickjacking + MIME-sniff + referrer
+  // hardening. CSP intentionally NOT set here — needs careful tuning
+  // with Sentry tunnel, next/font, recharts inline-style, and Vercel
+  // Speed Insights; tracked separately. (Auditor A05-1 finding,
+  // 2026-05-12.)
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+        ],
+      },
+    ];
+  },
 };
 
 // Wrap with Sentry. The plugin still works without a DSN at runtime —

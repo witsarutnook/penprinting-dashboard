@@ -683,7 +683,7 @@ export function OrderForm({
             </h2>
             {!inline && (
               <button type="button" onClick={onClose} aria-label="ปิด"
-                className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100">
+                className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100">
                 <IconX size={20} />
               </button>
             )}
@@ -1493,7 +1493,7 @@ function SuccessView({
           {success.partial ? 'ใบสั่งบันทึกบางส่วน' : isEdit ? 'บันทึกการแก้ไขเรียบร้อย' : 'สร้างใบสั่งงานเสร็จ'}
         </h2>
         <button type="button" onClick={onClose} aria-label="ปิด"
-          className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100">
+          className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100">
           <IconX size={20} />
         </button>
       </header>

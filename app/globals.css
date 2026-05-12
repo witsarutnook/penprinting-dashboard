@@ -7,3 +7,21 @@
     text-wrap: balance;
   }
 }
+
+/* Global focus indicator — keyboard-only (focus-visible) so mouse
+ * clicks don't paint rings on every press. Without this, tabbing
+ * through buttons/links is invisible on every Tailwind component
+ * that relies on hover-only styles. (Auditor A11Y-O4 finding,
+ * 2026-05-12.) Inputs already declare their own focus state via
+ * Tailwind tokens, so we scope this to interactive elements that
+ * commonly lack focus rings. */
+@layer base {
+  a:focus-visible,
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #c8553d;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}

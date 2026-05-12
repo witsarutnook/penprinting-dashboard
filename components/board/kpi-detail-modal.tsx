@@ -102,7 +102,7 @@ export function KPIDetailModal({ open, onClose, urgency, jobs }: Props) {
             <span className="text-stone-400 font-normal text-sm">({filtered.length} งาน)</span>
           </h2>
           <button type="button" onClick={onClose}
-            className="text-stone-400 hover:text-stone-700 w-8 h-8 flex items-center justify-center rounded hover:bg-stone-100"
+            className="text-stone-400 hover:text-stone-700 w-11 h-11 flex items-center justify-center rounded hover:bg-stone-100"
             aria-label="ปิด">
             <IconX size={20} />
           </button>
