@@ -109,6 +109,18 @@
 > 3. **`/check-quota`** (Apps Script + Cloudflare quota trend after Phase 2 full activation)
 > 4. **Vercel Analytics watch** /track p95 24-48h (M2 monitor item — Postgres-on-edge cold-start concern)
 >
+> ### Workspace rule additions (end of session — `/session-end` invoked)
+>
+> คุณนุ๊กเพิ่ม **Session Discipline rule** ให้ apply ทุก session — context check ก่อนเริ่มงาน + doc update ก่อนปิด session. ติดตั้ง 4 ที่:
+> 1. **Workspace CLAUDE.md** § "Session Discipline" — auto-load ทุก session
+> 2. **Memory** [`feedback_session_discipline.md`](../../../.claude/projects/-Users-witsarut-p/memory/feedback_session_discipline.md) + MEMORY.md index
+> 3. **`/session-start`** slash command — `.claude/commands/session-start.md` (Step 1-6 checklist)
+> 4. **`/session-end`** slash command — `.claude/commands/session-end.md` (Step 1-7 checklist)
+>
+> Session ใหม่ Claude จะ:
+> - อ่าน NEXT-SESSION + AUDIT-BACKLOG + git log + pending actions อัตโนมัติ ก่อน confirm direction กับคุณนุ๊ก
+> - ก่อนปิด session: surface uncommitted changes + update docs + memory lesson + แจ้ง pending user actions
+>
 > ---
 >
 > **Session 2026-05-11 ★ MEGA SESSION (P1 guardrails + Phase 2 jobs + orders + tombstone + audit pipeline + UX overhaul):** ✅
