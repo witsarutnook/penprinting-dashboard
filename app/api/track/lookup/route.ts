@@ -131,22 +131,16 @@ export async function POST(req: Request) {
     return respond({ error: 'เลขที่ใบสั่งงานหรือ PIN ไม่ถูกต้อง' }, 400);
   }
 
-  // Single-order lookup is much faster than loadAll snapshot for /track:
-  // public users only need ONE order, ~1KB of payload vs ~200KB for full
-  // snapshot. loadOrder() goes Postgres-first when READ_FROM_POSTGRES=1
-  // (Phase 1) and falls back to Apps Script with revalidate=0 for
-  // brand-new orders that haven't been mirrored yet (created within the
-  // last cron window).
+  // Single-order lookup is much faster than loadAll for /track:
+  // public users only need ONE order — ~1KB payload vs ~200KB.
+  // loadOrder() is Postgres-first with built-in Apps Script fallback
+  // (throws PostgresStaleError on row-not-found → falls through). The
+  // pre-2026-05-12 retry-with-revalidate-0 to "force Apps Script direct"
+  // is no longer needed — the fallback now happens inside loadOrder
+  // itself, so retrying buys nothing. (Auditor M1 finding.)
   let lookup;
   try {
-    // First attempt: cached read with 30s revalidate — Postgres-first
-    // happy path returns in ~80-150ms for already-mirrored orders.
     lookup = await loadOrder(id, { revalidate: 30 });
-    if (!lookup.order) {
-      // Order genuinely missing OR freshly created (mirror lag).
-      // Force Apps Script direct read with no caching.
-      lookup = await loadOrder(id, { revalidate: 0 });
-    }
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);

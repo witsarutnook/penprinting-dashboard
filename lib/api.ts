@@ -206,18 +206,20 @@ export async function loadOrderAndJobsForPromote(id: number): Promise<{
   };
 }
 
-/** Single-order lookup. Apps Script returns ~1KB instead of ~200KB.
- *  Used for hot paths that only need one order's rawData (e.g. order detail
- *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw).
+/** Single-order lookup — Postgres-first with Apps Script fallback.
+ *  Used by hot paths that only need one order's rawData (order detail
+ *  modal "สเปคงาน" tab, /track lookup, /api/orders/raw, print page,
+ *  tracking-card, restore).
  *
- *  `revalidate` defaults to 0 — write-path callers (restore, promote, etc.)
- *  must read fresh state. Read-path callers that just want the spec for
- *  display can pass a small TTL (e.g. 30s) to avoid hammering Apps Script
- *  on repeat modal opens. After 2026-05-08's diagnose-Bug-4 work the
- *  Apps Script `getOrder` action does a TextFinder single-row read
- *  (~400-600ms instead of 3-4s) so the cost of revalidate=0 is bounded
- *  even without ISR — the cache is still worth it for the modal-reopen
- *  pattern users actually have. */
+ *  Routing: always tries `loadOrderFromPostgres` first (sees Phase 2
+ *  writes instantly). On `PostgresStaleError` (row not in mirror yet or
+ *  mirror unconfigured) falls through to Apps Script `getOrder` action.
+ *
+ *  `revalidate` controls the Next.js fetch cache TTL on the Apps Script
+ *  FALLBACK only — Postgres reads aren't cached at the fetch layer.
+ *  Pass 0 if the Apps Script fallback needs to bust cache (e.g. caller
+ *  just wrote to Sheet via a legacy path). Pass 30 for read-display
+ *  hot paths that want repeat opens within 30s to skip the round-trip. */
 export interface LoadOrderResponse {
   order: Order | null;
   job: Record<string, unknown> | null;

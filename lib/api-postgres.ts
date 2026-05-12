@@ -119,7 +119,15 @@ export async function loadOrderFromPostgres(orderId: number | string): Promise<L
   const id = Number(orderId);
   if (!Number.isFinite(id) || !id) throw new Error('Invalid orderId');
 
-  const stale = await checkStaleness(['orders', 'jobs', 'shipped', 'cancelled']);
+  // Staleness gate is narrowed to `orders` only — the row-not-found throw
+  // below already covers "fresh write of an order" (Phase 2 createOrder
+  // commits to Postgres synchronously, so an order missing from the mirror
+  // = genuinely too new / not yet mirrored, fall back to Apps Script).
+  // Gating on jobs/shipped/cancelled too means a single stale peripheral
+  // table degrades EVERY loadOrder call across print/track/tracking-card/
+  // restore/raw — too wide a blast radius for a single-order lookup.
+  // (Auditor M4 finding, 2026-05-12.)
+  const stale = await checkStaleness(['orders']);
   if (stale) throw new PostgresStaleError(stale);
 
   const [orderR, jobR, shippedR, cancelledR] = await Promise.all([

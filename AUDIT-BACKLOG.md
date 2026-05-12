@@ -29,6 +29,7 @@ _(ปิดครบ — ดู Closed section)_
 
 - [ ] ⏳ **M1-card-memo-deep-compare** — `app/board/card.tsx:459-489` field-level comparator JSON-compare `a.order` vs `b.order` (O(n)). 50 cards × auto-sync × ~5KB orders → measurable iPhone CPU. **Defer reason**: audit เองระบุ "verify with profiler — if measurable, switch". ยังไม่มี profiler data + naive switch (เช่น drop deep compare) อาจ break DetailContent freshness ตอน auto-sync tick. รอ measurement จริงก่อน.
 - [ ] ⏳ **M3-jobform-stale-toast** — `app/board/job-form.tsx:132, 145` closure capture `initial?.id` ตอน submit → toast ของ Job-A pop ตอน user เปิด Job-B (cosmetic). **Defer reason**: audit เองระบุ "Probably accept the minor noise". Tracking ระดับ global จะ over-engineer สำหรับ noise น้อย.
+- [ ] ⏳ **M-restore-cancelled-parent** (2026-05-12 audit, post-`c0be3b8`) — `app/api/jobs/restore/route.ts:106-110` reads parent order via `loadOrder(cjOrderId)` to recover `dateDue`/`dateIn` for the restored job. ไม่ block กรณี parent order ถูก cancel ไปแล้ว (`status='cancelled'`) → restore job ผูกกับ parent ที่ตายแล้ว. Pre-existing bug, surfaced via post-refactor audit. **Defer reason**: low frequency (admin-only flow, ผ่าน /cancelled page), no Sheet/Postgres divergence — แค่ semantic mismatch. **Fix idea**: ถ้า `orderResult.order.status === 'cancelled'` → return 409 พร้อม message "ใบสั่งงานต้นทาง #N ถูกยกเลิกแล้ว — กรุณา restore order ก่อน". หรือ allow แต่เตือน admin ผ่าน toast.
 
 ---
 
