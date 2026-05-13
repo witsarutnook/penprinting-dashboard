@@ -2,6 +2,26 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-13 — Tech-Roadmap-Status.md doc sync (no code):** ✅
+>
+> **Trigger:** คุณนุ๊กถาม "drop Apps Script อยู่เฟสไหน" — เปิด docs ดูเจอ drift: Tech-Roadmap-Status.md ยัง mark Phase 4.2 = "Deferred" แต่ session 2026-05-11 ดัน 11 actions Postgres-first writes live ครบแล้ว
+>
+> **Doc updated** (workspace root — Obsidian vault, **ไม่ใช่ git repo** จึงไม่ commit):
+> - `last-updated` 2026-05-09 → **2026-05-12**
+> - **Banner top** เพิ่ม 2 entries (2026-05-11 mega session + 2026-05-12 audit mega-day)
+> - **Phase table** — Phase 4.2 "⏳ Deferred" → **"✅ Mostly done"** (11 actions live, flags ON). เพิ่ม 2 rows ใหม่: **Phase 4.2 close-out** (drop Apps Script writes ทั้งหมด — defer ~ต้นมิถุนา 2026), **Phase 4.3 cleanup** (LINE webhook + audit cron + primary backend role — depends on 4.2 close-out)
+> - **Known issues** — ลบ stale "Phase 2.1 Code.js เหลือ 657 บรรทัด" (จริงๆ 93 lines), เพิ่ม APPS_SCRIPT_TOKEN rotation + Phase 4.2 close-out tracking
+> - **Timeline** — เพิ่ม 5 entries (2026-05-08, 09, 10, 11, 12) + reorganize Future section
+> - **Recommended next session** — rewrite สะท้อนสถานะปัจจุบัน
+>
+> **Lesson (saved to memory):** Workspace-root docs (Tech-Roadmap-Status.md, CLAUDE.md, MEMORY.md) เป็น Obsidian vault notes ที่อยู่นอก git tree. มี git repo แค่ใน 4 subprojects (penprinting-dashboard, penprinting-web, print-calculator-next, penprintphotobook). ก่อนเสนอ commit สำหรับ doc updates → verify ด้วย `git rev-parse --show-toplevel` ว่าไฟล์อยู่ใน repo ไหน
+>
+> **No code touched.** No subproject commits. No Apps Script changes. No env vars.
+>
+> **Pending user actions** ที่ยังค้างจาก 2026-05-12 ยังเหมือนเดิม (ดู section ด้านล่าง — Smoke test 6 Phase 2 actions, /data-doctor scan, /check-quota, Vercel Analytics watch).
+>
+> ---
+>
 > **Session 2026-05-12 — print page stale-read root-cause fix (`loadOrder` refactor):** ✅
 >
 > **User-reported (2026-05-12):**
