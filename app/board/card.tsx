@@ -1241,11 +1241,18 @@ function ActionButtons({
   // จัดส่งเสร็จ — only on the post:ship column (matches Card-level rule)
   const canShip = String(job.dept) === 'post' && job.staff === 'ship';
 
-  // Same-dept reassign targets — exclude current staff and outsource/diecut_out for non-admin.
+  // Reassign targets — non-admin: same-dept only (exclude current staff +
+  // RESTRICTED). Admin: all dept × all staff (cross-dept allowed per
+  // 2026-05-14 — used to fix wrong forwards). RESTRICTED stays admin-only.
   const dept = job.dept as Dept;
-  const reassignTargets = (STAFF[dept] || [])
-    .filter((s) => s.id !== job.staff)
-    .filter((s) => isAdmin || !RESTRICTED_TARGETS.has(s.id));
+  const reassignTargets: { id: string; name: string; dept: Dept; isVendor?: boolean }[] = isAdmin
+    ? (['graphic', 'print', 'post'] as Dept[]).flatMap((d) =>
+        STAFF[d].map((s) => ({ id: s.id, name: s.name, dept: d, isVendor: s.isVendor })),
+      ).filter((s) => !(s.dept === dept && s.id === job.staff))
+    : (STAFF[dept] || [])
+        .filter((s) => s.id !== job.staff)
+        .filter((s) => !RESTRICTED_TARGETS.has(s.id))
+        .map((s) => ({ id: s.id, name: s.name, dept, isVendor: s.isVendor }));
   const canReassign = reassignTargets.length > 0;
 
   async function moveToShipped() {
@@ -1399,14 +1406,28 @@ function ActionButtons({
       return;
     }
     setError(null);
-    const targetLabel =
-      reassignTargets.find((s) => s.id === actionTarget)?.name || actionTarget;
-    // Optimistic: hide source + phantom-insert in new staff column + dismiss
+    // actionTarget format: "dept:staff" — encodes both fields so admin
+    // cross-dept picks survive a flat <select> (id alone is not unique
+    // semantically once we list all depts).
+    const [targetDeptRaw, targetStaff] = actionTarget.split(':');
+    const targetDept = (targetDeptRaw || String(job.dept)) as Dept;
+    const target = reassignTargets.find(
+      (s) => s.dept === targetDept && s.id === targetStaff,
+    );
+    if (!target) {
+      setError('ปลายทางไม่ถูกต้อง');
+      return;
+    }
+    const isCrossDept = targetDept !== dept;
+    const targetLabel = isCrossDept
+      ? `[${DEPT_LABELS[targetDept]}] ${target.name}`
+      : target.name;
+    // Optimistic: hide source + phantom-insert in target column + dismiss
     // action sheet + toast. Reassign keeps cowork on the card.
     const phantomTempId = addPendingInsert({
       job,
-      destDept: String(job.dept),
-      destStaff: actionTarget,
+      destDept: targetDept,
+      destStaff: targetStaff,
     });
     hideJob(job.id);
     onSuccess();
@@ -1417,7 +1438,8 @@ function ActionButtons({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: job.id,
-          targetStaff: actionTarget,
+          targetStaff,
+          targetDept,
           srcJob: {
             name: job.name,
             dept: String(job.dept),
@@ -1508,7 +1530,12 @@ function ActionButtons({
         <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
           <label className="block text-xs font-medium text-stone-700 mb-1.5 flex items-center gap-1.5">
             <IconRefreshCw size={14} />
-            ย้ายไปที่ <span className="text-stone-400 font-normal">(แผนกเดิม: {DEPT_LABELS[dept]})</span>
+            ย้ายไปที่{' '}
+            <span className="text-stone-400 font-normal">
+              {isAdmin
+                ? `(แผนกเดิม: ${DEPT_LABELS[dept]} — ข้ามแผนกได้)`
+                : `(แผนกเดิม: ${DEPT_LABELS[dept]})`}
+            </span>
           </label>
           <select
             value={actionTarget}
@@ -1517,12 +1544,16 @@ function ActionButtons({
             autoFocus
           >
             <option value="">— เลือกผู้รับงาน —</option>
-            {reassignTargets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-                {s.isVendor ? ' (vendor)' : ''}
-              </option>
-            ))}
+            {reassignTargets.map((s) => {
+              const isCross = s.dept !== dept;
+              const label = isCross ? `[${DEPT_LABELS[s.dept]}] ${s.name}` : s.name;
+              return (
+                <option key={`${s.dept}:${s.id}`} value={`${s.dept}:${s.id}`}>
+                  {label}
+                  {s.isVendor ? ' (vendor)' : ''}
+                </option>
+              );
+            })}
           </select>
           <div className="flex gap-2 mt-3">
             <button

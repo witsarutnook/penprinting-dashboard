@@ -10,27 +10,34 @@ import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '
 export const maxDuration = 30;
 
 /**
- * Reassign a job to a different staff WITHIN THE SAME DEPT — all roles.
+ * Reassign a job to a different staff — same-dept for all roles, cross-dept
+ * for admin only.
  *
  * v2 equivalent of WP `_performJobMove` (drag-drop within dept). On v2 we
  * couldn't reuse `/api/jobs/update` because that route is admin-only;
- * this dedicated endpoint enforces "staff field only, dept unchanged" so
+ * this dedicated endpoint enforces "staff field only" for non-admin so
  * we can keep general edit locked while letting staff/sales reassign work.
+ *
+ * Cross-dept extension (2026-05-14): admin can pass `targetDept` to move a
+ * job across depts (e.g. fix a wrong forward by moving post:bind back to
+ * print:sm74). Wrong-direction moves are intentionally allowed because the
+ * primary use case is correcting mistakes. `dateIn` is preserved (not
+ * bumped) — admin reassign keeps the original received date.
  *
  * Strategy: client passes the source snapshot (already on screen), server
  * skips `loadAllFresh()`. Apps Script `updateJob` is open to all roles —
  * same as WP — so this just proxies through after validating the
- * same-dept constraint. Net round-trips: 1 instead of 2.
+ * dept/staff constraint. Net round-trips: 1 instead of 2.
  *
  * Trust model: client-supplied dept feeds the dept-membership check. If
  * the client lies about dept, the worst case is moving a job to an
- * unintended same-dept staff; the session role + RESTRICTED_TARGETS gate
- * remain server-authoritative. updateJob preserves whatever's already in
- * the row except the fields we send, so cowork stays intact even if the
- * client omits it.
+ * unintended staff; the session role + RESTRICTED_TARGETS gate remain
+ * server-authoritative. updateJob preserves whatever's already in the row
+ * except the fields we send, so cowork stays intact even if the client
+ * omits it.
  *
- * Request body: { id, targetStaff, srcJob: { name, dept, staff, date,
- *                  dateIn, status, orderId, cowork? } }
+ * Request body: { id, targetStaff, targetDept?, srcJob: { name, dept,
+ *                  staff, date, dateIn, status, orderId, cowork? } }
  */
 export async function POST(req: Request) {
   const session = await requireSession();
@@ -40,6 +47,7 @@ export async function POST(req: Request) {
   let body: {
     id?: number | string;
     targetStaff?: string;
+    targetDept?: string;
     srcJob?: {
       name?: string;
       dept?: string;
@@ -69,14 +77,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing srcJob (dept/staff required)' }, { status: 400 });
   }
 
-  const dept = String(src.dept) as Dept;
-  if (targetStaff === src.staff) {
+  const srcDept = String(src.dept) as Dept;
+  // targetDept defaults to srcDept (same-dept reassign — original behavior).
+  const targetDept = (String(body.targetDept || srcDept)) as Dept;
+
+  // No-op guard — must compare BOTH dept and staff (admin cross-dept move
+  // back to the same row is still a no-op).
+  if (targetDept === srcDept && targetStaff === src.staff) {
     return NextResponse.json({ error: 'ผู้รับงานเดิมแล้ว — ไม่ต้องย้าย' }, { status: 400 });
   }
-  const validInDept = STAFF[dept]?.some((s) => s.id === targetStaff);
+
+  // Cross-dept = admin only.
+  if (targetDept !== srcDept && !isAdmin) {
+    return NextResponse.json(
+      { error: 'ย้ายข้ามแผนกสำหรับ admin เท่านั้น' },
+      { status: 403 },
+    );
+  }
+
+  // Validate targetStaff exists in targetDept (catches typos + lying clients).
+  const validInDept = STAFF[targetDept]?.some((s) => s.id === targetStaff);
   if (!validInDept) {
     return NextResponse.json(
-      { error: `ผู้รับงาน "${targetStaff}" ไม่อยู่ในแผนก "${dept}"` },
+      { error: `ผู้รับงาน "${targetStaff}" ไม่อยู่ในแผนก "${targetDept}"` },
       { status: 400 },
     );
   }
@@ -84,25 +107,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `ปลายทาง "${targetStaff}" สำหรับ admin เท่านั้น` }, { status: 403 });
   }
 
-  // Build the full updateJob payload — preserve EVERYTHING except staff.
+  // Build the full updateJob payload — preserve EVERYTHING except dept/staff.
   // Cowork passes through unchanged so collaborators stay attached.
+  // dateIn is intentionally preserved on cross-dept reassign too (per
+  // 2026-05-14 decision: admin reassign should not bump received date).
   const payload: Record<string, unknown> = {
     id: oldId,
     name: String(src.name || ''),
     date: toISODate(String(src.date || '')),
     dateIn: toISODate(String(src.dateIn || '')),
-    dept, // unchanged
+    dept: targetDept,
     staff: targetStaff,
     status: String(src.status || 'pending'),
     orderId: src.orderId ? Number(src.orderId) : '',
   };
   if (src.cowork !== undefined) payload.cowork = src.cowork;
 
-  // Phase 2 reuse — reassignStaff sends action='updateJob' to Apps Script
-  // (constrained to same-dept staff change), so the WRITE_UPDATE_JOB_TO_POSTGRES
-  // flag governs this path too. No separate env var needed.
+  // Phase 2 reuse — reassignStaff sends action='updateJob' to Apps Script,
+  // so the WRITE_UPDATE_JOB_TO_POSTGRES flag governs this path too. No
+  // separate env var needed. prevDept/prevStaff are passed for audit trail
+  // (cross-dept moves are visible in the audit log).
   if (phase2WriteEnabled('updateJob')) {
-    return phase2Reassign(oldId, payload, session.role, session.user);
+    return phase2Reassign(oldId, payload, session.role, session.user, srcDept, src.staff);
   }
 
   try {
@@ -120,6 +146,8 @@ async function phase2Reassign(
   payload: Record<string, unknown>,
   role: string,
   user: string,
+  prevDept: string,
+  prevStaff: string,
 ): Promise<NextResponse> {
   let found = false;
   try {
@@ -162,6 +190,8 @@ async function phase2Reassign(
       name: String(payload.name || ''),
       dept: String(payload.dept || ''),
       staff: String(payload.staff || ''),
+      prevDept,
+      prevStaff,
     },
   });
 
