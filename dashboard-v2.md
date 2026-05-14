@@ -300,6 +300,50 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Admin cross-dept reassign + Phase 2 stale-read fix #3 + cowork "เสร็จงาน" button (2026-05-14)
+
+**3 features shipped, 3 commits, smoke-tested by user:**
+
+#### 1. Admin reassign ข้ามแผนกได้ — `c2cd3b5`
+
+Card "ย้าย" dropdown สำหรับ admin → list staff ทั้ง 3 แผนก พร้อม prefix `[กราฟิก]` / `[พิมพ์]` / `[หลังพิมพ์]` เวลา cross-dept. Server `/api/jobs/reassign` รับ optional `targetDept` (admin-only ถ้า ≠ srcDept). `dateIn` ไม่แตะ — admin reassign คือ "fix-mistake tool" ไม่ใช่ workflow advance. Wrong-direction (post → graphic) allowed เพื่อรองรับ "พนักงานส่งต่อผิด ต้องส่งกลับ". Drag-drop semantic เดิม (cross-column = forward dialog) — ไม่แตะ. Audit data carries `prevDept` + `prevStaff`.
+
+#### 2. Phase 2 stale-read fix #3 — `159333c` (user-reported on order #202605093)
+
+**User-reported:** แก้ไขงานแล้วเปลี่ยนชื่อ → submit → "ไม่พบใบสั่งงาน #202605093". Order มีอยู่จริงใน Postgres + Sheet, อายุ 5 วันแล้ว.
+
+**Root cause:** `/api/orders/update` (line 114) เรียก `loadAllFresh()` ที่อ่าน Apps Script Sheet ตรง. Comment ที่ `lib/api.ts:92` ยัง claim "write paths need authoritative Sheet state" ที่กลับด้านหลัง Phase 2 — Sheet กลายเป็น cron-lagged mirror, Postgres เป็น authoritative. Existence check ที่ `snap.orders.find(o => Number(o.id) === id)` ล้มเหลวเมื่อ Sheet มี edge case (sync lag / orphan / archived).
+
+**Same disease as 2 fixes ก่อน — third occurrence:**
+
+| Round | Caller | Fix | Date |
+|---|---|---|---|
+| 1 | `/api/orders/promote-draft` | new helper `loadOrderAndJobsForPromote` | 2026-05-11 (`1f62d3b`) |
+| 2 | `loadOrder()` (5 callers) | refactor Postgres-first ทุก call | 2026-05-12 (`c0be3b8`) |
+| **3** | `/api/orders/{update, cancel, delete}` | reuse helper #1 — widen scope | 2026-05-14 (`159333c`) |
+
+**Fix per memory rule "helper #2 = root cause signal":** ไม่เขียน helper #2/#3. Renamed `loadOrderAndJobsForPromote` → `loadOrderAndJobs` (drop misleading "ForPromote" scope-binding) + reuse ใน 3 routes. `/api/orders/{add, jobs/add, jobs/restore}` ยังต้องใช้ `loadAllFresh` ต่อ เพราะต้องการ `nextId` (Postgres ยัง track ตัวนี้ไม่ได้) — ไม่แตะ.
+
+**Files changed:** `lib/api.ts` + 4 route files. 70 insertions / 52 deletions.
+
+#### 3. ปุ่ม "เสร็จงาน Co-work" บน guest cards — `af8597b`
+
+Guest cowork cards (badge "ร่วมพิมพ์" บน column ของ cowork member) ตอนนี้มีปุ่ม violet "เสร็จงาน Co-work". Confirm dialog → POST `/api/jobs/cowork` ส่ง list ใหม่ที่ลบ self ออก → optimistic hide. All roles allowed (เครื่องที่ทำเสร็จเป็นคน mark เองได้).
+
+**Why explicit `BoardJob.guestStaff` field:** `BoardJob.staff` บน guest copy ยังชี้ host (จาก `{...job, isGuest: true}` spread ที่ fan-out). ต้อง derived field set ที่ `computeBoard` (lib/board.ts:244) เพื่อให้ guest action รู้ว่า "ฉันเป็นคนไหนใน list".
+
+**Reused infrastructure:** `/api/jobs/cowork` endpoint เดิม + `usePendingMutations` optimistic hide pattern. Zero server change.
+
+#### Verified ทั้ง 3 commits
+- Type-check ✅ / 72 vitest tests ✅ / production build ✅
+- User smoke test ผ่านครบ 3 features
+
+#### Lessons
+- **Memory rule "helper #2 = root cause signal" จับได้แม่น** — เห็นปัญหาตั้งแต่ขั้นเช็ค `loadAllFresh` callers ก่อน patch route เดียว. ลด churn จากการเขียน helper #2/#3 ที่จะกลายเป็น tech debt
+- **Cross-dept reassign ≠ forward** — semantic แยก: reassign = "ย้ายเครื่อง" (ไม่บัมพ์ dateIn), forward = "ส่งต่อ workflow" (บัมพ์ dateIn ปลายทาง). ขยาย reassign ดีกว่ารวม semantic เข้าด้วยกัน
+- **Guest cards ต้อง explicit self id** — fan-out logic ที่ spread host job → field ปัจจุบันไม่ยึดกับ column ที่ render. Set `guestStaff` ตอน fan-out ป้องกัน future guest-action features เจอปัญหาเดียวกัน
+- **`loadAllFresh` is the next likely landmine** — เหลือ 6 callers ที่ยังต้องใช้เพราะต้องการ `nextId`. ถ้า Phase 4.x ย้าย nextId allocation ลง Postgres → refactor ตามต่อ
+
 ### Print stale-read root-cause fix (2026-05-12) — `loadOrder()` Postgres-first ทุก call
 
 **User-reported:**

@@ -2,6 +2,51 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-14 — admin cross-dept reassign + Phase 2 stale-read fix #3 + cowork "เสร็จงาน" button:** ✅
+>
+> **3 features shipped, 3 commits, smoke-tested by user:**
+>
+> 1. **Admin reassign ข้ามแผนกได้** ([`c2cd3b5`](https://github.com/witsarutnook/penprinting-dashboard/commit/c2cd3b5))
+>    - Card "ย้าย" dropdown ของ admin → list staff ทั้ง 3 แผนก (graphic + print + post) พร้อม prefix `[กราฟิก]`/`[พิมพ์]`/`[หลังพิมพ์]` เวลา cross-dept
+>    - Server: `/api/jobs/reassign` รับ optional `targetDept` (admin-only ถ้า ≠ srcDept). `dateIn` ไม่แตะ (admin reassign = "fix mistake" ไม่ใช่ workflow advance)
+>    - Wrong-direction (post → graphic) allowed — รองรับการแก้พนักงานส่งต่อผิด
+>    - Drag-drop semantic เดิม (cross-column = forward dialog) — ไม่แตะ
+>    - Audit data carries `prevDept` + `prevStaff` for trail
+>
+> 2. **Phase 2 stale-read fix #3** ([`159333c`](https://github.com/witsarutnook/penprinting-dashboard/commit/159333c)) — user-reported "ไม่พบใบสั่งงาน" บน order #202605093
+>    - Bug: `/api/orders/update` ใช้ `loadAllFresh()` (Apps Script Sheet) ตรวจ existence → Sheet เป็น cron-lagged mirror หลัง Phase 2 → 404 ตอนเปลี่ยนชื่องาน/วันส่ง
+>    - Same disease as `c0be3b8` (loadOrder, 2026-05-12) + `1f62d3b` (promote-draft, 2026-05-11) — third occurrence
+>    - **Decision per memory rule**: ไม่เขียน helper #2/#3 — widen scope ของ helper #1 แทน. Renamed `loadOrderAndJobsForPromote` → `loadOrderAndJobs` + reuse ใน `/api/orders/{update, cancel, delete}` ทั้ง 3 routes
+>    - 5 files changed, 70 insertions, 52 deletions
+>
+> 3. **"เสร็จงาน Co-work" button บน guest cards** ([`af8597b`](https://github.com/witsarutnook/penprinting-dashboard/commit/af8597b))
+>    - Guest cowork cards (มี badge "ร่วมพิมพ์" ใน column ของ cowork member) ตอนนี้มีปุ่ม violet "เสร็จงาน Co-work"
+>    - Confirm dialog → POST /api/jobs/cowork ส่ง list ใหม่ที่ลบ self ออก → optimistic hide
+>    - All roles allowed (เครื่องที่ทำเสร็จควร mark เองได้)
+>    - **Why explicit `guestStaff` field**: `BoardJob.staff` บน guest copy ยังชี้ host (จาก `{...job, isGuest: true}` spread) — ต้อง derived `guestStaff` set ที่ fan-out ใน `computeBoard` (lib/board.ts) เพื่อรู้ว่าเป็น "ฉัน" คนไหน
+>
+> ### Verified
+> - Type-check ✅ / 72 vitest tests ✅ / production build ✅ ทั้ง 3 commits
+> - User smoke test ผ่านครบ 3 features (cross-dept move, edit order ที่เคย 404, cowork remove-self)
+>
+> ### Lessons
+> - **Memory rule "helper #2 = root cause signal" จับได้แม่น** — เห็นปัญหาตั้งแต่ขั้นเช็ค `loadAllFresh` callers, ไม่ได้ตามล่า patch แต่ละ route. Renamed `loadOrderAndJobsForPromote` → `loadOrderAndJobs` ลด misleading scope. ([memory updated](../../../.claude/projects/-Users-witsarut-p/memory/feedback_loadorder_postgres_first.md): noted 3rd occurrence + flagged `loadAllFresh` as next likely landmine)
+> - **Cross-dept reassign ≠ forward** — ขยาย reassign action (ไม่แตะ `dateIn`) ดีกว่าทำให้ workflow forward ทำงานข้ามแผนกได้ทุกทิศ. Drag-drop semantic ก็คงเดิม → user mental model ไม่กระเทือน
+> - **Guest cards ต้อง explicit self id** — fan-out logic ที่ spread host job ทับ → field `staff` ไม่ได้ยึดกับ column ที่ render. Set `guestStaff` ตอน fan-out ป้องกัน future guest-action features เจอปัญหาเดียวกัน
+>
+> ### Pending user actions ที่ยังค้างจาก 2026-05-12 (ยังเหมือนเดิม — ไม่มีอะไรใหม่)
+> - Smoke test 6 Phase 2 actions เดิม (moveToShipped/cancelJob/bulkForward/cancelOrder/promoteDraft/addJob)
+> - `/data-doctor` scan
+> - `/check-quota` (Apps Script + Cloudflare quota trend)
+> - Vercel Analytics watch /track p95 24-48h
+>
+> ### Recommended next session
+> 1. **Phase 4.2 close-out planning** (drop Apps Script writes — needs Phase 2 stable ≥1 month → wait until ~early มิถุนา 2026)
+> 2. หรือ run pending verifications ที่ค้าง 2 sessions แล้ว
+> 3. หรือ user-reported items ใหม่
+>
+> ---
+>
 > **Session 2026-05-13 — Tech-Roadmap-Status.md doc sync (no code):** ✅
 >
 > **Trigger:** คุณนุ๊กถาม "drop Apps Script อยู่เฟสไหน" — เปิด docs ดูเจอ drift: Tech-Roadmap-Status.md ยัง mark Phase 4.2 = "Deferred" แต่ session 2026-05-11 ดัน 11 actions Postgres-first writes live ครบแล้ว
