@@ -230,6 +230,43 @@ function CardImpl({
     return () => dlg.removeEventListener('click', onClick);
   }, []);
 
+  // Guest co-work "เสร็จแล้ว" — removes THIS guest's staff id from the
+  // host job's cowork list. Card disappears from this column on success.
+  // All roles allowed (matches /api/jobs/cowork's permission model).
+  async function handleCoworkComplete() {
+    if (!isGuest || !job.guestStaff) return;
+    const myName = STAFF.print.find((s) => s.id === job.guestStaff)?.name || job.guestStaff;
+    const ok = await confirmDlg.confirm({
+      title: `เสร็จงาน Co-work?`,
+      message: `ยืนยันว่าเครื่อง "${myName}" เสร็จงาน "${job.name}" แล้ว — งานจะถูกเอาออกจากคอลัมน์นี้`,
+      okLabel: 'เสร็จแล้ว',
+      variant: 'default',
+    });
+    if (!ok) return;
+    const newCowork = coworkPrintStaffIds(job.cowork).filter((s) => s !== job.guestStaff);
+    hideJob(job.id);
+    toast.show(`กำลังเสร็จงาน Co-work "${job.name}"...`);
+    try {
+      const res = await fetch('/api/jobs/cowork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: job.id, cowork: newCowork }),
+      });
+      if (!res.ok) {
+        unhideJob(job.id);
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `ไม่สำเร็จ — HTTP ${res.status}`);
+        return;
+      }
+      broadcastWrite('/api/jobs/cowork');
+      toast.success(`เสร็จงาน Co-work "${job.name}" เรียบร้อย`);
+      commit(() => unhideJob(job.id));
+    } catch (err) {
+      unhideJob(job.id);
+      toast.error(err instanceof Error ? err.message : 'เครือข่ายขัดข้อง');
+    }
+  }
+
   // Drag state — visually fade the card while it's being dragged elsewhere
   const [isDragging, setIsDragging] = useState(false);
   const draggable = !bulkMode && !isGuest;
@@ -385,6 +422,22 @@ function CardImpl({
         {/* Action row — primary action + Co-work + urgency badge */}
         <div className="flex items-center justify-between gap-2 mt-1.5 text-xs flex-wrap">
           <div className="flex items-center gap-1.5">
+            {isGuest && job.guestStaff && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (bulkMode) toggleJob(job.id);
+                  else handleCoworkComplete();
+                }}
+                disabled={bulkMode}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-600 text-white hover:bg-violet-700 font-medium text-[12px] disabled:opacity-50"
+                title="เครื่องนี้พิมพ์เสร็จ — เอาออกจาก co-work"
+              >
+                <IconCheck size={13} />
+                เสร็จงาน Co-work
+              </button>
+            )}
             {primaryAction?.kind === 'ship' && (
               <button
                 type="button"

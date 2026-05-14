@@ -101,8 +101,12 @@ export interface BoardJob {
   /** Date job was started (DD/MM/YYYY) */
   dateInRaw: string;
   /** True when this card is a co-work guest copy (rendered in another print
-   *  staff's column because they were added as a co-worker). Read-only. */
+   *  staff's column because they were added as a co-worker). */
   isGuest?: boolean;
+  /** Guest column's staff id — set only on guest copies. The "เสร็จงาน
+   *  Co-work" button removes THIS id from the host's cowork list. Distinct
+   *  from `staff`, which on a guest still points at the host. */
+  guestStaff?: string;
 }
 
 /** Parse cowork field — accepts WP format (`string[]` of print staff ids) AND
@@ -241,7 +245,7 @@ export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}):
         if (coStaff === j.staff) continue; // never duplicate to host's own column
         const guestKey = `print:${coStaff}`;
         if (!byKey.has(guestKey)) byKey.set(guestKey, []);
-        byKey.get(guestKey)!.push({ ...job, isGuest: true });
+        byKey.get(guestKey)!.push({ ...job, isGuest: true, guestStaff: coStaff });
       }
     }
   });
