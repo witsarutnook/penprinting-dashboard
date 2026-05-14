@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, loadOrderAndJobs, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { allSettledLimit } from '@/lib/concurrency';
 
@@ -65,24 +65,24 @@ export async function POST(req: Request) {
     }
   }
 
-  // Find attached jobs (if cascading)
+  // Find attached jobs (if cascading) — Postgres-first via loadOrderAndJobs
+  // (2026-05-14 refactor; closes the same Phase 2 stale-read pattern that
+  // hit /api/orders/update).
   let attachedJobs: Array<{ id: number; dept: string; staff: string; name: string }> = [];
   if (cascade) {
-    let snap;
+    let snap: Awaited<ReturnType<typeof loadOrderAndJobs>>;
     try {
-      snap = await loadAllFresh();
+      snap = await loadOrderAndJobs(id);
     } catch (err) {
       const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
     }
-    attachedJobs = snap.jobs
-      .filter((j) => Number(j.orderId) === id)
-      .map((j) => ({
-        id: Number(j.id),
-        dept: String(j.dept || ''),
-        staff: String(j.staff || ''),
-        name: String(j.name || ''),
-      }));
+    attachedJobs = snap.jobs.map((j) => ({
+      id: Number(j.id),
+      dept: String(j.dept || ''),
+      staff: String(j.staff || ''),
+      name: String(j.name || ''),
+    }));
   }
 
   // Step 1: cascade-cancel each attached job with bounded concurrency.

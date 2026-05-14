@@ -166,15 +166,23 @@ export async function loadAllFromAppsScriptForSync(): Promise<LoadAllResponse> {
   return withDefaults(data);
 }
 
-/** Postgres-first single-order lookup with active jobs.
+/** Postgres-first single-order lookup with its active jobs.
  *  Reads Postgres directly (no cache) so Phase 2 writes are visible
- *  immediately. Falls back to Apps Script for Phase 1.7 stragglers
- *  (rows mirrored but not yet in Postgres).
+ *  immediately. Falls back to Apps Script `loadAllFresh` for Phase 1.7
+ *  stragglers (rows mirrored but not yet in Postgres).
  *
- *  Used by promote-draft to resolve the order + existingJob check
- *  without hitting Sheet's stale read for orders just created via
- *  Phase 2 createOrder (heal-cron has not yet pushed the row to Sheet). */
-export async function loadOrderAndJobsForPromote(id: number): Promise<{
+ *  Used by any write path that needs "look up order + cascade ops on its
+ *  jobs": promote-draft, /api/orders/update (cascade rename), and the
+ *  legacy fallback branches of /api/orders/cancel + /api/orders/delete.
+ *  Callers that scan ALL orders/jobs (not just one order's) still need
+ *  loadAllFresh — this helper is for the single-order pattern only.
+ *
+ *  Recurring-bug history: third occurrence of the same Phase 2 stale-read
+ *  pattern. Round 1 (1f62d3b) created this helper for promote-draft;
+ *  Round 2 (c0be3b8) refactored loadOrder() to Postgres-first; Round 3
+ *  (today) widened it to /api/orders/update — see memory rule
+ *  "loadOrder must stay Postgres-first". */
+export async function loadOrderAndJobs(id: number): Promise<{
   order: Record<string, unknown> | null;
   jobs: Array<Record<string, unknown>>;
 }> {
@@ -238,7 +246,7 @@ export async function loadOrder(
   // print-page bugs:
   //   - "พิมพ์+ส่ง" 404 on brand-new orders (Sheet doesn't have row yet)
   //   - print page showing pre-edit values after updateOrder
-  // Sister fix: 1f62d3b (promote-draft) added loadOrderAndJobsForPromote
+  // Sister fix: 1f62d3b (promote-draft) added loadOrderAndJobs
   // as a workaround helper. This refactor closes the root cause so future
   // Phase 2 actions don't bring back the same shape of bug.
   //

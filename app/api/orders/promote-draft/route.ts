@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadOrderAndJobsForPromote, AppsScriptError } from '@/lib/api';
+import { post, loadOrderAndJobs, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
@@ -43,15 +43,15 @@ export async function POST(req: Request) {
   // monotonic counter so allocating early just burns one id slot if the
   // promote is rejected (acceptable trade for ~1s perceived latency).
   //
-  // loadOrderAndJobsForPromote is Postgres-first — required for Phase 2
+  // loadOrderAndJobs is Postgres-first — required for Phase 2
   // createOrder orders that haven't been heal-cron-synced to Sheet yet
   // (the 2026-05-11 "ไม่พบใบสั่งงาน" stale read bug).
-  let snap: Awaited<ReturnType<typeof loadOrderAndJobsForPromote>>;
+  let snap: Awaited<ReturnType<typeof loadOrderAndJobs>>;
   let speculativeJobId: number | null = null;
   let speculativeJobIdErr: string | null = null;
   try {
     const [snapResult, idResult] = await Promise.all([
-      loadOrderAndJobsForPromote(id),
+      loadOrderAndJobs(id),
       post<{ nextId?: number; error?: string }>('getNextId', {}).catch(
         (err): { nextId?: number; error?: string } => ({
           error: err instanceof Error ? err.message : String(err),
@@ -111,7 +111,7 @@ export async function POST(req: Request) {
   // (e.g. addJob succeeded but updateOrder failed on a previous attempt),
   // reuse its id and SKIP the addJob step. Without this, retrying the
   // promote-draft button would create duplicate jobs.
-  // (snap.jobs from loadOrderAndJobsForPromote is already filtered to this
+  // (snap.jobs from loadOrderAndJobs is already filtered to this
   // order, so take the first one.)
   const existingJob = snap.jobs[0];
   let jobId: number;

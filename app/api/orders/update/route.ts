@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, loadOrderAndJobs, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
@@ -33,10 +33,16 @@ interface SrcOrderSnapshot {
  *  PIN, cascades name/dateDue changes to matching jobs.
  *
  *  Perf: when the client passes `srcOrder` (existing-order snapshot from
- *  the edit page's prefetched data), we skip `loadAllFresh()` UNLESS
+ *  the edit page's prefetched data), we skip the read entirely UNLESS
  *  name/dateDue actually changed (cascade requires the jobs list). For the
  *  common spec-only edit, that drops the read round-trip entirely
- *  (~600ms saved per edit). */
+ *  (~600ms saved per edit).
+ *
+ *  Phase 2 stale-read fix (2026-05-14): the read uses `loadOrderAndJobs`
+ *  (Postgres-first) instead of `loadAllFresh` (Sheet-only). Pre-fix, an
+ *  order that lived in Postgres but had not yet heal-cron-synced to Sheet
+ *  would 404 on edit. Same disease as the 2026-05-12 `loadOrder` refactor
+ *  (`c0be3b8`) and the 2026-05-11 promote-draft fix (`1f62d3b`). */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
@@ -97,30 +103,32 @@ export async function POST(req: Request) {
   // Resolve the existing-order shape. Prefer client-supplied `srcOrder`
   // (passed by the edit page's prefetched OrderSummary) — that's a
   // free read since the page already loaded with this data. Fall back to
-  // `loadAllFresh()` for callers that don't pass it (legacy / external).
+  // `loadOrderAndJobs(id)` (Postgres-first) for callers that don't pass it
+  // (legacy / external).
   const src = body.srcOrder;
   const oldName = String(src?.name ?? '');
   const oldDateDue = toISODate(String(src?.dateDue ?? ''));
   const nameChanged = !!src && oldName !== name;
   const dueChanged = !!src && oldDateDue !== dateDue;
-  // Cascade rename needs the full jobs list; skip the read if neither
+  // Cascade rename needs the order's jobs list; skip the read if neither
   // name nor dateDue changed (the common case — spec-only edits).
   const needsCascadeRead = !src || nameChanged || dueChanged;
 
-  let snap: Awaited<ReturnType<typeof loadAllFresh>> | null = null;
+  let cascadeJobs: Job[] = [];
   let existing: SrcOrderSnapshot;
   if (needsCascadeRead) {
+    let snap: Awaited<ReturnType<typeof loadOrderAndJobs>>;
     try {
-      snap = await loadAllFresh();
+      snap = await loadOrderAndJobs(id);
     } catch (err) {
       const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
     }
-    const found = snap.orders.find((o) => Number(o.id) === id);
-    if (!found) {
+    if (!snap.order) {
       return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
     }
-    existing = found;
+    existing = snap.order as unknown as SrcOrderSnapshot;
+    cascadeJobs = snap.jobs as unknown as Job[];
   } else {
     existing = src!;
   }
@@ -163,9 +171,10 @@ export async function POST(req: Request) {
   // multiple jobs (e.g. cowork mid-flight) AND the user changed
   // name/dateDue.
   // Only need cascade payloads when name/dateDue actually changed AND
-  // we have the snapshot (read was performed).
-  const matching = (nameChanged || dueChanged) && snap
-    ? snap.jobs.filter((j: Job) => Number(j.orderId) === id && String(j.name || '') === oldName)
+  // we have the jobs list (read was performed; loadOrderAndJobs already
+  // pre-filters to this orderId, so just match by oldName).
+  const matching = (nameChanged || dueChanged) && cascadeJobs.length > 0
+    ? cascadeJobs.filter((j: Job) => String(j.name || '') === oldName)
     : [];
 
   const cascadePayloads = matching.map((j) => ({

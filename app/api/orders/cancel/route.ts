@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
+import { post, loadOrderAndJobs, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { allSettledLimit } from '@/lib/concurrency';
 import { phase2WriteEnabled } from '@/lib/feature-flags';
@@ -114,19 +114,21 @@ export async function POST(req: Request) {
     // Fall through to legacy multi-call flow below.
   }
 
-  let snap;
+  // Postgres-first lookup — closes Phase 2 stale-read recurrence
+  // (2026-05-14). loadOrderAndJobs returns { order, jobs } pre-filtered to
+  // this orderId; jobs feed the cascade-cancel loop below.
+  let snap: Awaited<ReturnType<typeof loadOrderAndJobs>>;
   try {
-    snap = await loadAllFresh();
+    snap = await loadOrderAndJobs(id);
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
-  const existing = snap.orders.find((o) => Number(o.id) === id);
-  if (!existing) {
+  if (!snap.order) {
     return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
   }
-  const currentStatus = String(existing.status || '').toLowerCase();
+  const currentStatus = String(snap.order.status || '').toLowerCase();
   if (currentStatus === 'cancelled') {
     return NextResponse.json({ error: `ใบสั่งงาน #${id} ถูกยกเลิกอยู่แล้ว` }, { status: 400 });
   }
@@ -140,14 +142,12 @@ export async function POST(req: Request) {
   // win while bounding the lock-wait queue. This path is dormant when
   // the atomic v5.10.4+ Apps Script is live; only fires on outage /
   // pre-redeploy preview deploys.
-  const attachedJobs = snap.jobs
-    .filter((j) => Number(j.orderId) === id)
-    .map((j) => ({
-      id: Number(j.id),
-      dept: String(j.dept || ''),
-      staff: String(j.staff || ''),
-      name: String(j.name || ''),
-    }));
+  const attachedJobs = snap.jobs.map((j) => ({
+    id: Number(j.id),
+    dept: String(j.dept || ''),
+    staff: String(j.staff || ''),
+    name: String(j.name || ''),
+  }));
 
   const cancelOutcomes = await allSettledLimit(
     attachedJobs.map((j) => () =>
@@ -199,6 +199,7 @@ export async function POST(req: Request) {
   }
 
   // Step 2: flip the order's status to cancelled (preserve every other field).
+  const existing = snap.order as unknown as Record<string, unknown>;
   const orderPayload = {
     id,
     name: String(existing.name || ''),
