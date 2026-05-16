@@ -2,6 +2,32 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-16 — dateIn double-encode root-cause (/diagnose) + QTY_UNITS feature:** ✅
+>
+> **Trigger:** `/session-start` → คุณนุ๊กเลือก Option A (root-cause `DATA-dateIn-double-encoded`) → ระหว่างทาง pivot ไปเพิ่มหน่วยจำนวนในฟอร์ม.
+>
+> **1. `DATA-dateIn-double-encoded` root-caused via `/diagnose` — accepted (no fix)**
+> - **ตัวการ**: Apps Script `objectToRow()` (helpers.ts) เดิมไม่มี Date guard. `cancelOrder`/`promoteDraft` อ่าน order row ด้วย `getValues()` (date cell → JS `Date`) → flip status → เขียนกลับผ่าน `objectToRow` → `Date` ตก catch-all → `JSON.stringify` → quoted ISO `"\"...Z\""`.
+> - **ไม่ใช่ `addOrder`** อย่างที่ AUDIT-BACKLOG เดา — `addOrder`/`createOrder` รับ `dateIn` เป็น string จาก v2 ไม่เคยเป็น Date.
+> - **Source fixed แล้ว 2026-05-08** — `helpers.ts:49` + compiled `helpers.js:48` มี `if (val instanceof Date) return val;` (verified deployed). 3 rows (202605046/047/049) = legacy residue ก่อน 8 พ.ค.
+> - **Decision: ไม่เขียน cleanup helper** — `displayDate()` unwrap quote ให้อยู่แล้ว display ไม่พัง + 3 orders เก่าเสร็จแล้ว. AUDIT-BACKLOG entry updated → `[accepted]`.
+>
+> **2. เพิ่มหน่วยจำนวน กล่อง/ถุง/ชิ้น** ([`238d40d`](https://github.com/witsarutnook/penprinting-dashboard/commit/238d40d))
+> - `QTY_UNITS` ใน `app/board/order-form.tsx:105` — `['แผ่น','ชุด','เล่ม']` → `['แผ่น','ชุด','เล่ม','กล่อง','ถุง','ชิ้น']`
+> - แก้ v2 อย่างเดียว — คุณนุ๊กระบุไม่แตะ WP (กำลังจะ drop). Type-check ผ่าน, push แล้ว.
+>
+> ### Lessons
+> - **AUDIT-BACKLOG hypothesis เชื่อไม่ได้เสมอ** — entry เดิมเดา `addOrder` แต่ code comment ใน `displayDate()` (lib/jobs.ts:65-73) document root-cause จริง + วันที่ fix ไว้แล้ว. ก่อน re-investigate audit item → grep หา comment ที่พูดถึง symptom ในโค้ดก่อน.
+> - **`_scan-phase2` date-anomaly เช็คแค่ `dateIn`** — ไม่เช็ค `dateDue` ทั้งที่ cancelOrder/promoteDraft เขียนทับทั้ง row → scan v2 ควรเพิ่ม `INVALID_DATEDUE`.
+>
+> ### Pending user actions
+> - ค้างเดิมจาก 2026-05-15: ORPHAN_CANCELLED cleanup (`cleanupOrphanCancelled()` dry-run → ตัดสิน historical rows), `/check-quota`, scan v2, cleanup diagnostic `.js` จาก Apps Script editor, Vercel Analytics watch /track p95.
+> - (`DATA-dateIn-double-encoded` ปิดแล้ว — accepted, ไม่ต้องทำอะไรต่อ นอกจาก optional SQL UPDATE ตอน migration cutover)
+>
+> **Doc-only commit** (NEXT-SESSION + AUDIT-BACKLOG) + 1 feature commit (`238d40d`).
+>
+> ---
+>
 > **Session 2026-05-15 — pending verifications (Option B): Phase 2 smoke + data-integrity scan + quota runbook:** ✅
 >
 > **Trigger:** `/session-start` → คุณนุ๊กเลือก Option B (run pending verifications ที่ค้างมา 2 sessions). **ไม่มี code changes** — verification + data-integrity session ล้วน.

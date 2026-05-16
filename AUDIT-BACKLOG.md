@@ -4,7 +4,9 @@
 >
 > Data-integrity scan: **2026-05-15** (`runPhase2IntegrityScan` — 9-dimension Sheet scan post Phase 2; see "Data integrity scan" section below)
 >
-> Latest update: **2026-05-12** — **10 audit items closed across 5 commits today**:
+> Latest update: **2026-05-16** — `DATA-dateIn-double-encoded` root-caused via `/diagnose` → **accepted** (ไม่ใช่ `addOrder` แต่เป็น `objectToRow` Date bug, source fixed 2026-05-08; ดู Data integrity scan section). ไม่มี code/data fix — display self-corrects อยู่แล้ว.
+>
+> Previous: **2026-05-12** — **10 audit items closed across 5 commits today**:
 >
 > Morning batch (loadOrder refactor + cleanup):
 > - ✅ M3-jobform-stale-toast (closure capture clarity, `7e9fa6b`)
@@ -73,7 +75,7 @@ _(ปิดครบ — ดู Closed section)_
 
 Proactive 9-dimension scan ของ Google Sheet หลัง Phase 2 live ~2 อาทิตย์. Scan file: `production-monitoring/_scan-phase2.gs`. Counts: orders=171 jobs=41 shipped=115 cancelled=28. Result: **0 critical / 1 high / 2 medium / 0 low**.
 
-- [ ] ⏳ **DATA-dateIn-double-encoded** — orders `202605046` / `202605047` / `202605049` (orders sheet rows 118/119/121, sequential) มี `dateIn` ถูก double-encoded เป็น JSON string: `"\"2026-05-07T17:00:00.000Z\""` (ห่อ quote สองชั้น). 3 IDs ใกล้กัน → 1 batch write event (May 7). **Hypothesis**: `addOrder` fast-path (เครือเดียวกับ bug `details=""` ที่เคยเจอบน 202605036) — code path ที่ `JSON.stringify(date)` ก่อนเขียน Sheet. **Next session**: root-cause `addOrder` write path → เขียน fix helper สำหรับ 3 rows + ปิด source bug. ❗️อาจกระทบ display/sort ของ 3 orders นี้.
+- [accepted] **DATA-dateIn-double-encoded** — orders `202605046` / `202605047` / `202605049` (orders sheet rows 118/119/121) มี `dateIn` เป็น JSON string `"\"2026-05-07T17:00:00.000Z\""`. **Root-cause (verified 2026-05-16, /diagnose)**: ❌ ไม่ใช่ `addOrder` อย่างที่เดาไว้ — ตัวการคือ Apps Script `objectToRow()` ([helpers.ts:45](apps-script/dashboard/helpers.ts) ใน production-monitoring) ที่เดิมไม่มี Date guard. `cancelOrder` ([write.ts:591-611](../production-monitoring/apps-script/dashboard/write.ts)) + `promoteDraft` ([write.ts:743-761](../production-monitoring/apps-script/dashboard/write.ts)) อ่าน order row ด้วย `getValues()` (date cell → JS `Date`) → flip status → เขียนกลับผ่าน `objectToRow` → `Date` ตก catch-all `typeof==='object'` → `JSON.stringify(date)` → quoted ISO. `addOrder`/`createOrder` รับ `dateIn` เป็น string จาก v2 ไม่เคยเป็น `Date` → corrupt ไม่ได้. **Source fixed 2026-05-08** — `helpers.ts:49` + compiled `helpers.js:48` มี `if (val instanceof Date) return val;` (verified deployed). 3 rows = legacy residue จาก 3 promoteDraft/cancelOrder ก่อน 8 พ.ค. — post-fix สร้าง corruption ใหม่ไม่ได้. **Decision: ไม่เขียน cleanup helper** — `displayDate()` ([lib/jobs.ts:71-73](lib/jobs.ts)) unwrap quote ให้อยู่แล้ว → display ไม่พัง; 3 orders เป็นงานเดือน พ.ค. เสร็จแล้ว impact ใกล้ศูนย์. **Migration note**: ตอน Phase 4.2/4.3 cutover ค่อยรัน SQL `UPDATE orders SET date_in='2026-05-08' ...` 3 แถวทีเดียว (ไม่ต้องใช้ Apps Script). **⚠️ Scan gap**: `_scan-phase2.js:218-237` date-anomaly check เช็คแค่ `dateIn` ไม่เช็ค `dateDue` — cancelOrder/promoteDraft เขียนทับทั้ง row → ถ้า `dateDue` ของ orders เหล่านี้ corrupt ด้วย scan จะมองไม่เห็น (ควรเพิ่ม `INVALID_DATEDUE` check ใน scan v2).
 - [~] **DATA-orphan-cancelled** ×4 — cancelled rows อ้าง orderId ที่หายไป (202604024 "ใบปลิวสาขา", 202604068 "สสส", 202605039 "test", 202605055 "หหหห"). **In progress**: cleanup helper `production-monitoring/_cleanup-orphan-cancelled.gs` เขียนแล้ว, รอ user รัน (2 test rows ลบได้, 2 เก่ารอตัดสิน historical).
 - [false-positive] **DATA-orphan-order** ×122 — **ไม่ใช่ data bug.** scan v1 check แค่ `jobs` sheet → orders status="sent" ที่ jobs ส่งของหมดแล้ว (อยู่ใน `shipped`) ถูก flag ผิด. ต้อง scan v2 (cross-ref `jobs`+`shipped`+`cancelled`) เพื่อ confirm. defer.
 
