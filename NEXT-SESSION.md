@@ -23,10 +23,10 @@
 > ### ⚠️ Pre-commit hook พัง — ต้องแก้ก่อน commit รอบหน้า
 > - **อาการ**: `npm test` ใน pre-commit hook (`type-check && lint && test`) — vitest **startup error** `node:util` ไม่มี export `styleText`. vitest/rolldown ที่ติดตั้งต้องการ Node ≥ 20.12 แต่เครื่องรัน **Node v18.20.4**.
 > - **ผลกระทบ**: ทุก commit ของ penprinting-dashboard จะติด hook นี้จนกว่าจะแก้. commit `dashboard-v2.md` รอบนี้ใช้ `--no-verify` (คุณนุ๊กอนุมัติ — doc-only, type-check/lint ผ่าน, hook พังเพราะ environment ไม่ใช่ test regression).
-> - **Fix รอบหน้า**: upgrade Node ≥ 20 (เช็ค `.nvmrc` / nvm) **หรือ** pin vitest/rolldown เวอร์ชันที่เข้ากับ Node 18. แนะนำ upgrade Node — Next.js 14 + vitest รุ่นใหม่ต้องการอยู่แล้ว.
+> - **Fix → งานแรก session หน้า (คุณนุ๊กตัดสิน 2026-05-17): upgrade Node → 22 LTS, ทำด้วยกัน.** ขั้นตอน: `nvm install 22 && nvm use 22 && nvm alias default 22` → `cd penprinting-dashboard && npm install` (rebuild deps) → เพิ่ม/อัปเดต `.nvmrc` = `22` → verify `npm run type-check && npm run lint && npm test && npm run build`. ⚠️ ระวัง native deps อาจต้อง rebuild หลังเปลี่ยน Node major — เผื่อเวลา debug. ทำให้ครบทั้ง 4 projects ก็ดี (penprinting-web / print-calculator-next / penprintphotobook ใช้ Node 22 ได้หมด).
 >
 > ### Pending user actions
-> - **(ใหม่) แก้ pre-commit hook** — ดู section ด้านบน (upgrade Node ≥ 20 หรือ pin vitest)
+> - **(งานแรก session หน้า) แก้ pre-commit hook — upgrade Node → 22 LTS ทำด้วยกัน** (ดู section ⚠️ ด้านบน)
 > - ค้างเดิมจาก 2026-05-15: ORPHAN_CANCELLED cleanup (`cleanupOrphanCancelled()` dry-run → ตัดสิน historical rows), `/check-quota`, scan v2, cleanup diagnostic `.js` จาก Apps Script editor, Vercel Analytics watch /track p95.
 > - (`DATA-dateIn-double-encoded` ปิดแล้ว — accepted, ไม่ต้องทำอะไรต่อ นอกจาก optional SQL UPDATE ตอน migration cutover)
 >
