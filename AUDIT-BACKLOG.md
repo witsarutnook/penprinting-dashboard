@@ -2,6 +2,8 @@
 
 > Last scan: **2026-05-12** (5-dimensional audit — 4 parallel subagents covering data/perf/a11y/security + manual architecture review)
 >
+> Data-integrity scan: **2026-05-15** (`runPhase2IntegrityScan` — 9-dimension Sheet scan post Phase 2; see "Data integrity scan" section below)
+>
 > Latest update: **2026-05-12** — **10 audit items closed across 5 commits today**:
 >
 > Morning batch (loadOrder refactor + cleanup):
@@ -64,6 +66,16 @@ _(ปิดครบ — ดู Closed section)_
 - [x] ✅ **L2-currentactor-edge-comment** (closed 2026-05-12) — `lib/api.ts` `currentActor()` docstring เขียนใหม่ชัดเจน: ระบุ 3 cases ที่ return undefined (no request context / edge import fail / no session) + อธิบาย service identity fallback path ของ Apps Script v5.10.1+.
 - [ ] ⏳ **L3-edge-build-warnings** — `app/api/track/lookup/route.ts:13` + `app/api/auth/{login,logout}` Vercel logs edge runtime warnings (expected) แต่ noisy. **Defer reason**: cosmetic, no functional issue
 - [x] ✅ **L4-data-audit-modal-sales-no-action** (closed 2026-05-12) — `app/orders/data-audit-modal.tsx` `DataAuditButton` return null ถ้า `!isAdmin` → sales/staff ไม่เห็นปุ่มอีกแล้ว. Page-level role gate ของ /orders ยัง admin+sales เหมือนเดิม.
+
+---
+
+## 🔬 Data integrity scan — 2026-05-15 (`runPhase2IntegrityScan`)
+
+Proactive 9-dimension scan ของ Google Sheet หลัง Phase 2 live ~2 อาทิตย์. Scan file: `production-monitoring/_scan-phase2.gs`. Counts: orders=171 jobs=41 shipped=115 cancelled=28. Result: **0 critical / 1 high / 2 medium / 0 low**.
+
+- [ ] ⏳ **DATA-dateIn-double-encoded** — orders `202605046` / `202605047` / `202605049` (orders sheet rows 118/119/121, sequential) มี `dateIn` ถูก double-encoded เป็น JSON string: `"\"2026-05-07T17:00:00.000Z\""` (ห่อ quote สองชั้น). 3 IDs ใกล้กัน → 1 batch write event (May 7). **Hypothesis**: `addOrder` fast-path (เครือเดียวกับ bug `details=""` ที่เคยเจอบน 202605036) — code path ที่ `JSON.stringify(date)` ก่อนเขียน Sheet. **Next session**: root-cause `addOrder` write path → เขียน fix helper สำหรับ 3 rows + ปิด source bug. ❗️อาจกระทบ display/sort ของ 3 orders นี้.
+- [~] **DATA-orphan-cancelled** ×4 — cancelled rows อ้าง orderId ที่หายไป (202604024 "ใบปลิวสาขา", 202604068 "สสส", 202605039 "test", 202605055 "หหหห"). **In progress**: cleanup helper `production-monitoring/_cleanup-orphan-cancelled.gs` เขียนแล้ว, รอ user รัน (2 test rows ลบได้, 2 เก่ารอตัดสิน historical).
+- [false-positive] **DATA-orphan-order** ×122 — **ไม่ใช่ data bug.** scan v1 check แค่ `jobs` sheet → orders status="sent" ที่ jobs ส่งของหมดแล้ว (อยู่ใน `shipped`) ถูก flag ผิด. ต้อง scan v2 (cross-ref `jobs`+`shipped`+`cancelled`) เพื่อ confirm. defer.
 
 ---
 

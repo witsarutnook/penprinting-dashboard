@@ -2,6 +2,49 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-15 — pending verifications (Option B): Phase 2 smoke + data-integrity scan + quota runbook:** ✅
+>
+> **Trigger:** `/session-start` → คุณนุ๊กเลือก Option B (run pending verifications ที่ค้างมา 2 sessions). **ไม่มี code changes** — verification + data-integrity session ล้วน.
+>
+> **1. Smoke test 6 Phase 2 actions — ✅ ผ่านครบ 6/6**
+> - addJob / promoteDraft / bulkForward / moveToShipped / cancelJob / cancelOrder — user smoke-tested ใน browser, ผ่านหมด ไม่มี 404 / stale / timeout
+> - Phase 2 (Postgres-first writes) ยืนยันเสถียรหลัง live ~2 อาทิตย์
+>
+> **2. /data-doctor proactive scan — ✅ รันแล้ว, 3 findings**
+> - สร้าง `production-monitoring/_scan-phase2.gs` (scan 9 มิติ, read-only) → push เข้า Apps Script ผ่าน clasp (`_scan-phase2.js`)
+> - คุณนุ๊กรัน `runPhase2IntegrityScan()` — counts: orders=171 jobs=41 shipped=115 cancelled=28
+> - **Result: 0 critical / 1 high / 2 medium / 0 low**
+>   - 🟠 HIGH `ORPHAN_ORDER` ×122 — **scan false positive** (scan check แค่ `jobs` sheet, ไม่ cross-ref `shipped`). orders status="sent" ที่ jobs ส่งของหมดแล้วถูก flag ผิด. ไม่ใช่ data bug — เป็น scan limitation. scan v2 (cross-ref) ยังไม่ได้รัน.
+>   - 🟡 MEDIUM `ORPHAN_CANCELLED` ×4 — cancelled rows อ้าง orderId ที่หายไป (202604024 "ใบปลิวสาขา", 202604068 "สสส", 202605039 "test", 202605055 "หหหห")
+>   - 🟡 MEDIUM `DATE_ANOMALY` ×3 — **real bug.** orders 202605046/047/049 (orders sheet rows 118/119/121, sequential) มี `dateIn` double-encoded เป็น JSON string `"\"2026-05-07T17:00:00.000Z\""`. → ขึ้น AUDIT-BACKLOG เป็น open item `DATA-dateIn-double-encoded`
+>
+> **3. ORPHAN_CANCELLED cleanup — helper เขียนแล้ว, รอ user รัน**
+> - data-doctor สร้าง `production-monitoring/_cleanup-orphan-cancelled.gs` → push เข้า Apps Script (`_cleanup-orphan-cancelled.js`)
+> - `cleanupOrphanCancelled()` — `DRY_RUN=true` default, LockService 15s, descending row delete, triple-verify (id+name+orderId), re-check orphan ก่อนลบ
+> - **ยังไม่รัน** — รอคุณนุ๊กตัดสินใจว่าจะเก็บ 2 row เก่า (202604024, 202604068) ไว้เป็น historical มั้ย
+>
+> **4. /check-quota — runbook ส่งให้ user แล้ว** — ยังไม่ report quota numbers กลับมา
+>
+> ### Lessons
+> - **Diagnostic `.gs` files push ผ่าน clasp ได้** — เดิม `_diagnose-202605036.gs` ใช้ paste มือใน editor. Session นี้ยืนยัน `clasp push` (copy → `apps-script/dashboard/*.js` → `clasp push -f`) เร็วกว่า + ไม่ผิดพลาด. `push` ≠ `deploy` — ไม่กระทบ live deployment URL. (saved to memory)
+> - **Scan ที่เช็คแค่ active sheet → false-positive กับ orders ที่ jobs archived หมดแล้ว** — scan v2 ต้อง cross-ref `jobs` + `shipped` + `cancelled` ก่อนสรุปว่า order orphan
+>
+> ### Pending user actions (queued)
+> - **ORPHAN_CANCELLED cleanup** — รัน `cleanupOrphanCancelled()` dry-run → ตัดสิน historical rows (202604024/202604068) → live run → re-scan verify
+> - **DATE_ANOMALY** — ยังไม่ fix (3 rows). ต้อง root-cause `addOrder` write path ก่อน → เขียน fix helper (ดู AUDIT-BACKLOG `DATA-dateIn-double-encoded`)
+> - **scan v2** — ถ้าอยากปิดคำถาม "122 orphan จริงมั้ย" → รัน cross-ref scan
+> - **/check-quota** — เปิด Apps Script Executions + Cloudflare Worker metrics ดู 24h
+> - **cleanup `_scan-phase2.js` + `_cleanup-orphan-cancelled.js`** จาก Apps Script editor หลังใช้เสร็จ (ลบ `.js` จาก `apps-script/dashboard/` + `clasp push -f` ซ้ำ)
+> - (ค้างเดิม) Vercel Analytics watch /track p95
+>
+> ### Files created (`production-monitoring/` — ไม่ใช่ git repo, ไม่ commit)
+> - `_scan-phase2.gs` + `apps-script/dashboard/_scan-phase2.js` (pushed to Apps Script)
+> - `_cleanup-orphan-cancelled.gs` + `apps-script/dashboard/_cleanup-orphan-cancelled.js` (pushed to Apps Script)
+>
+> **No code changes to git subprojects.** Doc commit only (NEXT-SESSION + AUDIT-BACKLOG).
+>
+> ---
+>
 > **Session 2026-05-14 — admin cross-dept reassign + Phase 2 stale-read fix #3 + cowork "เสร็จงาน" button:** ✅
 >
 > **3 features shipped, 3 commits, smoke-tested by user:**
