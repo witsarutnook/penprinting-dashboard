@@ -20,11 +20,17 @@
 > - **AUDIT-BACKLOG hypothesis เชื่อไม่ได้เสมอ** — entry เดิมเดา `addOrder` แต่ code comment ใน `displayDate()` (lib/jobs.ts:65-73) document root-cause จริง + วันที่ fix ไว้แล้ว. ก่อน re-investigate audit item → grep หา comment ที่พูดถึง symptom ในโค้ดก่อน.
 > - **`_scan-phase2` date-anomaly เช็คแค่ `dateIn`** — ไม่เช็ค `dateDue` ทั้งที่ cancelOrder/promoteDraft เขียนทับทั้ง row → scan v2 ควรเพิ่ม `INVALID_DATEDUE`.
 >
+> ### ⚠️ Pre-commit hook พัง — ต้องแก้ก่อน commit รอบหน้า
+> - **อาการ**: `npm test` ใน pre-commit hook (`type-check && lint && test`) — vitest **startup error** `node:util` ไม่มี export `styleText`. vitest/rolldown ที่ติดตั้งต้องการ Node ≥ 20.12 แต่เครื่องรัน **Node v18.20.4**.
+> - **ผลกระทบ**: ทุก commit ของ penprinting-dashboard จะติด hook นี้จนกว่าจะแก้. commit `dashboard-v2.md` รอบนี้ใช้ `--no-verify` (คุณนุ๊กอนุมัติ — doc-only, type-check/lint ผ่าน, hook พังเพราะ environment ไม่ใช่ test regression).
+> - **Fix รอบหน้า**: upgrade Node ≥ 20 (เช็ค `.nvmrc` / nvm) **หรือ** pin vitest/rolldown เวอร์ชันที่เข้ากับ Node 18. แนะนำ upgrade Node — Next.js 14 + vitest รุ่นใหม่ต้องการอยู่แล้ว.
+>
 > ### Pending user actions
+> - **(ใหม่) แก้ pre-commit hook** — ดู section ด้านบน (upgrade Node ≥ 20 หรือ pin vitest)
 > - ค้างเดิมจาก 2026-05-15: ORPHAN_CANCELLED cleanup (`cleanupOrphanCancelled()` dry-run → ตัดสิน historical rows), `/check-quota`, scan v2, cleanup diagnostic `.js` จาก Apps Script editor, Vercel Analytics watch /track p95.
 > - (`DATA-dateIn-double-encoded` ปิดแล้ว — accepted, ไม่ต้องทำอะไรต่อ นอกจาก optional SQL UPDATE ตอน migration cutover)
 >
-> **Doc-only commit** (NEXT-SESSION + AUDIT-BACKLOG) + 1 feature commit (`238d40d`).
+> **Commits**: `238d40d` (feature QTY_UNITS) + `9fe5379` (docs root-cause) + doc commit dashboard-v2.md (`--no-verify` เพราะ hook พัง).
 >
 > ---
 >

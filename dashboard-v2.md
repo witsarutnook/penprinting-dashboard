@@ -300,6 +300,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### หน่วยจำนวน กล่อง/ถุง/ชิ้น ในฟอร์มใบสั่งงาน (2026-05-16)
+
+`QTY_UNITS` ใน [`app/board/order-form.tsx`](app/board/order-form.tsx) — เดิม `['แผ่น','ชุด','เล่ม']` → เพิ่ม `กล่อง` / `ถุง` / `ชิ้น` รองรับงานบรรจุภัณฑ์. แก้ v2 อย่างเดียว (WP กำลัง retire — ไม่ sync). `238d40d`.
+
+เซสชันเดียวกัน — root-cause `DATA-dateIn-double-encoded` ผ่าน `/diagnose`: ตัวการคือ Apps Script `objectToRow()` ที่เดิมไม่มี Date guard (ไม่ใช่ `addOrder` ตามที่ AUDIT-BACKLOG เดา) — source fixed ไปแล้ว 2026-05-08, 3 rows ที่เหลือเป็น legacy residue, display self-corrects ผ่าน `displayDate()` → ปิดเป็น `[accepted]` ไม่ต้องแก้. รายละเอียดใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md).
+
 ### Admin cross-dept reassign + Phase 2 stale-read fix #3 + cowork "เสร็จงาน" button (2026-05-14)
 
 **3 features shipped, 3 commits, smoke-tested by user:**
