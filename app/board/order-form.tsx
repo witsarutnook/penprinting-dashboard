@@ -102,7 +102,7 @@ interface DuplicateInfo {
 type TabKey = 'main' | 'post' | 'assign';
 
 const SIZE_UNITS = ['ซม.', 'นิ้ว', 'มม.'];
-const QTY_UNITS = ['แผ่น', 'ชุด', 'เล่ม'];
+const QTY_UNITS = ['แผ่น', 'ชุด', 'เล่ม', 'กล่อง', 'ถุง', 'ชิ้น'];
 const PLATE_SIZES = ['ตัด 5', 'ตัด 4', 'ตัด 3'];
 const COVER_COLORS = ['1สี', '2สี', '3สี', '4สี'];
 
