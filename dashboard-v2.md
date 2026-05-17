@@ -300,6 +300,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Node 22 LTS upgrade + AI Quoting design doc (2026-05-17)
+
+**Infra:** อัปเกรด Node 18.20.4 (EOL) → **22.22.3 LTS** — แก้ pre-commit hook ที่พังเพราะ vitest/rolldown ต้องการ Node ≥20.12. เพิ่ม `.nvmrc` = `22`. type-check/lint/test/build ผ่านครบบน Node 22. `0adbdbb` + `30d240a`.
+
+**Design:** สร้าง [`design-ai-quoting.md`](design-ai-quoting.md) — research + design doc ระบบ AI ตอบราคาเบื้องต้นงานพิมพ์ (จอ + LINE OA, reuse สูตร calculator, PEAK ตัดออก, sales ทำใบเสนอราคามือ). Decisions D1-D7 + §0 Brain ครบ, status READY TO BUILD. ขั้นต่อไป = build Phase 0 (calc pricing API). ยังไม่มีโค้ดฟีเจอร์ — design doc อย่างเดียว.
+
 ### หน่วยจำนวน กล่อง/ถุง/ชิ้น ในฟอร์มใบสั่งงาน (2026-05-16)
 
 `QTY_UNITS` ใน [`app/board/order-form.tsx`](app/board/order-form.tsx) — เดิม `['แผ่น','ชุด','เล่ม']` → เพิ่ม `กล่อง` / `ถุง` / `ชิ้น` รองรับงานบรรจุภัณฑ์. แก้ v2 อย่างเดียว (WP กำลัง retire — ไม่ sync). `238d40d`.

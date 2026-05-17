@@ -2,6 +2,34 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-17 — Node 22 upgrade + AI Quoting design doc:** ✅
+>
+> **1. Node 18 → 22 LTS upgrade** ([`0adbdbb`](https://github.com/witsarutnook/penprinting-dashboard/commit/0adbdbb) + [`30d240a`](https://github.com/witsarutnook/penprinting-dashboard/commit/30d240a))
+> - `nvm install 22` (v22.22.3) + `nvm alias default 22` + `.nvmrc` = `22`
+> - แก้ pre-commit hook ที่พังบน Node 18 (vitest/rolldown ต้อง `node:util` styleText, Node ≥20.12) — ตอนนี้ `type-check + lint + test(72/72) + build` ผ่านครบบน Node 22
+> - `package-lock.json` normalize (npm 10.9 ลบ `libc` hint 105 จุด — no version change)
+> - ⚠️ คุณนุ๊กควรเช็ค terminal ตัวเอง: เปิด terminal ใหม่ `node -v` ต้องได้ v22 (ถ้ายัง v18 = profile pin ไว้)
+>
+> **2. AI Quoting — research + design doc** → [`design-ai-quoting.md`](design-ai-quoting.md) **status: READY TO BUILD**
+> - ระบบ AI ตอบราคาเบื้องต้นงานพิมพ์ (จอ + LINE OA) — สถาปัตยกรรม 3 ชั้น: AI สกัด spec → calculator คิดราคา (pure functions reuse) → ส่งราคา/บันทึก lead
+> - Research: calc.ts เป็น pure functions reuse server-side ได้ · LINE webhook flow · PEAK API pricing (จากอีเมล PEAK 16 เม.ย.)
+> - **Decisions ล็อกครบ D1-D7** + §0 Brain complete: PEAK API ตัดออก (sales ทำใบเสนอราคามือ) · calc เปิด `/api/quote` · ราคาต่อชิ้นก่อน VAT ไม่ปัด · `/quote-leads` page · persona · journey edge cases
+> - §13 Implementation Plan: Phase 0 (calc API 2 ไฟล์) → Phase 1a (dashboard ~8 ไฟล์ + Claude API tool-use + Postgres schema)
+>
+> ### 🎯 งานหลัก session หน้า — เริ่ม build AI Quoting Phase 0
+> - อ่าน `design-ai-quoting.md` §13 → ลงมือ **Phase 0**: `print-calculator-next` เพิ่ม `app/api/quote/route.ts` + `lib/quote-schema.ts` (server-side pricing API)
+> - verify: curl spec โบรชัวร์ → ราคาตรงกับหน้า calculator UI
+> - แล้วต่อ Phase 1a (AI Quote Assistant ในจอ)
+>
+> ### Pending user actions
+> - เช็ค `node -v` ใน terminal ตัวเอง = v22 (ดูข้อ 1)
+> - ตัดสิน: เริ่ม Phase 0 ใน session ไหน + `ANTHROPIC_API_KEY` มีอยู่แล้วหรือสร้างใหม่ (ดู design doc §11)
+> - ค้างเดิม: ORPHAN_CANCELLED cleanup · `/check-quota` · scan v2 · cleanup diagnostic `.js`
+>
+> **Commits**: `0adbdbb` `30d240a` (Node 22) + doc commit (design-ai-quoting.md + NEXT-SESSION + dashboard-v2)
+>
+> ---
+>
 > **Session 2026-05-16 — dateIn double-encode root-cause (/diagnose) + QTY_UNITS feature:** ✅
 >
 > **Trigger:** `/session-start` → คุณนุ๊กเลือก Option A (root-cause `DATA-dateIn-double-encoded`) → ระหว่างทาง pivot ไปเพิ่มหน่วยจำนวนในฟอร์ม.
