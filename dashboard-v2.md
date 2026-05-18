@@ -300,11 +300,11 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### Phase 4.2 close-out Stage 1+2+3 + cutover (2026-05-18)
+### Phase 4.2 close-out Stage 1-4 + cutover (2026-05-18)
 
 **Context:** session เริ่มจะทำ delta-fetch (board auto-sync) แต่คุณนุ๊กตัดสิน — ถ้าตัด Sheet ออกจากระบบก่อน delta-fetch จะ trivial (ไม่มี TRUNCATE+INSERT cron รีเซ็ต cursor / ไม่มี Sheet-direct edit ที่ delta มองไม่เห็น) → **เร่ง Phase 4.2 close-out** เป็นแผน 6 stage. delta-fetch deferred จนกว่า close-out เสร็จ.
 
-**แผน 6 stage:** S0 ✅ · **S1** ✅ · **S2** ✅ + cutover (flag flipped 2026-05-18) · **S3** ✅ · S4 ลบ dual-write mirror · S5 ลบ WRITE_* flag scaffolding (soak ≥1 สัปดาห์) · S6 docs. หลัง cutover = Postgres sole source of truth, ไม่มี Sheet safety-net.
+**แผน 6 stage:** S0 ✅ · **S1** ✅ · **S2** ✅ + cutover · **S3** ✅ · **S4** ✅ · S5 ลบ WRITE_* flag scaffolding (soak ≥1 สัปดาห์) · S6 docs. หลัง cutover = Postgres sole source of truth, ไม่มี Sheet safety-net.
 
 **Stage 1** ([`fe4e238`](https://github.com/witsarutnook/penprinting-dashboard/commit/fe4e238)) — migrate 3 write route สุดท้ายที่ยัง Apps Script-only ให้ Postgres-first (prerequisite ของ S2 หยุด cron + S4 ลบ mirror). roadmap เขียนว่า 3 ตัวนี้เป็น "dead UI path" — **ผิด**, reachable จริง:
 - `deleteJob` — `deleteJobInPostgres` tombstone (reuse `phase2_deleted_at` + `healJobsTombstone` — ไม่มี Apps Script action ใหม่). UI: /orders → "ตรวจสอบข้อมูล" modal → Duplicate jobs → "ลบ row นี้"
@@ -316,6 +316,8 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 **Stage 2** ([`9678ab1`](https://github.com/witsarutnook/penprinting-dashboard/commit/9678ab1)) — the core cutover, shipped behind a flag OFF. `phase2OwnsTable()` คืน true ให้ jobs/orders/shipped/cancelled เมื่อ `PHASE2_OWNS_CORE_TABLES=1`; from-Sheet cron orchestration refactor ผ่าน helper `syncOrSkip` — flag ON → skip sync 4 ตาราง + `recordSyncMetaTouch` (Sheet ทับ Postgres-authoritative row ไม่ได้อีก; audit_log ยัง sync จาก Sheet เสมอ). flag **default OFF → deploy พฤติกรรมเหมือนเดิม** (cron วิ่งปกติ). flip ON = cutover (Postgres = sole source of truth, heal cron เป็น Postgres→Sheet path เดียว); flip OFF = revert (cron resume, `deleteCleanThenInsert` preserve dirty rows → ไม่เสีย Phase 2 write). **Cutover ทำแล้ว 2026-05-18** — `PHASE2_OWNS_CORE_TABLES=1` ON ใน prod (Stage 0 pre-flight ผ่าน — diagnose-board layer5_sync_meta เขียวหมด), verified ผ่าน `/api/admin/sync-all`: jobs/orders/shipped/cancelled/templates = `skipped`, audit_log sync ปกติ.
 
 **Stage 3** ([`8043990`](https://github.com/witsarutnook/penprinting-dashboard/commit/8043990)) — หลัง cutover, `found:false → Apps Script` fallback กลายเป็น data-loss path (from-Sheet cron ไม่ import jobs/orders แล้ว → Sheet-only write หายเข้า Sheet ไม่กลับมา Postgres). ตัด fallback ใน 7 route (jobs: update/delete/reassign/move-to-shipped/cowork · orders: update/promote-draft) → ตอบ **409** "refresh แล้วลองใหม่" แทน (found:false post-cutover = stale-client race จริง). orders/cancel คืน 404 row-missing อยู่แล้ว — ไม่แตะ. flag-OFF legacy branch ยังอยู่ (ลบ Stage 5).
+
+**Stage 4** ([`2a52a64`](https://github.com/witsarutnook/penprinting-dashboard/commit/2a52a64)) — ลบ Phase 1.7 dual-write mirror: ลบไฟล์ `lib/postgres-write-mirror.ts` (-425 บรรทัด) + ตัด `mirrorWriteToPostgres` block จาก `post()` ใน `lib/api.ts`. หลัง S1 (migrate 3 route) + S3 (ตัด fallback) ไม่มี route ไหนพึ่ง mirror — restore เขียน Postgres ผ่าน `restoreJobInPostgres` ตรง. **Residual (ปิดใน S5):** promote-draft existingJob recovery sub-path ยัง flip status ผ่าน `post('updateOrder')` = Sheet-only — rare มาก (ต้องมี draft order + orphan job ค้างอยู่ก่อน, residue ของ partial-failure เก่า).
 
 ### Postgres network-transfer fix — cache coalescing (2026-05-18)
 
