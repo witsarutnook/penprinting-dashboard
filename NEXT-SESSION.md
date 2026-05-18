@@ -2,7 +2,7 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-18 (PM) — Phase 4.2 close-out Stage 1 + 2:** ✅
+> **Session 2026-05-18 (PM) — Phase 4.2 close-out S1+S2+S3 + cutover:** ✅
 >
 > **Pivot:** session เริ่มจะทำ delta-fetch (board auto-sync) → คุณนุ๊กถาม "ตัด Sheet ออกเลยได้มั้ย" → ถ้า Sheet ไม่อยู่ delta-fetch trivial (ไม่มี TRUNCATE+INSERT cron รีเซ็ต cursor / ไม่มี Sheet-direct edit ที่ delta มองไม่เห็น). คุณนุ๊กตัดสิน: **เร่ง Phase 4.2 close-out ก่อน** (แลกกับ burn-in gate ต้นมิ.ย. ที่หายไป ~3-4 สัปดาห์). **delta-fetch deferred จนกว่า close-out เสร็จ.**
 >
@@ -10,12 +10,12 @@
 > เป้า: Postgres = sole source of truth · ตัด Apps Script write paths · Sheet = downstream mirror อย่างเดียว
 > - **S0** pre-flight verify (flag / data-parity Postgres==Sheet / heal-cron backlog ว่าง)
 > - **S1** ✅ migrate deleteJob/restoreJob/forwardUndo → Postgres-first (commit `fe4e238`)
-> - **S2** ✅ code shipped (`9678ab1`) — `phase2OwnsTable()` คืน true ให้ jobs/orders/shipped/cancelled gated flag `PHASE2_OWNS_CORE_TABLES` (default OFF). from-Sheet cron skip 4 ตาราง + `recordSyncMetaTouch` (helper `syncOrSkip`). **ยังไม่ flip flag** — flip ON = cutover จริง (revert ได้ด้วย flip OFF)
-> - **S3** ตัด `found:false → Apps Script` fallback ใน 7 route (`jobs/{update,reassign,move-to-shipped,cowork}` + `orders/{update,cancel,promote-draft}`) → ตอบ 409 "refresh แล้วลองใหม่" (คุณนุ๊กเลือก 409 ไม่ใช่ trust-client INSERT)
+> - **S2** ✅ code (`9678ab1`) + **flipped 2026-05-18** — `PHASE2_OWNS_CORE_TABLES=1` ON ใน prod, verified ผ่าน `/api/admin/sync-all` (jobs/orders/shipped/cancelled = `skipped`). from-Sheet cron หยุดทับแล้ว → **Postgres = sole source of truth**
+> - **S3** ✅ done (`8043990`) — ตัด `found:false → Apps Script` fallback ใน 7 route → ตอบ 409 (orders/cancel คืน 404 อยู่แล้ว ไม่ต้องแตะ)
 > - **S4** ลบ dual-write mirror — `lib/postgres-write-mirror.ts` + `lib/api.ts:495-498`
-> - **S5** ลบ WRITE_* flag scaffolding + legacy branch ทั้งหมด (least reversible — soak ≥1 สัปดาห์หลัง S2 ก่อนทำ)
+> - **S5** ลบ WRITE_* flag scaffolding + legacy branch ทั้งหมด (least reversible — soak cutover ≥1 สัปดาห์ก่อนทำ)
 > - **S6** docs
-> ⚠️ S1 ต้องก่อน S2 เสมอ (ไม่งั้น cron หยุด → Sheet write หาย). หลัง S2 = ไม่มี Sheet safety-net แล้ว. รายละเอียดเต็ม: ถาม Claude re-run Plan agent
+> ⚠️ หลัง cutover = ไม่มี Sheet safety-net แล้ว (revert ได้ด้วย flip flag OFF)
 >
 > ## Stage 1 — เสร็จ + live production
 > 3 route นี้ roadmap เขียนว่า "dead UI path" — **ผิด** ทั้งคู่มี UI เรียกจริง:
@@ -25,20 +25,19 @@
 > - commit `fe4e238` — 8 ไฟล์ +424. 3 flag ใหม่ `WRITE_{DELETE_JOB,RESTORE_JOB,FORWARD_UNDO}_TO_POSTGRES` (default off). test 76→87. type-check/lint/build ผ่าน (Node 22)
 > - **flags ON ใน Production แล้ว** (คุณนุ๊ก set + redeploy เอง — ข้าม Preview smoke). smoke prod: restore ✅ undo ✅. deleteJob ข้าม (ต้องมี duplicate job ถึง trigger ได้ + เสี่ยงต่ำสุด — reuse tombstone+heal infra เดิม)
 >
-> ## Stage 2 — code ขึ้น production (behind flag OFF)
-> commit `9678ab1` — `phase2OwnsTable()` รับ flag `PHASE2_OWNS_CORE_TABLES`; from-Sheet cron (`lib/sync-from-sheet.ts`) refactor ผ่าน helper `syncOrSkip` — flag ON → skip sync jobs/orders/shipped/cancelled + `recordSyncMetaTouch` (audit_log ยัง sync เสมอ). flag **default OFF → deploy พฤติกรรมเหมือนเดิม** (cron วิ่งปกติ). test 87→91. **flip flag ON = cutover** (ยังไม่ทำ — รอ Stage 0 + soak)
+> ## Stage 2 cutover + Stage 3 — เสร็จ 2026-05-18
+> - **S2 cutover** — `PHASE2_OWNS_CORE_TABLES=1` ON ใน prod + redeploy (Stage 0 pre-flight ผ่าน — diagnose-board layer5_sync_meta ทุกตาราง `ok:true` sync สด). verified ผ่าน `/api/admin/sync-all`: jobs/orders/shipped/cancelled/templates = `skipped — Postgres owns`, audit_log = sync 500. **from-Sheet cron ไม่ทับ jobs/orders แล้ว = Postgres เป็น source of truth จริง**
+> - **S3** (`8043990`) — 7 route ตัด found:false→Apps Script fallback → 409 "refresh แล้วลองใหม่". test 91/91
 >
-> ### 🎯 งานหลัก session หน้า — flip cutover → Stage 3
-> Stage 1+2 code ขึ้น production แล้ว (S2 behind flag OFF). ลำดับถัดไป:
-> 1. **Stage 0 pre-flight** — เช็ค data parity Postgres==Sheet (`/api/admin/diagnose-board`) + heal cron ไม่มี dirty backlog
-> 2. ดู Sentry 24-48 ชม. (Stage 1 routes สะอาด)
-> 3. **flip `PHASE2_OWNS_CORE_TABLES=1`** ที่ Vercel Production = cutover. verify: แก้งานตรงใน Sheet → ไม่เข้า Postgres; แก้ผ่าน v2 → heal cron sync Sheet ใน 5 นาที. revert = flip OFF
-> 4. เสถียร → **Stage 3** (ตัด `found:false→Apps Script` fallback ใน 7 route → ตอบ 409)
+> ### 🎯 งานหลัก session หน้า — Stage 4 (+ Stage 5 หลัง soak)
+> - **Stage 4** — ลบ dual-write mirror: ลบไฟล์ `lib/postgres-write-mirror.ts` + ตัด `mirrorWriteToPostgres` call block ใน `lib/api.ts` (~บรรทัด 495-498). ปลอดภัยแล้ว — S1 migrate 3 route ครบ + S3 ตัด fallback → ไม่มี route ไหนพึ่ง mirror. ⚠️ เช็คก่อนลบ: heal cron actions (`setJobRow` ฯลฯ) ต้องไม่อยู่ใน `PATHS_BY_ACTION` (ไม่งั้น feedback loop) — Plan ยืนยันแล้วว่าไม่อยู่
+> - **Stage 5** — ลบ `WRITE_*` flag scaffolding + legacy Apps Script branch ทั้งหมด. **least reversible** — รอ soak cutover ≥1 สัปดาห์ (target ~ปลายพ.ค.). หลัง deploy ลบ env var `WRITE_*` 14 ตัวออกจาก Vercel (เก็บ `READ_FROM_POSTGRES` + `CRON_SECRET` ไว้)
+> - **Stage 6** docs
 >
 > ### ⏳ Pending
-> - **Stage 0 pre-flight + flip `PHASE2_OWNS_CORE_TABLES=1`** (the cutover — ดู "งานหลัก session หน้า")
-> - **ดู Sentry 24-48 ชม.** — Stage 1 routes (deleteJob/restoreJob/forwardUndo)
+> - **ดู Sentry + Neon transfer** หลัง cutover — from-Sheet cron ไม่ error, egress ลด
 > - deleteJob smoke test ยังไม่ได้ทำ (ต้องมี duplicate job — ข้ามได้ เสี่ยงต่ำ)
+> - delta-fetch — deferred จนกว่า close-out เสร็จ (S4-S6)
 > - delta-fetch — deferred จนกว่า Phase 4.2 close-out เสร็จ
 > - ค้างเดิม: AI Quoting Phase 0 · ORPHAN_CANCELLED cleanup · `/check-quota` · scan v2
 >
@@ -46,7 +45,7 @@
 > - **roadmap "dead UI path" เชื่อไม่ได้** — Tech-Roadmap-Status เขียน deleteJob/restoreJob เป็น "dead UI" แต่ทั้งคู่ reachable จริง (data-audit modal + /cancelled). verify reachability (`grep "api/jobs/delete"` ใน app/components) ก่อนเชื่อ doc claim
 > - **restore Sheet-side asymmetry** — `cancelled` ไม่มี tombstone/heal path เหมือน jobs → restore Phase 2 ต้องพึ่ง `post('restoreJob')` sync Sheet (heal cron ทำแทนไม่ได้). ถ้าจะตัด Apps Script เต็มตัว (Phase 4.3) ต้องเพิ่ม `deleteCancelledByIdRow` action + cancelled tombstone
 >
-> **Commits**: `fe4e238` (S1) · `68e1434` (S1 docs) · `9678ab1` (S2)
+> **Commits**: `fe4e238` (S1) · `68e1434` (S1 docs) · `9678ab1` (S2) · `000b13f` (S2 docs) · `8043990` (S3) + cutover (`PHASE2_OWNS_CORE_TABLES=1` ใน Vercel)
 >
 > ---
 >
