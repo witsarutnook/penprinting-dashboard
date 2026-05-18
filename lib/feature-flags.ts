@@ -78,6 +78,22 @@ const ACTION_ENV_VAR: Record<string, string> = {
   // status='cancelled'. No order tombstone (cancelled orders stay listed
   // in /orders with status='cancelled' — admin can re-open if needed).
   cancelOrder:    'WRITE_CANCEL_ORDER_TO_POSTGRES',
+  // deleteJob — Phase 4.2 close-out Stage 1 (2026-05-18). Tombstone the
+  // jobs row (phase2_deleted_at) — heal cron's healJobsTombstone pushes
+  // deleteJobByIdRow to Sheet. Reuses existing tombstone infra (no new
+  // Apps Script action). Used by the /orders data-audit modal.
+  deleteJob:      'WRITE_DELETE_JOB_TO_POSTGRES',
+  // restoreJob — Phase 4.2 close-out Stage 1 (2026-05-18). cancelled→jobs.
+  // The route still calls Apps Script `restoreJob` for the Sheet side
+  // (atomic delete-cancelled + append-jobs); restoreJobInPostgres makes
+  // the Postgres write explicit so restore survives the Stage 4 mirror
+  // removal. Used by the /cancelled page.
+  restoreJob:     'WRITE_RESTORE_JOB_TO_POSTGRES',
+  // forwardUndo — Phase 4.2 close-out Stage 1 (2026-05-18). The undo-toast
+  // reverse of a forward. Reuses bulkForwardInPostgres (tombstone old +
+  // INSERT new). Own flag (not bulkForward's) so it can roll out OFF→ON
+  // independently. Used by the /board undo toast.
+  forwardUndo:    'WRITE_FORWARD_UNDO_TO_POSTGRES',
 };
 
 /** True when the given mutation should write Postgres-first

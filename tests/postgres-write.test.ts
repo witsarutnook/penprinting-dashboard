@@ -22,6 +22,8 @@ import {
   updateOrderInPostgres,
   promoteDraftInPostgres,
   cancelOrderInPostgres,
+  deleteJobInPostgres,
+  restoreJobInPostgres,
   appendAuditToPostgres,
   markRowClean,
   markRowDirty,
@@ -913,5 +915,123 @@ describe('deleteTemplateFromPostgres', () => {
     await expect(deleteTemplateFromPostgres('abc')).rejects.toBeInstanceOf(PostgresWriteError);
     await expect(deleteTemplateFromPostgres(0)).rejects.toBeInstanceOf(PostgresWriteError);
     expect(sqlCalls).toHaveLength(0);
+  });
+});
+
+describe('deleteJobInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws PostgresWriteError when Postgres is not configured', async () => {
+    setConfigured(false);
+    await expect(deleteJobInPostgres(1)).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('throws PostgresWriteError on invalid id', async () => {
+    await expect(deleteJobInPostgres('abc')).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(deleteJobInPostgres(0)).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(deleteJobInPostgres(-3)).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('returns found:false WITHOUT issuing UPDATE when row missing in Postgres', async () => {
+    queueResult({ rows: [], rowCount: 0 });  // SELECT returns nothing
+    const r = await deleteJobInPostgres(999);
+    expect(r).toEqual({ ok: true, found: false });
+    // Guards the route's fall-through-to-legacy contract for stragglers.
+    expect(callsContaining('SELECT id FROM jobs')).toHaveLength(1);
+    expect(callsContaining('UPDATE jobs')).toHaveLength(0);
+  });
+
+  it('tombstones the row (phase2_deleted_at = NOW()) when it exists', async () => {
+    queueResult({ rows: [{ id: 42 }], rowCount: 1 });  // SELECT
+    queueResult({ rowCount: 1 });  // UPDATE
+    const r = await deleteJobInPostgres(42);
+    expect(r).toEqual({ ok: true, found: true });
+    const update = findCallContaining('UPDATE jobs');
+    expect(update).toBeDefined();
+    expect(update!.text).toContain('phase2_deleted_at = NOW()');
+  });
+});
+
+describe('restoreJobInPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws PostgresWriteError when Postgres is not configured', async () => {
+    setConfigured(false);
+    await expect(
+      restoreJobInPostgres({ id: 1, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('throws PostgresWriteError on invalid id', async () => {
+    await expect(
+      restoreJobInPostgres({ id: 0, name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    await expect(
+      restoreJobInPostgres({ id: 'abc', name: 'x', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('throws PostgresWriteError on missing name', async () => {
+    await expect(
+      restoreJobInPostgres({ id: 5, name: '   ', dept: 'print', staff: 'mo' }),
+    ).rejects.toBeInstanceOf(PostgresWriteError);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('upserts the jobs row clearing tombstone + dirty marker, then deletes the cancelled row', async () => {
+    queueResult({ rowCount: 1 });  // INSERT ... ON CONFLICT
+    queueResult({ rowCount: 1 });  // DELETE FROM cancelled
+    const r = await restoreJobInPostgres({
+      id: 77, name: 'job-X', dept: 'post', staff: 'aor',
+      orderId: 202605001, date: '2026-05-20', dateIn: '2026-05-18',
+    });
+    expect(r).toEqual({ ok: true });
+
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert).toBeDefined();
+    // ON CONFLICT must clear the tombstone — else a not-yet-heal-pruned
+    // cancel tombstone keeps the restored job hidden from /board.
+    expect(insert!.text).toContain('phase2_deleted_at = NULL');
+    expect(insert!.text).toContain('phase2_dirty_at = NULL');
+
+    expect(callsContaining('DELETE FROM cancelled')).toHaveLength(1);
+  });
+});
+
+describe('bulkForwardInPostgres — cowork pass-through', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('preserves cowork in the new row when newJob.cowork is provided (forward-undo)', async () => {
+    queueResult({ rows: [{ id: 100 }], rowCount: 1 });  // SELECT exists
+    queueResult({ rowCount: 1 });  // INSERT new
+    queueResult({ rowCount: 1 });  // UPDATE tombstone old
+    const r = await bulkForwardInPostgres([{
+      oldId: 100,
+      newJob: { id: 200, name: 'j', staff: 'mo', dept: 'print', cowork: ['aor', 'kik'] },
+    }]);
+    expect(r.succeeded).toHaveLength(1);
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert).toBeDefined();
+    // VALUES order: id, order_id, name, date, date_in, staff, dept, status, cowork, raw
+    expect(insert!.values[8]).toBe(JSON.stringify(['aor', 'kik']));
+    expect(JSON.parse(insert!.values[9] as string)).toMatchObject({ cowork: ['aor', 'kik'] });
+  });
+
+  it('clears cowork (null) when newJob.cowork is omitted (forward)', async () => {
+    queueResult({ rows: [{ id: 101 }], rowCount: 1 });
+    queueResult({ rowCount: 1 });
+    queueResult({ rowCount: 1 });
+    await bulkForwardInPostgres([{
+      oldId: 101,
+      newJob: { id: 201, name: 'j', staff: 'mo', dept: 'print' },
+    }]);
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert!.values[8]).toBeNull();
+    // raw snapshot carries no cowork key when none was passed
+    expect(JSON.parse(insert!.values[9] as string)).not.toHaveProperty('cowork');
   });
 });

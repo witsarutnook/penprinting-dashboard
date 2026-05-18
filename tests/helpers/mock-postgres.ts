@@ -39,8 +39,13 @@ function normaliseSql(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-function makeSqlMock() {
-  const fn: any = (strings: TemplateStringsArray, ...values: unknown[]) => {
+interface SqlMock {
+  (strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult>;
+  query(text: string, params?: unknown[]): Promise<SqlResult>;
+}
+
+function makeSqlMock(): SqlMock {
+  const tag = (strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult> => {
     let text = strings[0] || '';
     for (let i = 0; i < values.length; i++) {
       text += `$${i + 1}` + (strings[i + 1] || '');
@@ -49,12 +54,12 @@ function makeSqlMock() {
     const result = state.queue.shift() || { rows: [], rowCount: 0 };
     return Promise.resolve(result);
   };
-  fn.query = (text: string, params: unknown[] = []) => {
+  const query = (text: string, params: unknown[] = []): Promise<SqlResult> => {
     state.calls.push({ type: 'query', text: normaliseSql(text), values: params });
     const result = state.queue.shift() || { rows: [], rowCount: 0 };
     return Promise.resolve(result);
   };
-  return fn;
+  return Object.assign(tag, { query });
 }
 
 // Exports consumed by the mocked `@/lib/postgres` module ────────────

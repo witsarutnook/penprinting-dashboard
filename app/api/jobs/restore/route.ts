@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, loadAll, loadAllFresh, loadOrder, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { restoreJobInPostgres } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -136,6 +138,33 @@ export async function POST(req: Request) {
     date: toISODate(orderDateDue),
     dateIn: toISODate(orderDateIn),
   };
+
+  // Phase 2 — when WRITE_RESTORE_JOB_TO_POSTGRES=1, the Sheet write goes
+  // through Apps Script (atomic delete-cancelled + append-jobs) and the
+  // Postgres write is made explicit via restoreJobInPostgres so restore
+  // survives the Phase 4.2 Stage 4 dual-write-mirror removal.
+  if (phase2WriteEnabled('restoreJob')) {
+    // Sheet write first — Apps Script `restoreJob` atomically deletes the
+    // cancelled row + appends the jobs row, and writes the audit entry.
+    // On failure nothing else runs (clean failure, matches legacy).
+    try {
+      const result = await post<{ ok?: boolean; error?: string }>('restoreJob', { data: restored });
+      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
+    } catch (err) {
+      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
+    // Postgres write — explicit so restore survives the Stage 4 mirror
+    // removal. Non-fatal: the dual-write mirror also covers this until
+    // then, and running after post() un-tombstones a not-yet-heal-pruned
+    // jobs row left by the prior cancel.
+    try {
+      await restoreJobInPostgres(restored);
+    } catch (err) {
+      console.warn('[phase2-restore] restoreJobInPostgres failed:', err instanceof Error ? err.message : String(err));
+    }
+    return NextResponse.json({ ok: true, id });
+  }
 
   try {
     const result = await post<{ ok?: boolean; error?: string }>('restoreJob', { data: restored });

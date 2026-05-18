@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { phase2WriteEnabled, phase2OwnsTable } from '@/lib/feature-flags';
 
-const RELEVANT_VARS = ['WRITE_TEMPLATES_TO_POSTGRES', 'WRITE_COWORK_TO_POSTGRES'];
+const RELEVANT_VARS = [
+  'WRITE_TEMPLATES_TO_POSTGRES',
+  'WRITE_COWORK_TO_POSTGRES',
+  'WRITE_DELETE_JOB_TO_POSTGRES',
+  'WRITE_RESTORE_JOB_TO_POSTGRES',
+  'WRITE_FORWARD_UNDO_TO_POSTGRES',
+];
 
 describe('phase2WriteEnabled', () => {
   beforeEach(() => {
@@ -21,6 +27,22 @@ describe('phase2WriteEnabled', () => {
     expect(phase2WriteEnabled('addTemplate')).toBe(false);
     expect(phase2WriteEnabled('deleteTemplate')).toBe(false);
     expect(phase2WriteEnabled('setCowork')).toBe(false);
+    expect(phase2WriteEnabled('deleteJob')).toBe(false);
+    expect(phase2WriteEnabled('restoreJob')).toBe(false);
+    expect(phase2WriteEnabled('forwardUndo')).toBe(false);
+  });
+
+  it('returns true for Phase 4.2 Stage 1 actions when their own flag is set', () => {
+    process.env.WRITE_DELETE_JOB_TO_POSTGRES = '1';
+    expect(phase2WriteEnabled('deleteJob')).toBe(true);
+    expect(phase2WriteEnabled('restoreJob')).toBe(false);
+    expect(phase2WriteEnabled('forwardUndo')).toBe(false);
+
+    process.env.WRITE_RESTORE_JOB_TO_POSTGRES = '1';
+    expect(phase2WriteEnabled('restoreJob')).toBe(true);
+
+    process.env.WRITE_FORWARD_UNDO_TO_POSTGRES = '1';
+    expect(phase2WriteEnabled('forwardUndo')).toBe(true);
   });
 
   it('returns true for templates actions when WRITE_TEMPLATES_TO_POSTGRES=1', () => {

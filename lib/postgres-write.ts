@@ -735,6 +735,105 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
   return { ok: true, found: true };
 }
 
+// ─── deleteJob (Phase 2 — tombstone) ─────────────────────────────
+
+/** Phase 2 — soft-delete a job via the tombstone column. The heal cron's
+ *  healJobsTombstone pushes deleteJobByIdRow to Sheet, then hard-DELETEs
+ *  the Postgres row. /board reads filter `phase2_deleted_at IS NULL` so the
+ *  card disappears instantly. Returns `found:false` (route falls through to
+ *  legacy Apps Script) when the row isn't in the Postgres mirror yet —
+ *  matches the moveToShipped/cancelJob row-missing contract. */
+export async function deleteJobInPostgres(id: number | string): Promise<{ ok: true; found: boolean }> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('deleteJob', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('deleteJob', 'Invalid job id');
+  }
+
+  const cur = await sql<{ id: number }>`
+    SELECT id FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1
+  `;
+  if (cur.rows.length === 0) {
+    return { ok: true, found: false };
+  }
+
+  await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
+  return { ok: true, found: true };
+}
+
+// ─── restoreJob (Phase 2 — cancelled → jobs) ─────────────────────
+
+export interface RestoreJobInput {
+  id: number | string;
+  name: string;
+  dept: string;
+  staff: string;
+  status?: string;
+  /** '' / null → orphan (no parent order). */
+  orderId?: number | string | null;
+  date?: string | null;
+  dateIn?: string | null;
+}
+
+/** Phase 2 — restore a cancelled job: upsert the jobs row + delete the
+ *  cancelled row in Postgres.
+ *
+ *  The route also calls Apps Script `restoreJob` (which atomically deletes
+ *  the cancelled row + appends the jobs row on the Sheet, and writes the
+ *  audit entry) — so the restored jobs row is intentionally NOT marked
+ *  `phase2_dirty_at`: the Sheet is already in sync, no heal needed.
+ *
+ *  The ON CONFLICT branch clears `phase2_deleted_at` AND `phase2_dirty_at`:
+ *  if the prior cancel's jobs tombstone hasn't been heal-pruned yet, the
+ *  upsert would otherwise leave the restored job hidden from /board (which
+ *  filters `phase2_deleted_at IS NULL`). */
+export async function restoreJobInPostgres(input: RestoreJobInput): Promise<{ ok: true }> {
+  if (!isPostgresConfigured()) {
+    throw new PostgresWriteError('restoreJob', 'POSTGRES_URL env var missing');
+  }
+  const idNum = Number(input.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    throw new PostgresWriteError('restoreJob', 'Invalid job id');
+  }
+  const name = String(input.name || '').trim();
+  if (!name) throw new PostgresWriteError('restoreJob', 'Missing job name');
+
+  const orderIdRaw = input.orderId === '' || input.orderId == null ? null : Number(input.orderId);
+  const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
+  const date = input.date == null ? null : String(input.date);
+  const dateIn = input.dateIn == null ? null : String(input.dateIn);
+  const dept = String(input.dept);
+  const staff = String(input.staff);
+  const status = String(input.status || 'pending');
+
+  const raw = { id: idNum, name, date, dateIn, dept, staff, status, orderId };
+  const rawJson = JSON.stringify(raw);
+
+  await sql`
+    INSERT INTO jobs
+      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
+    VALUES
+      (${idNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
+       ${staff}, ${dept}, ${status}, ${null}::jsonb, ${rawJson}::jsonb)
+    ON CONFLICT (id) DO UPDATE SET
+      order_id = EXCLUDED.order_id,
+      name = EXCLUDED.name,
+      date = EXCLUDED.date,
+      date_in = EXCLUDED.date_in,
+      staff = EXCLUDED.staff,
+      dept = EXCLUDED.dept,
+      status = EXCLUDED.status,
+      cowork = EXCLUDED.cowork,
+      raw = EXCLUDED.raw,
+      phase2_deleted_at = NULL,
+      phase2_dirty_at = NULL
+  `;
+  await sql`DELETE FROM cancelled WHERE id = ${idNum}::bigint`;
+  return { ok: true };
+}
+
 // ─── promoteDraft (atomic draft→sent + addJob) ────────────────────
 
 export interface PromoteDraftInput {
@@ -910,6 +1009,10 @@ export interface BulkForwardItem {
     dept: string;
     status?: string;
     orderId?: number | string | null;
+    /** Pass-through cowork. Forward callers omit it (cowork cleared on
+     *  forward); forward-undo passes the pre-forward snapshot's cowork to
+     *  restore attached collaborators. */
+    cowork?: unknown;
   };
 }
 
@@ -979,6 +1082,10 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
       const staff = String(item.newJob.staff);
       const dept = String(item.newJob.dept);
       const status = String(item.newJob.status || 'pending');
+      // cowork — forward callers omit it (cleared on forward); forward-undo
+      // passes the pre-forward snapshot's cowork to restore collaborators.
+      const cowork = item.newJob.cowork ?? null;
+      const coworkJson = cowork == null ? null : JSON.stringify(cowork);
 
       const newRaw = {
         id: newIdNum,
@@ -989,6 +1096,7 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
         staff,
         status,
         orderId,
+        ...(cowork != null ? { cowork } : {}),
       };
       const newRawJson = JSON.stringify(newRaw);
 
@@ -1000,7 +1108,7 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
           (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
         VALUES
           (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
-           ${staff}, ${dept}, ${status}, ${null}::jsonb, ${newRawJson}::jsonb, NOW())
+           ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb, NOW())
         ON CONFLICT (id) DO NOTHING
       `;
       await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${oldIdNum}::bigint`;
