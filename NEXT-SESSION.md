@@ -12,11 +12,19 @@
 >
 > **Fix:** ตัด `checkStaleness` pre-gate ออกจาก `loadOrderFromPostgres` ([`lib/api-postgres.ts`](lib/api-postgres.ts)) — Phase 2 Postgres = source of truth, mirror staleness ไม่ควร block single-order read. + regression test `tests/api-postgres.test.ts` (suite 72→76). type-check/build/test ผ่าน Node 22.
 >
-> ### ⏳ ค้าง — งานต่อ session หน้า (priority)
+> ### 🎯 งานหลัก session หน้า — Delta-fetch (คุณนุ๊กตัดสิน 2026-05-18)
+> เปลี่ยน board auto-sync จาก **poll-the-world** (`router.refresh()` ดึง snapshot ทั้งก้อนทุก 15 วิ) → **delta-fetch** (ขอเฉพาะ row ที่เปลี่ยนตั้งแต่ tick ก่อน)
+> - **เลือก delta ไม่เลือก push/SSE** เพราะ: ไม่เพิ่ม vendor/dependency · latency 15 วิ เพียงพอสำหรับ dashboard ภายใน · เป็น stepping stone (ถ้าวันหลังอยาก push แค่เปลี่ยน trigger จาก timer → Pusher event)
+> - **Scope:** board (+ อาจ orders/calendar) เปลี่ยนเป็น client-driven — fetch endpoint ใหม่ที่ query `WHERE updated_at > <lastSync>` คืนเฉพาะ delta · client merge เข้า state เอง
+> - **ต้องเช็คก่อน:** มี `updated_at` column ที่ bump ทุก write มั้ย (มี `phase2_dirty_at` แต่นั่นคือ "dirty since sheet-sync" คนละความหมาย — อาจต้องเพิ่ม column ใหม่)
+> - **ระวัง:** delete/move — row หายไปจากผลลัพธ์ client ต้องรู้ว่าต้องลบการ์ดออก (ไม่ใช่แค่ append) · cache coalescing ที่ทำวันนี้อาจต้องปรับ key ให้รับ delta param
+> - context เต็มของการตัดสินใจ push vs delta อยู่ใน session log ด้านล่าง + version history
+>
+> ### ⏳ ค้างอื่น
 > 1. **เช็ค data-integrity fallout** — เปิด `https://dashboard.penprinting.co/api/admin/diagnose-board` ดู `layer5_sync_meta`: ทุก table `ok=true` + `last_sync_at` สด? มี order/job ตกค้างช่วง incident มั้ย
 > 2. ✅ **Network transfer — แก้แล้ว** (cache coalescing + frequency tuning, ดู version history). verify: ดู Neon transfer graph 1-2 วันว่าลดจริง ~85%
 > 3. **Phase 2 writes ไม่มี fallback** — ตอน Postgres ล่ม write พังหมด (ต่างจาก read ที่ auto-fallback). พิจารณาเพิ่ม write fallback / master kill-switch
-> 4. **Push/delta architecture** — board ยัง poll-the-world ทุก 15 วิ. proper fix = SSE/WebSocket หรือ delta-fetch (improvement ระยะยาว แยก project)
+> 4. **ลบ Apps Script "MorningReportV2" project** — verify ผ่านแล้ว (Vercel Run ส่ง flex ได้) — รอคุณนุ๊กลบ + env `MORNING_REPORT_APPS_SCRIPT_URL`
 >
 > ## Morning Report double-fire
 >
