@@ -2,6 +2,29 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-18 — Morning Report double-fire fix → ported off Apps Script:** ✅
+>
+> **Trigger:** คุณนุ๊กแจ้ง flex แจ้งงานด่วนส่งเข้ากลุ่ม LINE 2 รอบทุกเช้า → `/diagnose`.
+>
+> **1. Root cause (`/diagnose`)** — Apps Script time trigger `morningReport` ค้างไม่ได้ลบหลัง migrate ไป Vercel cron (pending action ค้างมาตั้งแต่ 2026-05-10). dedup window 5 นาทีแคบเกินกว่า window ที่ Vercel cron กับ time trigger fire ห่างกัน — เช้า 18 พ.ค. ห่างกัน 5:11 (พลาด 11 วินาที). + ghost trigger `sendMorningReport` (handler รุ่นเก่า) fail 100%. **คุณนุ๊กลบ trigger ทั้ง 2 อันแล้ว.**
+>
+> **2. Fix — drop Morning Report Apps Script ทั้งโปรเจกต์, port เข้า v2:**
+> - `lib/morning-report.ts` (ใหม่) — urgency bucketing + LINE Flex builders + push. ดึงข้อมูลผ่าน `loadAll()` (Postgres-first).
+> - `app/api/cron/morning-report/route.ts` — เดิม proxy POST ไป Apps Script → ตอนนี้ทำงานเอง. Manual test: `?token=MORNING_REPORT_TOKEN` (`&dry=1` ไม่ส่ง LINE).
+> - type-check + build ผ่านบน Node 22. **ยังไม่ commit/push** — รอคุณนุ๊ก set env vars ก่อน (ดู Pending).
+> - Pull-forward: read-only part ของ Phase 4.3 — ไม่ผูก Phase 4.2.
+>
+> ### ⏳ Pending user actions — เรียงลำดับ (ทำก่อน push)
+> 1. **Set Vercel env vars** (project `penprinting-dashboard`): `LINE_CHANNEL_TOKEN` + `LINE_GROUP_ID` — copy ค่าจาก Apps Script "MorningReportV2" → Project Settings → Script properties. (`MORNING_REPORT_TOKEN` มีอยู่แล้วจาก migration 2026-05-10 — reuse เป็น manual-test token)
+> 2. คุณนุ๊ก confirm → Claude push → Vercel deploy
+> 3. **Manual test**: `curl 'https://dashboard.penprinting.co/api/cron/morning-report?token=<MORNING_REPORT_TOKEN>&dry=1'` → ดู JSON counts → แล้วเอา `&dry=1` ออก → verify flex เข้ากลุ่ม LINE รอบเดียว หน้าตาเหมือนเดิม
+> 4. **ลบ Morning Report Apps Script project** ทิ้ง (หลัง verify ผ่าน) + env เก่าที่ไม่ใช้แล้ว `MORNING_REPORT_APPS_SCRIPT_URL` ลบได้
+> 5. ค้างเดิม: AI Quoting Phase 0, ORPHAN_CANCELLED cleanup, `/check-quota`, scan v2
+>
+> ### Lessons
+> - **Pending user action ที่หลุดจาก carry-over list** — "ลบ Apps Script time trigger" ถูกบันทึกใน dashboard-v2.md ตั้งแต่ 2026-05-10 แต่หลุดจาก "Pending user actions" ของ NEXT-SESSION รอบหลังๆ → ค้าง 8 วัน → bug เกิดทุกเช้า. Pending action ที่ user ต้องทำเอง ต้อง carry over จนกว่าจะ confirm closed.
+> - **Apps Script time trigger fire ใน window กว้าง** — `atHour(8)` = fire ช่วง 8:00-9:00 ไม่ตรงเวลา. dedup window สั้นๆ กัน double-fire ระหว่าง Apps Script trigger กับ external scheduler ไม่ได้.
+>
 > **Session 2026-05-17 — Node 22 upgrade + AI Quoting design doc:** ✅
 >
 > **1. Node 18 → 22 LTS upgrade** ([`0adbdbb`](https://github.com/witsarutnook/penprinting-dashboard/commit/0adbdbb) + [`30d240a`](https://github.com/witsarutnook/penprinting-dashboard/commit/30d240a))

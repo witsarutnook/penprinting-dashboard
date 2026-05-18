@@ -1,57 +1,48 @@
 import { NextResponse } from 'next/server';
+import { sendMorningReport } from '@/lib/morning-report';
 
 export const maxDuration = 60;
 
 /** Vercel Cron — daily Morning Report at 8 AM Bangkok (1 AM UTC).
  *
- *  Replaces the Apps Script time trigger that calls `morningReport()` inside
- *  the separate Morning Report V2 Apps Script project (not the Dashboard one).
- *  The Apps Script side runs `runReport()` → fetches loadAll from Dashboard
- *  Apps Script → builds LINE Flex carousel → POSTs to LINE Messaging API.
+ *  Self-contained: reads jobs+orders via `loadAll()` (Postgres-first mirror,
+ *  Apps Script fallback), builds the LINE Flex carousel, and pushes it to the
+ *  group. Replaces the standalone "Morning Report V2" Apps Script project,
+ *  which is now retired (single scheduler = no more double-fire).
  *
  *  Scheduled in [vercel.json](vercel.json) — `"0 1 * * *"`.
  *
- *  Env vars required:
- *  - `CRON_SECRET` — Vercel-injected on cron requests (Bearer token)
- *  - `MORNING_REPORT_APPS_SCRIPT_URL` — `/exec` URL of Morning Report V2 web app
- *  - `MORNING_REPORT_TOKEN` — shared secret matching the Apps Script's
- *    `CRON_TOKEN` Script Property (verified by its `doPost` handler)
+ *  Auth — either:
+ *  - Vercel cron: `Authorization: Bearer ${CRON_SECRET}` (injected by Vercel)
+ *  - Manual test: `?token=${MORNING_REPORT_TOKEN}` — add `&dry=1` to build the
+ *    report without pushing to LINE.
  *
- *  Once verified working, user must delete the corresponding Apps Script
- *  time trigger (Apps Script editor → Triggers → delete row for
- *  `morningReport`) to avoid double-firing the LINE message.
+ *  Env vars required:
+ *  - `CRON_SECRET` — Vercel-injected on cron requests
+ *  - `LINE_CHANNEL_TOKEN` — LINE Messaging API channel access token
+ *  - `LINE_GROUP_ID` — target LINE group id
+ *  - `MORNING_REPORT_TOKEN` — shared secret for manual `?token=` triggering
+ *  - `APPS_SCRIPT_URL` / `APPS_SCRIPT_TOKEN` — used only by the `loadAll()`
+ *    Apps Script fallback when the Postgres mirror is stale
  */
 export async function GET(req: Request) {
-  const auth = req.headers.get('authorization');
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  const { searchParams } = new URL(req.url);
+
+  const cronSecret = process.env.CRON_SECRET;
+  const isCron = !!cronSecret && req.headers.get('authorization') === `Bearer ${cronSecret}`;
+
+  const manualToken = process.env.MORNING_REPORT_TOKEN;
+  const isManual = !!manualToken && searchParams.get('token') === manualToken;
+
+  if (!isCron && !isManual) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const url = process.env.MORNING_REPORT_APPS_SCRIPT_URL;
-  const token = process.env.MORNING_REPORT_TOKEN;
-  if (!url || !token) {
-    return NextResponse.json(
-      { error: 'MORNING_REPORT_APPS_SCRIPT_URL or MORNING_REPORT_TOKEN env var missing' },
-      { status: 500 },
-    );
-  }
+  const dryRun = isManual && searchParams.get('dry') === '1';
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      body: JSON.stringify({ token }),
-      headers: { 'Content-Type': 'text/plain' },
-      redirect: 'follow',
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      return NextResponse.json({ error: `Apps Script HTTP ${res.status}` }, { status: 502 });
-    }
-    const data = (await res.json()) as { ok?: boolean; error?: string; ranAt?: string };
-    if (data.error) {
-      return NextResponse.json({ error: data.error }, { status: 502 });
-    }
-    return NextResponse.json({ ok: true, ranAt: data.ranAt || new Date().toISOString() });
+    const result = await sendMorningReport({ dryRun });
+    return NextResponse.json({ ok: true, ...result, ranAt: new Date().toISOString() });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });

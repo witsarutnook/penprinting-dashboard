@@ -77,7 +77,7 @@ Each step: keep Sheet as fallback (try Postgres → catch error → fall through
 
 ### Phase 4 — Cleanup (3-5 days)
 - LINE webhook: Cloudflare Worker → Vercel API (drop Apps Script LINE webhook)
-- Morning report: already Apps Script — port to Vercel Cron (Tier B leftover)
+- ✅ **Morning report — DONE 2026-05-18** (pulled forward, read-only so no dependency on 4.2). Ported the standalone "Morning Report V2" Apps Script project entirely into `lib/morning-report.ts` + `app/api/cron/morning-report/route.ts` — reads jobs+orders via `loadAll()`, builds the LINE Flex carousel, pushes to LINE. Morning Report Apps Script project retired (single scheduler = no more double-fire).
 - Audit cron: write directly to Postgres trigger or Vercel Cron
 - Drop Apps Script as primary backend (keep as historical / disaster recovery)
 - R2 backup → use Postgres pg_dump → R2 instead of Sheet → R2

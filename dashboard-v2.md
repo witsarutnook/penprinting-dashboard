@@ -300,6 +300,19 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Morning Report ported off Apps Script — fix double-fire (2026-05-18)
+
+**Bug:** flex แจ้งงานด่วนส่งเข้ากลุ่ม LINE 2 รอบทุกเช้า. `/diagnose` → root cause: Apps Script time trigger `morningReport` ค้างไม่ได้ลบหลัง migrate ไป Vercel cron (pending action ค้างมาตั้งแต่ 2026-05-10) — dedup window 5 นาทีแคบเกินกว่า window ที่ trigger สองตัว fire ห่างกัน (เช้า 18 พ.ค. ห่างกัน 5:11 — พลาดไป 11 วินาที). Ghost trigger `sendMorningReport` (handler รุ่นเก่า) ก็ค้างอยู่ด้วย fail 100%. User ลบ trigger ทั้ง 2 อันออก.
+
+**Fix (proper):** drop Morning Report Apps Script ทั้งโปรเจกต์ — port logic ทั้งหมดเข้า v2:
+- [`lib/morning-report.ts`](lib/morning-report.ts) — port urgency bucketing (overdue/D-Day/urgent ≤3 วัน) + LINE Flex carousel builders + LINE push. ดึงข้อมูลผ่าน `loadAll()` (Postgres-first, Apps Script fallback) — ไม่มี HTTP hop แยก. วันที่ทั้งหมด snap เป็น Bangkok-calendar 00:00 UTC ให้ day-diff ตรง.
+- [`app/api/cron/morning-report/route.ts`](app/api/cron/morning-report/route.ts) — เดิม proxy POST ไป Apps Script → ตอนนี้ทำงานเอง. Auth: Vercel cron `Bearer CRON_SECRET` หรือ manual `?token=MORNING_REPORT_TOKEN` (`&dry=1` build แต่ไม่ส่ง).
+- Single scheduler (Vercel cron `0 1 * * *` = 8 โมงเช้า) = ไม่มีทาง double-fire อีก. ไม่ต้องมี dedup.
+
+**Pull-forward:** งานนี้คือส่วน read-only ของ Phase 4.3 ที่ดึงออกมาทำก่อน — ไม่ผูกกับ Phase 4.2 write migration. ส่วนที่เหลือของ 4.3 (LINE webhook, audit cron) ยังรอ 4.2 close-out ตามเดิม.
+
+**Pending user actions:** set Vercel env `LINE_CHANNEL_TOKEN` + `LINE_GROUP_ID` (copy จาก Apps Script Script Properties) → manual-test `?token=` → verify flex → ลบ Morning Report Apps Script project.
+
 ### Node 22 LTS upgrade + AI Quoting design doc (2026-05-17)
 
 **Infra:** อัปเกรด Node 18.20.4 (EOL) → **22.22.3 LTS** — แก้ pre-commit hook ที่พังเพราะ vitest/rolldown ต้องการ Node ≥20.12. เพิ่ม `.nvmrc` = `22`. type-check/lint/test/build ผ่านครบบน Node 22. `0adbdbb` + `30d240a`.
