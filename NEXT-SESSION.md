@@ -2,6 +2,46 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-18 (PM) — Phase 4.2 close-out Stage 1:** ✅
+>
+> **Pivot:** session เริ่มจะทำ delta-fetch (board auto-sync) → คุณนุ๊กถาม "ตัด Sheet ออกเลยได้มั้ย" → ถ้า Sheet ไม่อยู่ delta-fetch trivial (ไม่มี TRUNCATE+INSERT cron รีเซ็ต cursor / ไม่มี Sheet-direct edit ที่ delta มองไม่เห็น). คุณนุ๊กตัดสิน: **เร่ง Phase 4.2 close-out ก่อน** (แลกกับ burn-in gate ต้นมิ.ย. ที่หายไป ~3-4 สัปดาห์). **delta-fetch deferred จนกว่า close-out เสร็จ.**
+>
+> ## Phase 4.2 close-out — แผน 6 stage
+> เป้า: Postgres = sole source of truth · ตัด Apps Script write paths · Sheet = downstream mirror อย่างเดียว
+> - **S0** pre-flight verify (flag / data-parity Postgres==Sheet / heal-cron backlog ว่าง)
+> - **S1** ✅ migrate deleteJob/restoreJob/forwardUndo → Postgres-first (commit `fe4e238`)
+> - **S2** [แกนหลัก] `phase2OwnsTable()` คืน true ให้ jobs/orders/shipped/cancelled → from-Sheet cron หยุดทับ → Postgres authoritative. แก้ `lib/feature-flags.ts:96` + `lib/sync-from-sheet.ts:103-106` (wrap syncJobs/syncOrders/syncShipped/syncCancelled ใน skip block + `recordSyncMetaTouch` — เหมือน templates ที่ทำอยู่แล้ว line 114-135)
+> - **S3** ตัด `found:false → Apps Script` fallback ใน 7 route (`jobs/{update,reassign,move-to-shipped,cowork}` + `orders/{update,cancel,promote-draft}`) → ตอบ 409 "refresh แล้วลองใหม่" (คุณนุ๊กเลือก 409 ไม่ใช่ trust-client INSERT)
+> - **S4** ลบ dual-write mirror — `lib/postgres-write-mirror.ts` + `lib/api.ts:495-498`
+> - **S5** ลบ WRITE_* flag scaffolding + legacy branch ทั้งหมด (least reversible — soak ≥1 สัปดาห์หลัง S2 ก่อนทำ)
+> - **S6** docs
+> ⚠️ S1 ต้องก่อน S2 เสมอ (ไม่งั้น cron หยุด → Sheet write หาย). หลัง S2 = ไม่มี Sheet safety-net แล้ว. รายละเอียดเต็ม: ถาม Claude re-run Plan agent
+>
+> ## Stage 1 — เสร็จ + live production
+> 3 route นี้ roadmap เขียนว่า "dead UI path" — **ผิด** ทั้งคู่มี UI เรียกจริง:
+> - `deleteJob` — `deleteJobInPostgres` tombstone (reuse `phase2_deleted_at` + `healJobsTombstone` — ไม่มี Apps Script action ใหม่). UI: /orders → ปุ่ม "ตรวจสอบข้อมูล" → section Duplicate jobs → "ลบ row นี้" (โผล่เฉพาะมี job ซ้ำ)
+> - `restoreJob` — `restoreJobInPostgres` (upsert jobs clear tombstone/dirty + delete cancelled) + ยังเรียก `post('restoreJob')` sync Sheet เพราะ `cancelled` ไม่มี tombstone column + Apps Script ไม่มี `deleteCancelledByIdRow`. UI: /cancelled
+> - `forwardUndo` — route ผ่าน `bulkForwardInPostgres` + เพิ่ม cowork pass-through (เดิม drop cowork = regression ของ undo). UI: undo toast /board
+> - commit `fe4e238` — 8 ไฟล์ +424. 3 flag ใหม่ `WRITE_{DELETE_JOB,RESTORE_JOB,FORWARD_UNDO}_TO_POSTGRES` (default off). test 76→87. type-check/lint/build ผ่าน (Node 22)
+> - **flags ON ใน Production แล้ว** (คุณนุ๊ก set + redeploy เอง — ข้าม Preview smoke). smoke prod: restore ✅ undo ✅. deleteJob ข้าม (ต้องมี duplicate job ถึง trigger ได้ + เสี่ยงต่ำสุด — reuse tombstone+heal infra เดิม)
+>
+> ### 🎯 งานหลัก session หน้า — Stage 2 (หลัง Sentry soak)
+> ดู Sentry 24-48 ชม. ว่า deleteJob/restoreJob/bulkForward Phase 2 path ไม่มี error → เริ่ม **Stage 2** (ดูแผน 6 stage ด้านบน — แกนหลักของ close-out)
+>
+> ### ⏳ Pending
+> - **ดู Sentry 24-48 ชม.** ก่อน Stage 2
+> - deleteJob smoke test ยังไม่ได้ทำ (ต้องมี duplicate job — ข้ามได้ เสี่ยงต่ำ)
+> - delta-fetch — deferred จนกว่า Phase 4.2 close-out เสร็จ
+> - ค้างเดิม: AI Quoting Phase 0 · ORPHAN_CANCELLED cleanup · `/check-quota` · scan v2
+>
+> ### Lessons
+> - **roadmap "dead UI path" เชื่อไม่ได้** — Tech-Roadmap-Status เขียน deleteJob/restoreJob เป็น "dead UI" แต่ทั้งคู่ reachable จริง (data-audit modal + /cancelled). verify reachability (`grep "api/jobs/delete"` ใน app/components) ก่อนเชื่อ doc claim
+> - **restore Sheet-side asymmetry** — `cancelled` ไม่มี tombstone/heal path เหมือน jobs → restore Phase 2 ต้องพึ่ง `post('restoreJob')` sync Sheet (heal cron ทำแทนไม่ได้). ถ้าจะตัด Apps Script เต็มตัว (Phase 4.3) ต้องเพิ่ม `deleteCancelledByIdRow` action + cancelled tombstone
+>
+> **Commits**: `fe4e238`
+>
+> ---
+>
 > **Session 2026-05-18 — Postgres quota incident + print-404 fix + Morning Report ported off Apps Script:** ✅
 >
 > ## 🔥 Postgres quota incident + print-404 fix (เรื่องหลักของ session)
