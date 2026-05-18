@@ -100,39 +100,22 @@ export async function syncAllFromSheet(): Promise<SyncResult> {
     };
   }
 
-  tables.push(await syncJobs(snapshot.jobs || []));
-  tables.push(await syncOrders(snapshot.orders || []));
-  tables.push(await syncShipped(snapshot.shipped || []));
-  tables.push(await syncCancelled(snapshot.cancelled || []));
   // Phase 2 — when Postgres owns a table, skip the Sheet→Postgres sync.
-  // The TRUNCATE+INSERT pattern would otherwise blow away rows that only
-  // exist in Postgres (Phase 2 writes that haven't reached Sheet yet, or
-  // never will if Sheet sync was best-effort and dropped). Reverse-direction
-  // sync (Postgres→Sheet) is a future step — for now, in-flight Phase 2
-  // tables stop being mirrored from Sheet and rely on lib/postgres-write.ts
-  // best-effort Apps Script calls to keep Sheet in sync as a one-way push.
-  if (phase2OwnsTable('templates')) {
-    // Touch sync_meta so loadAllFromPostgres staleness check still passes.
-    // Semantically: "Postgres owns this table; data is current via Phase 2
-    // writes, not cron." Without this update, sync_meta stays from before
-    // the flag was flipped and the staleness check drives unrelated reads
-    // (loadAll for /board) into the Apps Script fallback path.
-    try {
-      await recordSyncMetaTouch('templates');
-    } catch {
-      // Non-fatal — staleness check might fail for templates but not block deploy
-    }
-    tables.push({
-      table: 'templates',
-      fetched: snapshot.templates?.length || 0,
-      inserted: 0,
-      ok: true,
-      error: 'skipped — Postgres owns this table (WRITE_TEMPLATES_TO_POSTGRES=1)',
-      ms: 0,
-    });
-  } else {
-    tables.push(await syncTemplates(snapshot.templates || []));
-  }
+  // The delete-clean+INSERT pattern would otherwise let Sheet overwrite a
+  // Postgres-authoritative row (any row that isn't phase2_dirty). Skipping
+  // makes Postgres the sole source of truth; the heal cron is the only
+  // Postgres→Sheet path. syncOrSkip records a sync_meta touch on skip so
+  // loadAllFromPostgres's staleness check stays green (else reads silently
+  // fall back to Apps Script).
+  //  - templates: owned since the templates Phase 2 migration
+  //  - jobs/orders/shipped/cancelled: owned from Phase 4.2 close-out Stage 2
+  //    (PHASE2_OWNS_CORE_TABLES=1)
+  //  - audit_log: never owned — always imported from Sheet
+  tables.push(await syncOrSkip('jobs', snapshot.jobs?.length || 0, () => syncJobs(snapshot.jobs || [])));
+  tables.push(await syncOrSkip('orders', snapshot.orders?.length || 0, () => syncOrders(snapshot.orders || [])));
+  tables.push(await syncOrSkip('shipped', snapshot.shipped?.length || 0, () => syncShipped(snapshot.shipped || [])));
+  tables.push(await syncOrSkip('cancelled', snapshot.cancelled?.length || 0, () => syncCancelled(snapshot.cancelled || [])));
+  tables.push(await syncOrSkip('templates', snapshot.templates?.length || 0, () => syncTemplates(snapshot.templates || [])));
   tables.push(await syncAuditLog(snapshot.audit || []));
 
   const finishedAt = new Date();
@@ -171,6 +154,31 @@ async function recordSyncMetaTouch(table: string): Promise<void> {
     ON CONFLICT (table_name)
     DO UPDATE SET last_sync_at = NOW(), ok = true, last_error = NULL
   `;
+}
+
+/** Run a table's Sheet→Postgres sync, or SKIP it when Phase 2 owns the
+ *  table (Postgres is authoritative). The skip branch records a sync_meta
+ *  touch — without it, loadAllFromPostgres's staleness check trips and
+ *  reads silently fall back to Apps Script. */
+async function syncOrSkip(
+  table: 'jobs' | 'orders' | 'shipped' | 'cancelled' | 'templates',
+  fetched: number,
+  run: () => Promise<TableSyncResult>,
+): Promise<TableSyncResult> {
+  if (!phase2OwnsTable(table)) return run();
+  try {
+    await recordSyncMetaTouch(table);
+  } catch {
+    // Non-fatal — staleness check for this table may lag but won't block.
+  }
+  return {
+    table,
+    fetched,
+    inserted: 0,
+    ok: true,
+    error: 'skipped — Postgres owns this table (Phase 4.2 close-out)',
+    ms: 0,
+  };
 }
 
 async function bulkInsert(

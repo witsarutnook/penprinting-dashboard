@@ -193,3 +193,60 @@ describe('syncAllFromSheet — audit_log preserves Phase 2 entries', () => {
     expect(insert.values).toContain('sheet');
   });
 });
+
+describe('syncAllFromSheet — Phase 4.2 Stage 2 core-table skip (PHASE2_OWNS_CORE_TABLES)', () => {
+  const CORE = ['jobs', 'orders', 'shipped', 'cancelled'] as const;
+
+  beforeEach(() => {
+    resetMockPostgres();
+    resetSnapshot();
+    delete process.env.PHASE2_OWNS_CORE_TABLES;
+  });
+  afterEach(() => {
+    delete process.env.PHASE2_OWNS_CORE_TABLES;
+  });
+
+  it('with flag OFF — runs full jobs/orders/shipped/cancelled sync (delete-clean pass)', async () => {
+    const result = await syncAllFromSheet();
+    for (const t of CORE) {
+      const r = result.tables.find((x) => x.table === t);
+      expect(r, `${t} result`).toBeDefined();
+      expect(r!.error, `${t} not skipped`).toBeUndefined();
+    }
+    // delete-clean+INSERT pass runs (DELETE FROM jobs WHERE phase2_dirty_at IS NULL ...)
+    expect(callsContaining('DELETE FROM jobs').length).toBeGreaterThanOrEqual(1);
+    expect(callsContaining('DELETE FROM orders').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('with flag ON — SKIPS all 4 core tables but STILL touches sync_meta for each', async () => {
+    // The cutover: from-Sheet cron stops re-importing core tables so Sheet
+    // can no longer overwrite a Postgres-authoritative row. Each skipped
+    // table MUST still touch sync_meta (else loadAllFromPostgres staleness
+    // check trips → reads silently fall back to Apps Script).
+    process.env.PHASE2_OWNS_CORE_TABLES = '1';
+    const result = await syncAllFromSheet();
+
+    for (const t of CORE) {
+      const r = result.tables.find((x) => x.table === t);
+      expect(r, `${t} result`).toBeDefined();
+      expect(r!.ok).toBe(true);
+      expect(r!.inserted).toBe(0);
+      expect(r!.error, `${t} skipped`).toMatch(/skipped.*Postgres owns/i);
+      const meta = callsContaining('INSERT INTO sync_meta').filter((c) => c.values[0] === t);
+      expect(meta.length, `sync_meta touch for ${t}`).toBeGreaterThanOrEqual(1);
+    }
+    // ✋ no delete-clean pass on the owned tables — Postgres state untouched.
+    expect(callsContaining('DELETE FROM jobs')).toHaveLength(0);
+    expect(callsContaining('DELETE FROM orders')).toHaveLength(0);
+    expect(callsContaining('DELETE FROM shipped')).toHaveLength(0);
+    expect(callsContaining('DELETE FROM cancelled')).toHaveLength(0);
+  });
+
+  it('with flag ON — audit_log still syncs from Sheet (never owned)', async () => {
+    process.env.PHASE2_OWNS_CORE_TABLES = '1';
+    await syncAllFromSheet();
+    // audit_log refresh still runs (DELETE WHERE source='sheet') — admin
+    // Sheet-side audit entries have no other path into Postgres.
+    expect(callsContaining('DELETE FROM audit_log').length).toBeGreaterThanOrEqual(1);
+  });
+});

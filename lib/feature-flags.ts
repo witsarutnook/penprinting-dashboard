@@ -105,17 +105,28 @@ export function phase2WriteEnabled(action: string): boolean {
   return process.env[envVar] === '1';
 }
 
-/** True when ANY Phase 2 write flag is on for `action`'s table. Used by
- *  lib/sync-from-sheet.ts to skip cron Sheet→Postgres sync for tables
- *  Postgres now owns. Direction reversal is a follow-up step (Postgres
- *  → Sheet) — for now we just stop overwriting. */
+/** True when Postgres owns `table` outright — lib/sync-from-sheet.ts skips
+ *  the cron Sheet→Postgres sync for owned tables (records a sync_meta touch
+ *  instead) so Sheet can no longer overwrite a Postgres-authoritative row.
+ *
+ *  - templates: owned since the templates Phase 2 migration.
+ *  - jobs/orders/shipped/cancelled: owned from Phase 4.2 close-out Stage 2,
+ *    gated on PHASE2_OWNS_CORE_TABLES. This is the close-out cutover — the
+ *    from-Sheet cron stops re-importing these tables and the heal cron
+ *    becomes the sole Postgres→Sheet path. Reversible: flip the flag OFF
+ *    and the cron resumes on its next run (deleteCleanThenInsert preserves
+ *    phase2_dirty rows, so resuming loses no Phase 2 write).
+ *  - audit_log: never owned — the from-Sheet cron always imports it
+ *    (admin Sheet-side audit entries have no other path into Postgres). */
 export function phase2OwnsTable(table: 'templates' | 'orders' | 'jobs' | 'shipped' | 'cancelled' | 'audit_log'): boolean {
   switch (table) {
     case 'templates':
       return process.env.WRITE_TEMPLATES_TO_POSTGRES === '1';
-    // Add more cases as actions migrate. Examples for future phases:
-    // case 'jobs':   return process.env.WRITE_JOBS_TO_POSTGRES === '1';
-    // case 'orders': return process.env.WRITE_ORDERS_TO_POSTGRES === '1';
+    case 'jobs':
+    case 'orders':
+    case 'shipped':
+    case 'cancelled':
+      return process.env.PHASE2_OWNS_CORE_TABLES === '1';
     default:
       return false;
   }

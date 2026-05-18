@@ -7,6 +7,7 @@ const RELEVANT_VARS = [
   'WRITE_DELETE_JOB_TO_POSTGRES',
   'WRITE_RESTORE_JOB_TO_POSTGRES',
   'WRITE_FORWARD_UNDO_TO_POSTGRES',
+  'PHASE2_OWNS_CORE_TABLES',
 ];
 
 describe('phase2WriteEnabled', () => {
@@ -97,5 +98,17 @@ describe('phase2OwnsTable', () => {
     process.env.WRITE_COWORK_TO_POSTGRES = '1';
     expect(phase2OwnsTable('jobs')).toBe(false);
     expect(phase2OwnsTable('orders')).toBe(false);
+  });
+
+  it('returns true for core tables when PHASE2_OWNS_CORE_TABLES=1 (Phase 4.2 Stage 2 cutover)', () => {
+    process.env.PHASE2_OWNS_CORE_TABLES = '1';
+    expect(phase2OwnsTable('jobs')).toBe(true);
+    expect(phase2OwnsTable('orders')).toBe(true);
+    expect(phase2OwnsTable('shipped')).toBe(true);
+    expect(phase2OwnsTable('cancelled')).toBe(true);
+    // audit_log is never owned — the from-Sheet cron always imports it
+    expect(phase2OwnsTable('audit_log')).toBe(false);
+    // templates stays on its own independent flag, unaffected
+    expect(phase2OwnsTable('templates')).toBe(false);
   });
 });
