@@ -2,14 +2,9 @@ import 'server-only';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
 
 /**
- * Phase 2 — Postgres-as-source-of-truth write handlers.
- *
- * Difference vs lib/postgres-write-mirror.ts:
- *  - Mirror = Apps Script writes Sheet first, then mirror-to-Postgres.
- *    Sheet = source of truth. Postgres reflects state with ~ms lag.
- *  - This module = Postgres writes first (authoritative), then a
- *    best-effort Apps Script call propagates the change to Sheet so
- *    admin Sheet UI keeps working. Postgres = source of truth.
+ * Phase 2 — Postgres-as-source-of-truth write handlers. Postgres writes
+ * first (authoritative); the heal cron (lib/sync-to-sheet.ts) propagates
+ * each change to Sheet so the admin Sheet UI keeps working.
  *
  * Per-action rollout — controlled by lib/feature-flags.ts. Each action
  * has its own env var (e.g. WRITE_TEMPLATES_TO_POSTGRES=1) so we can
@@ -22,10 +17,6 @@ import { sql, isPostgresConfigured } from '@/lib/postgres';
  *    Sheet stays drifted; cron sync direction is reversed (Postgres →
  *    Sheet) for migrated tables, so drift heals on the next cron run
  *    once Apps Script is reachable again.
- *
- * Why not put these handlers in postgres-write-mirror.ts? Different
- * semantics — mirror is non-fatal best-effort, this module's writes
- * are authoritative. Two files keeps the mental model clean.
  */
 
 class PostgresWriteError extends Error {

@@ -484,26 +484,6 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
     }
   }
 
-  // Phase 1.7 dual-write — keep Postgres in sync with the just-finished
-  // Apps Script write so subsequent Postgres-first reads stay correct
-  // without waiting for the next 10-min cron cycle. Mirror failures are
-  // non-fatal: lib/postgres-write-mirror.ts marks sync_meta stale so
-  // reads fall back to Apps Script until the cron run repairs the drift.
-  // Awaited (not fire-and-forget) so the response to the client only
-  // returns after Postgres reflects the change — the next read is
-  // guaranteed to see the new state.
-  if (postgresEnabled() && paths && paths.length > 0) {
-    try {
-      const { mirrorWriteToPostgres } = await import('@/lib/postgres-write-mirror');
-      await mirrorWriteToPostgres({
-        action,
-        body: { ...body, _actor: undefined },
-        response: data as Record<string, unknown>,
-      });
-    } catch {
-      // ignore — mirror has its own internal try/catch that marks stale on error
-    }
-  }
   return data as T;
 }
 
