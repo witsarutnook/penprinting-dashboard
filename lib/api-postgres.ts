@@ -113,22 +113,27 @@ export async function loadAllFromPostgres(opts: { audit?: boolean } = {}): Promi
   };
 }
 
-/** Single-order lookup from Postgres mirror. Mirrors lib/api.ts loadOrder shape. */
+/** Single-order lookup from Postgres. Mirrors lib/api.ts loadOrder shape.
+ *
+ *  No mirror-staleness pre-gate. Under Phase 2 every write path that touches
+ *  an order or its jobs (createOrder/updateOrder/addJob/updateJob/
+ *  moveToShipped/cancelJob/bulkForward/promoteDraft/cancelOrder) commits to
+ *  Postgres FIRST — so the Postgres row IS the source of truth for this
+ *  order no matter how fresh the Sheet→Postgres cron mirror is. The only
+ *  fallback signal that matters for a single-order read is "order not in
+ *  Postgres at all" (row-not-found throw below) — that catches Phase 1.x
+ *  stragglers that only ever lived in the Sheet.
+ *
+ *  A `checkStaleness(['orders'])` pre-gate used to sit here. When the cron
+ *  sync was briefly unhealthy (e.g. the 2026-05-18 Postgres quota incident
+ *  failed sync-from-sheet), it threw → loadOrder() fell back to Apps Script
+ *  → a brand-new Phase 2 order wasn't in the Sheet yet → print page 404.
+ *  Gating a Postgres-authoritative single-row read on mirror freshness is
+ *  the same anti-pattern the 2026-05-12 loadOrder refactor removed. */
 export async function loadOrderFromPostgres(orderId: number | string): Promise<LoadOrderResponse> {
   if (!isPostgresConfigured()) throw new PostgresStaleError('not configured');
   const id = Number(orderId);
   if (!Number.isFinite(id) || !id) throw new Error('Invalid orderId');
-
-  // Staleness gate is narrowed to `orders` only — the row-not-found throw
-  // below already covers "fresh write of an order" (Phase 2 createOrder
-  // commits to Postgres synchronously, so an order missing from the mirror
-  // = genuinely too new / not yet mirrored, fall back to Apps Script).
-  // Gating on jobs/shipped/cancelled too means a single stale peripheral
-  // table degrades EVERY loadOrder call across print/track/tracking-card/
-  // restore/raw — too wide a blast radius for a single-order lookup.
-  // (Auditor M4 finding, 2026-05-12.)
-  const stale = await checkStaleness(['orders']);
-  if (stale) throw new PostgresStaleError(stale);
 
   const [orderR, jobR, shippedR, cancelledR] = await Promise.all([
     sql<{ raw: Order }>`SELECT raw FROM orders WHERE id = ${id} LIMIT 1`,
@@ -137,12 +142,9 @@ export async function loadOrderFromPostgres(orderId: number | string): Promise<L
     sql<{ raw: Cancelled }>`SELECT raw FROM cancelled WHERE order_id = ${id} ORDER BY id DESC LIMIT 1`,
   ]);
 
-  // Throw a stale signal when the order doesn't exist in the mirror so
-  // the caller's fallback path (Apps Script direct read) gets a chance.
-  // This handles brand-new orders created within the last cron window
-  // (≤10 min) — they exist in Sheet but haven't been mirrored yet.
+  // Order not in Postgres → throw so loadOrder() falls back to Apps Script.
   if (!orderR.rows[0]) {
-    throw new PostgresStaleError(`order ${id} not in mirror (likely freshly created)`);
+    throw new PostgresStaleError(`order ${id} not found in Postgres`);
   }
 
   return {

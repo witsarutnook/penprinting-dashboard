@@ -300,6 +300,16 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Postgres quota incident + print-page 404 fix (2026-05-18)
+
+**Incident:** `createOrder` ล้มด้วย HTTP 402 — Neon (Vercel Postgres) **network transfer 5.63/5 GB เกินโควตา Free plan** (usage since May 10 — DB จริงแค่ 40 MB แต่โอน 5.6 GB ใน 8 วัน). อ่านยังได้ (loadAll auto-fallback ไป Apps Script) แต่ Phase 2 writes ไม่มี fallback → เขียนไม่ได้ทั้งระบบ. แก้เฉพาะหน้า: คุณนุ๊ก upgrade Neon → Launch plan → unblock ทันที.
+
+**ตามด้วย print-page 404** — สร้าง order ใหม่หลัง upgrade แล้วกด "พิมพ์+สั่ง" ขึ้น 404 (ครั้งแรกหลัง upgrade, retry แล้วหาย). `/diagnose` → root cause: `loadOrderFromPostgres` มี `checkStaleness(['orders'])` **pre-gate** — ตอน quota หมด `sync-from-sheet` cron 402 fail → `sync_meta.orders` stale → gate throw `PostgresStaleError` **ทั้งที่ order อยู่ใน Postgres แล้ว** → `loadOrder()` fallback ไป Apps Script → order ใหม่ยังไม่ sync ลง Sheet → `notFound()`.
+
+**Fix** ([`lib/api-postgres.ts`](lib/api-postgres.ts)) — ตัด `checkStaleness` pre-gate ออกจาก `loadOrderFromPostgres`. เหตุผล: Phase 2 ทุก write path commit Postgres-first → Postgres row คือ source of truth ของ order นั้น ไม่ว่า cron mirror จะสดแค่ไหน. fallback signal เดียวที่ต้องสนใจคือ "order ไม่อยู่ใน Postgres เลย" (row-not-found throw ที่มีอยู่แล้ว). เป็น instance ที่ 2 ของ anti-pattern เดียวกับที่ refactor 2026-05-12 ลบไป (gate Postgres-authoritative read ด้วย mirror staleness). Regression test `tests/api-postgres.test.ts` (4 tests) — suite 72→76.
+
+⚠️ **ค้าง:** diagnose data-integrity fallout (sync recover ครบมั้ย) + diagnose/optimize network transfer (5.6GB/8วันผิดปกติ — loadAll ดึงทั้ง snapshot ทุก page + auto-sync + sync cron).
+
 ### Morning Report ported off Apps Script — fix double-fire (2026-05-18)
 
 **Bug:** flex แจ้งงานด่วนส่งเข้ากลุ่ม LINE 2 รอบทุกเช้า. `/diagnose` → root cause: Apps Script time trigger `morningReport` ค้างไม่ได้ลบหลัง migrate ไป Vercel cron (pending action ค้างมาตั้งแต่ 2026-05-10) — dedup window 5 นาทีแคบเกินกว่า window ที่ trigger สองตัว fire ห่างกัน (เช้า 18 พ.ค. ห่างกัน 5:11 — พลาดไป 11 วินาที). Ghost trigger `sendMorningReport` (handler รุ่นเก่า) ก็ค้างอยู่ด้วย fail 100%. User ลบ trigger ทั้ง 2 อันออก.

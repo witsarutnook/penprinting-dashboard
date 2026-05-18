@@ -2,7 +2,22 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-18 — Morning Report double-fire fix → ported off Apps Script:** ✅
+> **Session 2026-05-18 — Postgres quota incident + print-404 fix + Morning Report ported off Apps Script:** ✅
+>
+> ## 🔥 Postgres quota incident + print-404 fix (เรื่องหลักของ session)
+>
+> **อาการ:** `createOrder` ล้ม HTTP 402 — Neon **network transfer 5.63/5 GB เกินโควตา Free plan** (usage since May 10; DB จริง 40 MB แต่โอน 5.6 GB/8 วัน). คุณนุ๊ก upgrade Neon → **Launch plan** → unblock. order เคสด่วนสร้างได้ 1 ใบ ไม่ซ้ำ.
+>
+> **print-404** — กด "พิมพ์+สั่ง" order ใหม่ → 404 (ครั้งแรกหลัง upgrade, retry หาย). `/diagnose` → `loadOrderFromPostgres` มี `checkStaleness(['orders'])` pre-gate: quota หมด → `sync-from-sheet` 402 → `sync_meta.orders` stale → gate throw ทั้งที่ order อยู่ใน Postgres → `loadOrder` fallback Apps Script → order ใหม่ไม่อยู่ Sheet → 404.
+>
+> **Fix:** ตัด `checkStaleness` pre-gate ออกจาก `loadOrderFromPostgres` ([`lib/api-postgres.ts`](lib/api-postgres.ts)) — Phase 2 Postgres = source of truth, mirror staleness ไม่ควร block single-order read. + regression test `tests/api-postgres.test.ts` (suite 72→76). type-check/build/test ผ่าน Node 22.
+>
+> ### ⏳ ค้าง — งานต่อ session หน้า (priority)
+> 1. **เช็ค data-integrity fallout** — เปิด `https://dashboard.penprinting.co/api/admin/diagnose-board` ดู `layer5_sync_meta`: ทุก table `ok=true` + `last_sync_at` สด? มี order/job ตกค้างช่วง incident มั้ย
+> 2. **Diagnose + optimize network transfer** — 5.6 GB/8 วันผิดปกติ (DB 40 MB). ผู้ต้องสงสัย: `loadAll()` ดึงทั้ง snapshot (orders+jobs+shipped+cancelled) ทุก page load · board auto-sync 15-60 วิ · sync cron 5/10 นาที. ถ้าไม่ลด → paid plan ก็บานชน Spend Cap
+> 3. **Phase 2 writes ไม่มี fallback** — ตอน Postgres ล่ม write พังหมด (ต่างจาก read ที่ auto-fallback). พิจารณาเพิ่ม write fallback / master kill-switch
+>
+> ## Morning Report double-fire
 >
 > **Trigger:** คุณนุ๊กแจ้ง flex แจ้งงานด่วนส่งเข้ากลุ่ม LINE 2 รอบทุกเช้า → `/diagnose`.
 >
