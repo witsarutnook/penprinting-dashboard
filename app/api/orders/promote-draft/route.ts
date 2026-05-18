@@ -137,7 +137,12 @@ export async function POST(req: Request) {
         },
       });
       if (!r.found) {
-        // Order not in Postgres yet — fall through to legacy below.
+        // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write
+        // would never reach Postgres = silent data loss). 409 → refresh.
+        return NextResponse.json(
+          { error: 'ไม่พบใบสั่งงานนี้ในระบบ — refresh หน้าแล้วลองใหม่' },
+          { status: 409 },
+        );
       } else {
         await appendAuditToPostgres({
           action: 'promoteDraft',

@@ -67,16 +67,12 @@ async function phase2MoveToShipped(
   }
 
   if (!found) {
-    // Job not in Postgres yet — fall through to legacy Apps Script so the
-    // shipping still records (next from-Sheet cron picks it up).
-    try {
-      const result = await post<{ ok?: boolean; error?: string }>('moveToShipped', { data: payload });
-      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-      return NextResponse.json({ ok: true, fallback: 'apps-script' });
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
+    // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write would
+    // never reach Postgres = silent data loss). 409 → client refreshes.
+    return NextResponse.json(
+      { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
+      { status: 409 },
+    );
   }
 
   await appendAuditToPostgres({

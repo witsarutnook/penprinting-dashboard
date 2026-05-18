@@ -200,7 +200,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 500 });
     }
     if (!found) {
-      // Row not in Postgres yet — fall through to legacy below.
+      // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write
+      // would never reach Postgres = silent data loss). 409 → client refreshes.
+      return NextResponse.json(
+        { error: 'ไม่พบใบสั่งงานนี้ในระบบ — refresh หน้าแล้วลองใหม่' },
+        { status: 409 },
+      );
     } else {
       const cascade = await cascadeRenameJobsInPostgres(
         id,

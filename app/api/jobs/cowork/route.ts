@@ -103,21 +103,12 @@ async function phase2SetCowork(id: number, cleaned: string[], role: string, user
   }
 
   if (!found) {
-    // Job id not in Postgres — could be an older row that the from-Sheet
-    // cron hasn't synced yet, or a fresh job from a sibling tab whose
-    // mirror hasn't propagated. Fall through to legacy Apps Script path
-    // (synchronous) so the user's intent still lands on Sheet — the next
-    // from-Sheet cron will pick it up into Postgres.
-    try {
-      const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
-        id, cowork: cleaned,
-      });
-      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-      return NextResponse.json({ ok: true, count: cleaned.length, fallback: 'apps-script' });
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
+    // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write would
+    // never reach Postgres = silent data loss). 409 → client refreshes.
+    return NextResponse.json(
+      { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
+      { status: 409 },
+    );
   }
 
   // Postgres write succeeded — the row carries phase2_dirty_at NOT NULL,

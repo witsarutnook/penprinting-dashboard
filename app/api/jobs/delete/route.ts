@@ -62,16 +62,12 @@ async function phase2DeleteJob(id: number, role: string, user: string): Promise<
   }
 
   if (!found) {
-    // Row not in Postgres yet — fall through to legacy Apps Script so the
-    // deletion lands on Sheet. The next from-Sheet cron mirrors the change.
-    try {
-      const result = await post<{ ok?: boolean; error?: string }>('deleteJob', { id });
-      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-      return NextResponse.json({ ok: true, fallback: 'apps-script' });
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
+    // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write would
+    // never reach Postgres = silent data loss). 409 → client refreshes.
+    return NextResponse.json(
+      { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
+      { status: 409 },
+    );
   }
 
   await appendAuditToPostgres({ action: 'deleteJob', role, user, targetId: id });
