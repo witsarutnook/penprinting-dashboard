@@ -5,24 +5,25 @@ import { useRouter } from 'next/navigation';
 
 // Backoff schedule — when a user is actively interacting (mouse / keyboard /
 // scroll), poll fast (matches WP 15s). After a couple of minutes of no user
-// input the screen is just being watched; back off to 30s. After 10 minutes
-// it's almost certainly idle (lunch / left for the day) — 60s is plenty.
+// input the screen is just being watched; back off to 30s. After 5 minutes
+// it's almost certainly idle (lunch / left for the day) — 120s is plenty.
 //
 // User input resets the timer, so the moment they touch anything we're back
 // to 15s for a full pickup. Plus the visibilitychange + BroadcastChannel
 // paths fire immediate refreshes, so coming back from a hidden tab or another
 // tab's mutation is still instant.
 //
-// Why this matters: Apps Script daily quota = ~6h script runtime + 90 min
-// URL fetch. Each /loadAll burns ~600ms × 240 polls/hour = 2.4 min/hour per
-// active tab. Five tabs idle for 8h = 96 min/day = essentially the whole
-// budget. Backoff cuts idle traffic ~75% so we don't hit quota during
-// real production hours.
+// Why this matters: every poll is a `router.refresh()` → server re-renders
+// the route → `loadAll()` snapshot read. With the loadAll() unstable_cache
+// (15s coalescing) most polls now hit cache, but the long-idle tail still
+// dominates Postgres network transfer — a board left open all day. Entering
+// long-idle after 5 min (was 10) at a 120s interval (was 60s) roughly
+// quarters the cost of an abandoned tab, with no effect on active use.
 const POLL_ACTIVE_MS    = 15000;   // fresh activity within last 2 min
-const POLL_IDLE_MS      = 30000;   // 2-10 min since last activity
-const POLL_LONG_IDLE_MS = 60000;   // > 10 min since last activity
+const POLL_IDLE_MS      = 30000;   // 2-5 min since last activity
+const POLL_LONG_IDLE_MS = 120000;  // > 5 min since last activity
 const ACTIVE_WINDOW_MS  = 2 * 60 * 1000;
-const LONG_IDLE_AFTER_MS = 10 * 60 * 1000;
+const LONG_IDLE_AFTER_MS = 5 * 60 * 1000;
 const CHANNEL_NAME = 'pp_dashboard_sync';
 
 interface SyncMessage {
@@ -57,8 +58,8 @@ function refreshGuard(): string | null {
  *
  *   1. Polls on an interval that adapts to user activity:
  *      - 15s when the user touched mouse/keyboard/scroll within 2 min
- *      - 30s after 2-10 min of no activity (still watching screen)
- *      - 60s after > 10 min of no activity (probably stepped away)
+ *      - 30s after 2-5 min of no activity (still watching screen)
+ *      - 120s after > 5 min of no activity (probably stepped away)
  *      Skips entirely when:
  *      - tab is hidden (saves quota)
  *      - any <dialog> is open (forward / cowork / detail modal mid-edit)

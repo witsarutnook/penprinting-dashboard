@@ -1,4 +1,5 @@
 import 'server-only';
+import { unstable_cache } from 'next/cache';
 import type { LoadAllResponse, Order } from './types';
 
 /**
@@ -119,32 +120,44 @@ async function tryPostgres<T>(label: string, fn: () => Promise<T>): Promise<T | 
   }
 }
 
-/** Fetch the full snapshot used by the dashboard frontend (60s ISR cache).
- *  Passes `audit=0` so Apps Script (v5.10.5+) skips the audit_log read
- *  — saves ~50-100KB payload + ~50ms script time. The /analytics page
- *  needs audit and uses `loadAllWithAudit()` instead. Pre-v5.10.5 Apps
- *  Script ignores the param and returns audit anyway, so this is a
- *  forward-compat speedup. */
-export async function loadAll(): Promise<LoadAllResponse> {
-  const pg = await tryPostgres('loadAll', async () => {
+/** Postgres-first (Apps Script fallback) full snapshot. `audit=false` skips
+ *  the audit_log read — saves ~50-100KB. `audit=true` includes the 500 most
+ *  recent rows for /analytics monthly-report breakdowns. */
+async function loadAllSnapshot(audit: boolean): Promise<LoadAllResponse> {
+  const pg = await tryPostgres(audit ? 'loadAllWithAudit' : 'loadAll', async () => {
     const { loadAllFromPostgres } = await import('@/lib/api-postgres');
-    return loadAllFromPostgres({ audit: false });
+    return loadAllFromPostgres({ audit });
   });
   if (pg) return pg;
-  const data = await get<Partial<LoadAllResponse>>('loadAll', { audit: '0' });
+  const data = await get<Partial<LoadAllResponse>>('loadAll', audit ? {} : { audit: '0' });
   return withDefaults(data);
+}
+
+/** Coalesced snapshot read. Auto-sync (`router.refresh()`) re-runs the
+ *  board/orders/calendar server components every 15-60s on every open tab;
+ *  without this, N tabs across M staff would each issue an identical
+ *  `SELECT raw FROM ...` against Postgres. `unstable_cache` collapses them
+ *  to ONE query per 15s window per audit variant — the dominant lever for
+ *  Postgres network-transfer cost (diagnosed 2026-05-18: 5.6GB/8d).
+ *
+ *  Freshness: write routes call `revalidateTag(LOAD_ALL_TAG)` (via
+ *  `bustLoadAllCache()`) on success, so a mutation shows up on the very
+ *  next render — the 15s TTL only bounds the no-write idle-poll case. */
+const loadAllCached = unstable_cache(loadAllSnapshot, ['load-all-snapshot'], {
+  tags: [LOAD_ALL_TAG],
+  revalidate: 15,
+});
+
+/** Full snapshot for the dashboard frontend (board / orders / calendar /
+ *  shipped / cancelled). Coalesced + tag-invalidated — see `loadAllCached`. */
+export async function loadAll(): Promise<LoadAllResponse> {
+  return loadAllCached(false);
 }
 
 /** Same as loadAll but includes the 500 most recent audit rows — used by
  *  /analytics for monthly-report breakdowns by dept. */
 export async function loadAllWithAudit(): Promise<LoadAllResponse> {
-  const pg = await tryPostgres('loadAllWithAudit', async () => {
-    const { loadAllFromPostgres } = await import('@/lib/api-postgres');
-    return loadAllFromPostgres({ audit: true });
-  });
-  if (pg) return pg;
-  const data = await get<Partial<LoadAllResponse>>('loadAll');
-  return withDefaults(data);
+  return loadAllCached(true);
 }
 
 /** Fetch loadAll with no caching — for write-path lookups (nextId allocation, etc).
@@ -455,14 +468,17 @@ export async function post<T>(action: string, body: Record<string, unknown> = {}
   // every write, which kept ISR cache permanently cold and made every
   // sidebar nav feel like a fresh Apps Script roundtrip. Pages not in
   // this action's list keep their warm 60s cache and respond instantly.
-  // Uses revalidatePath rather than revalidateTag because the Apps
-  // Script GET URL changes per env-token and tagging via fetch options
-  // proved unstable on Vercel (analytics page crash 2026-05-06).
+  // revalidatePath here targets the Apps Script fetch ISR cache (per-path);
+  // revalidateTag(LOAD_ALL_TAG) busts the loadAll() unstable_cache snapshot
+  // — these are separate caches and a write must clear both. (The earlier
+  // "fetch options tagging unstable on Vercel" note was about fetch-level
+  // `next.tags`, not unstable_cache tags — those are reliable.)
   const paths = PATHS_BY_ACTION[action];
   if (paths && paths.length > 0) {
     try {
-      const { revalidatePath } = await import('next/cache');
+      const { revalidatePath, revalidateTag } = await import('next/cache');
       for (const p of paths) revalidatePath(p);
+      revalidateTag(LOAD_ALL_TAG);
     } catch {
       // ignore — non-fatal
     }

@@ -99,7 +99,8 @@ async function phase2AddTemplate(input: Phase2Input): Promise<NextResponse> {
   // would normally do this via PATHS_BY_ACTION, but we bypassed it for
   // the primary write — do it explicitly here.
   try {
-    const { revalidatePath } = await import('next/cache');
+    const { revalidatePath, revalidateTag } = await import('next/cache');
+    revalidateTag('load-all'); // bust loadAll() snapshot cache
     revalidatePath('/orders/new');
   } catch {
     /* ignore */

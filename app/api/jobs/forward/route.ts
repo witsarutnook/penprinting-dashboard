@@ -124,7 +124,8 @@ export async function POST(req: Request) {
       summary: `ส่งต่องาน "${s.name}" id=${s.oldId}→${s.newId}`,
     });
     try {
-      const { revalidatePath } = await import('next/cache');
+      const { revalidatePath, revalidateTag } = await import('next/cache');
+      revalidateTag('load-all'); // bust loadAll() snapshot cache
       revalidatePath('/board');
     } catch { /* ignore */ }
     return NextResponse.json({ ok: true, newId: s.newId });

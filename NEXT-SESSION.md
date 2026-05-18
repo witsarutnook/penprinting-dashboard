@@ -14,8 +14,9 @@
 >
 > ### ⏳ ค้าง — งานต่อ session หน้า (priority)
 > 1. **เช็ค data-integrity fallout** — เปิด `https://dashboard.penprinting.co/api/admin/diagnose-board` ดู `layer5_sync_meta`: ทุก table `ok=true` + `last_sync_at` สด? มี order/job ตกค้างช่วง incident มั้ย
-> 2. **Diagnose + optimize network transfer** — 5.6 GB/8 วันผิดปกติ (DB 40 MB). ผู้ต้องสงสัย: `loadAll()` ดึงทั้ง snapshot (orders+jobs+shipped+cancelled) ทุก page load · board auto-sync 15-60 วิ · sync cron 5/10 นาที. ถ้าไม่ลด → paid plan ก็บานชน Spend Cap
+> 2. ✅ **Network transfer — แก้แล้ว** (cache coalescing + frequency tuning, ดู version history). verify: ดู Neon transfer graph 1-2 วันว่าลดจริง ~85%
 > 3. **Phase 2 writes ไม่มี fallback** — ตอน Postgres ล่ม write พังหมด (ต่างจาก read ที่ auto-fallback). พิจารณาเพิ่ม write fallback / master kill-switch
+> 4. **Push/delta architecture** — board ยัง poll-the-world ทุก 15 วิ. proper fix = SSE/WebSocket หรือ delta-fetch (improvement ระยะยาว แยก project)
 >
 > ## Morning Report double-fire
 >

@@ -134,7 +134,8 @@ async function phase2SetCowork(id: number, cleaned: string[], role: string, user
   });
 
   try {
-    const { revalidatePath } = await import('next/cache');
+    const { revalidatePath, revalidateTag } = await import('next/cache');
+    revalidateTag('load-all'); // bust loadAll() snapshot cache
     revalidatePath('/board');
   } catch { /* ignore */ }
 

@@ -67,7 +67,8 @@ export async function POST(req: Request) {
         summary: `ยกเลิกใบสั่งงาน #${id} — cascade ${r.cancelledJobs.length} งาน`,
       });
       try {
-        const { revalidatePath } = await import('next/cache');
+        const { revalidatePath, revalidateTag } = await import('next/cache');
+        revalidateTag('load-all'); // bust loadAll() snapshot cache
         revalidatePath('/board');
         revalidatePath('/orders');
         revalidatePath('/cancelled');

@@ -70,7 +70,8 @@ async function phase2DeleteTemplate(id: string): Promise<NextResponse> {
   }
 
   try {
-    const { revalidatePath } = await import('next/cache');
+    const { revalidatePath, revalidateTag } = await import('next/cache');
+    revalidateTag('load-all'); // bust loadAll() snapshot cache
     revalidatePath('/orders/new');
   } catch {
     /* ignore */

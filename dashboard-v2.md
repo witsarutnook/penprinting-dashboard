@@ -300,6 +300,17 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Postgres network-transfer fix — cache coalescing (2026-05-18)
+
+**Diagnosis (`/diagnose`):** Neon network transfer 5.63 GB/8 วัน (DB จริง 40 MB). root cause: `useAutoSync` → `router.refresh()` ทุก 15-60 วิ → re-run server component → `loadAll()` → `loadAllFromPostgres` query Postgres สดทุก tick · ไม่มี cache · staff หลายคนเปิด board เดียวกัน = ดึง snapshot เหมือนกันซ้ำ N รอบ. วัด `pg_column_size(raw)`: orders = 79% ของ snapshot → ตัด table ไม่ช่วย, ตัวคูณคือ frequency. cron ตัดออก (sync-from-sheet = TRUNCATE+INSERT = ingress ไม่ใช่ egress).
+
+**Fix — 2 lever:**
+- **Cache coalescing** ([`lib/api.ts`](lib/api.ts)) — `loadAll()`/`loadAllWithAudit()` ห่อ `unstable_cache` TTL 15 วิ + tag `LOAD_ALL_TAG`. staff N คน auto-sync พร้อมกัน → 1 query/15วิ แทน N. Invalidation: `post()` (Apps Script writes) + 14 Phase-2 write routes เพิ่ม `revalidateTag('load-all')` → write เสร็จ board สดทันที (ไม่รอ TTL).
+- **Frequency tuning** ([`lib/auto-sync.tsx`](lib/auto-sync.tsx)) — long-idle เข้าหลัง 5 นาที (เดิม 10) @ 120 วิ (เดิม 60). active 15 วิ คงไว้.
+- คาดลด egress ~85-90% (~21 GB/เดือน → ~2-3 GB)
+- ⚠️ ยังเป็น poll-the-world architecture — cache แค่บรรเทา. proper fix = push (SSE/WebSocket) หรือ delta-fetch → improvement ระยะยาว แยก project
+- ไม่มี unit-test seam (`unstable_cache` = Next infra) — verify ด้วย build + Neon transfer graph + board ยัง update หลัง write
+
 ### Postgres quota incident + print-page 404 fix (2026-05-18)
 
 **Incident:** `createOrder` ล้มด้วย HTTP 402 — Neon (Vercel Postgres) **network transfer 5.63/5 GB เกินโควตา Free plan** (usage since May 10 — DB จริงแค่ 40 MB แต่โอน 5.6 GB ใน 8 วัน). อ่านยังได้ (loadAll auto-fallback ไป Apps Script) แต่ Phase 2 writes ไม่มี fallback → เขียนไม่ได้ทั้งระบบ. แก้เฉพาะหน้า: คุณนุ๊ก upgrade Neon → Launch plan → unblock ทันที.

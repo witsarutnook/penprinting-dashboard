@@ -108,7 +108,8 @@ async function phase2CancelJob(
   });
 
   try {
-    const { revalidatePath } = await import('next/cache');
+    const { revalidatePath, revalidateTag } = await import('next/cache');
+    revalidateTag('load-all'); // bust loadAll() snapshot cache
     revalidatePath('/board');
     revalidatePath('/cancelled');
     revalidatePath('/orders');
