@@ -2,20 +2,21 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-19 — Performance audit + PA-H1 fix (auto-sync idle hard-stop):** ✅
+> **Session 2026-05-19 — Performance audit + PA-H1/PA-M3 fixes:** ✅
 >
 > ## งานที่ทำ
 > - **Performance audit** ผ่าน `penprinting-auditor` (perf-only scope, หลัง Phase 4.2 close-out) → 0 critical · 2 high · 3 medium · 1 low. ผลเต็ม + verified-clean list อยู่ใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) section "Perf audit — 2026-05-19". hot path สภาพดี (cache coalescing 2026-05-18, recharts route-split, card lazy-loading ทั้งหมด verified clean).
 > - **PA-H1 แก้แล้ว** ([`lib/auto-sync.tsx`](lib/auto-sync.tsx)) — เพิ่ม hard-stop: tab idle > 30 นาที หยุด poll สนิท. เดิม backoff 15s→30s→120s ไม่เคยถึง 0 → tab เปิดทิ้งข้ามคืน fire ~720 `router.refresh()`/คืน (server re-render + stream board HTML กลับทุกครั้ง). resume เมื่อ user input / tab re-visibility + refresh ทันที 1 ครั้ง (ไม่เสีย freshness). type-check/build/test(91/91) ผ่าน Node 22.
 > - **M1-card-memo-deep-compare ปิด = invalid** — auditor ยืนยัน comparator ปัจจุบัน [`card.tsx:552-612`](app/board/card.tsx:552) เป็น flat primitive compare ไม่มี `JSON.stringify`/deep-compare แล้ว (PERF-C1 ลบไปตั้งแต่ 2026-05-12). item เดิมบรรยาย `card.tsx:459-489` ที่ไม่มีอยู่จริง.
+> - **Quick perf wins** — **PA-M3 แก้แล้ว** ([`lib/api.ts:132`](lib/api.ts)): Apps Script fallback `get()` pass `{ revalidate: 0 }` ตัด nested `fetch` cache 60s ที่ `revalidateTag` บัสต์ไม่ถึง (write ตอน Postgres ล่มไม่โผล่ ≤60s). **PA-M4 verified clean** — index `idx_audit_target` มีอยู่แล้วใน `db-migrate` route, planner ใช้ BitmapOr ไม่ seq-scan = ไม่ต้องแก้.
 >
 > ## ค้าง — perf audit findings ที่ยังไม่แก้ (track ใน AUDIT-BACKLOG "Perf audit — 2026-05-19")
 > - **PA-H2** loadAll over-fetch (ดึงครบ 5 ตารางทุกหน้า — `/board` ลาก shipped+cancelled history เปล่า)
 > - **PA-M2** parent re-render churn (KPIBar/BoardToolbar ไม่ memo) — **ปิดได้ด้วย delta-fetch** (skip render ถ้า snapshot เหมือนเดิม)
-> - **PA-M3** nested cache fallback · **PA-M4** audit_log index check · **PA-L1** loadOrder over-fetch
-> - คุณนุ๊กตัดสิน 2026-05-19: PA-M2 + ที่เหลือรอทำพร้อม delta-fetch / แยก session
+> - **PA-L1** loadOrder over-fetch (4 query ขนานแม้ caller ต้องการ order เดียว)
+> - คุณนุ๊กตัดสิน 2026-05-19: PA-H2/M2/L1 รอทำพร้อม delta-fetch / แยก session
 >
-> Commits: `c43999b` (PA-H1 fix)
+> Commits: `c43999b` (PA-H1) · `f82734f` (PA-M3) · `e079850` + docs
 >
 > ---
 >
