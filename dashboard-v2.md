@@ -145,7 +145,7 @@ Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders
 Pages NOT in the action's path list keep their warm 60s ISR cache → instant nav even right after a write. Decision context: WP coexists right now, so 60s ISR window is the freshness floor — don't extend until WP retires (auditor sidebar perf, 2026-05-06).
 
 ### Cross-tab sync
-`useAutoSync` hook polls 15s + listens to `BroadcastChannel('pp_dashboard_sync')` (same channel name as WP — they cross-pollinate). Guards: skip when dialog open / typing / dragging / page hidden.
+`useAutoSync` hook polls on adaptive backoff (15s active → 30s → 120s after 5 min idle → **hard-stop after 30 min idle**, resumes on input / re-visibility) + listens to `BroadcastChannel('pp_dashboard_sync')` (same channel name as WP — they cross-pollinate). Guards: skip when dialog open / typing / dragging / page hidden.
 
 ### Streaming SSR
 ทุก authenticated page ใช้ `<Suspense>` boundary รอบ data section. Shell (sidebar + nav + toolbar) ส่ง HTML กลับใน ~50ms; body fill in เมื่อ `loadAll` ตอบ. Suspense `key` ผูกกับ filter set → เปลี่ยน filter = fresh skeleton ทันที (ไม่ค้างกับ result เก่า).
@@ -299,6 +299,18 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### Performance audit + PA-H1/PA-M3 fixes (2026-05-19)
+
+**Audit:** perf-only scan ผ่าน `penprinting-auditor` หลัง Phase 4.2 close-out — 0 critical · 2 high · 3 medium · 1 low. hot path สภาพดี (cache coalescing, recharts route-split, card lazy-loading verified clean). ผลเต็มใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) section "Perf audit — 2026-05-19".
+
+**PA-H1** ([`c43999b`](https://github.com/witsarutnook/penprinting-dashboard/commit/c43999b)) — `useAutoSync` backoff (15s→30s→120s) ไม่เคยถึง 0 → tab เปิดทิ้งข้ามคืน fire `router.refresh()` ~720 ครั้ง/คืน (server re-render + stream board HTML กลับทุกครั้ง). เพิ่ม **hard-stop**: idle > 30 นาที หยุด poll สนิท (`stopped` flag — `tick()` ไม่ reschedule), `resumeIfStopped()` restart timer + refresh ทันที 1 ครั้งเมื่อ user input / tab re-visibility.
+
+**PA-M3** ([`f82734f`](https://github.com/witsarutnook/penprinting-dashboard/commit/f82734f)) — `loadAllSnapshot` Apps Script fallback เรียก `get('loadAll')` ด้วย default `fetch` cache 60s ขณะรันใน `loadAllCached` (`unstable_cache` 15s + tag) = cache ชั้นที่ 2 ที่ไม่ถูก tag → `revalidateTag(LOAD_ALL_TAG)` บัสต์ไม่ถึง → write ตอน Postgres ล่มไม่โผล่ ≤60s. แก้: pass `{ revalidate: 0 }` → outer `unstable_cache` เป็น cache + invalidation ชั้นเดียว.
+
+**ปิดเพิ่ม (no code change):** `M1-card-memo-deep-compare` = **invalid** (บรรยายโค้ดที่ PERF-C1 ลบไปแล้ว 2026-05-12 — comparator ปัจจุบันเป็น flat primitive compare) · `PA-M4-auditlog-index` = **verified clean** (index `idx_audit_target` มีอยู่ใน `db-migrate` route แล้ว, planner ใช้ BitmapOr index scan ไม่ seq-scan).
+
+**Deferred:** PA-H2 (loadAll over-fetch 5 ตาราง) · PA-M2 (KPIBar/BoardToolbar ไม่ memo) · PA-L1 (loadOrder over-fetch) — bundle ไปทำพร้อม delta-fetch.
 
 ### Phase 4.2 close-out Stage 1-4 + cutover (2026-05-18)
 
