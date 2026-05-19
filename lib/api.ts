@@ -129,7 +129,12 @@ async function loadAllSnapshot(audit: boolean): Promise<LoadAllResponse> {
     return loadAllFromPostgres({ audit });
   });
   if (pg) return pg;
-  const data = await get<Partial<LoadAllResponse>>('loadAll', audit ? {} : { audit: '0' });
+  // revalidate:0 — this fallback runs inside loadAllCached's unstable_cache.
+  // A default 60s fetch cache here would be a second, untagged cache layer:
+  // revalidateTag(LOAD_ALL_TAG) busts the outer cache but not this fetch, so
+  // a write during a Postgres outage wouldn't show for up to 60s. Let the
+  // outer unstable_cache (15s + tag) be the sole cache + invalidation layer.
+  const data = await get<Partial<LoadAllResponse>>('loadAll', audit ? {} : { audit: '0' }, { revalidate: 0 });
   return withDefaults(data);
 }
 
