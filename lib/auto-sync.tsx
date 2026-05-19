@@ -19,11 +19,18 @@ import { useRouter } from 'next/navigation';
 // dominates Postgres network transfer — a board left open all day. Entering
 // long-idle after 5 min (was 10) at a 120s interval (was 60s) roughly
 // quarters the cost of an abandoned tab, with no effect on active use.
-const POLL_ACTIVE_MS    = 15000;   // fresh activity within last 2 min
-const POLL_IDLE_MS      = 30000;   // 2-5 min since last activity
-const POLL_LONG_IDLE_MS = 120000;  // > 5 min since last activity
-const ACTIVE_WINDOW_MS  = 2 * 60 * 1000;
+//
+// Hard-stop: backoff alone never reaches zero, so a tab abandoned overnight
+// still fires ~720 router.refresh() ticks (auditor H1, 2026-05-19). After
+// 30 min of zero activity polling stops entirely; the next user input or
+// tab re-visibility resumes it (both already trigger an immediate refresh,
+// so resume loses nothing).
+const POLL_ACTIVE_MS     = 15000;   // fresh activity within last 2 min
+const POLL_IDLE_MS       = 30000;   // 2-5 min since last activity
+const POLL_LONG_IDLE_MS  = 120000;  // 5-30 min since last activity
+const ACTIVE_WINDOW_MS   = 2 * 60 * 1000;
 const LONG_IDLE_AFTER_MS = 5 * 60 * 1000;
+const POLL_STOP_AFTER_MS = 30 * 60 * 1000;  // > 30 min idle — stop polling entirely
 const CHANNEL_NAME = 'pp_dashboard_sync';
 
 interface SyncMessage {
@@ -59,7 +66,8 @@ function refreshGuard(): string | null {
  *   1. Polls on an interval that adapts to user activity:
  *      - 15s when the user touched mouse/keyboard/scroll within 2 min
  *      - 30s after 2-5 min of no activity (still watching screen)
- *      - 120s after > 5 min of no activity (probably stepped away)
+ *      - 120s after 5-30 min of no activity (probably stepped away)
+ *      - stops entirely after 30 min idle; resumes on next input / re-visibility
  *      Skips entirely when:
  *      - tab is hidden (saves quota)
  *      - any <dialog> is open (forward / cowork / detail modal mid-edit)
@@ -115,23 +123,44 @@ export function useAutoSync(): void {
     // `unmounted` flag makes it impossible.
     let timer: ReturnType<typeof setTimeout>;
     let unmounted = false;
+    let stopped = false;
     function tick() {
       if (unmounted) return;
       maybeRefresh();
       if (unmounted) return;
+      // Hard-stop: a tab idle > 30 min is almost certainly abandoned.
+      // Stop rescheduling entirely — resumeIfStopped() (user input /
+      // tab re-visibility) restarts the timer when the user is back.
+      if (Date.now() - lastActivityRef.current >= POLL_STOP_AFTER_MS) {
+        stopped = true;
+        return;
+      }
       timer = setTimeout(tick, pollIntervalMs());
     }
     timer = setTimeout(tick, pollIntervalMs());
+
+    // Restart the poller after a hard-stop. No-op while the timer is live.
+    // Refreshes once immediately so the board is fresh the moment the user
+    // is back — the 30-min-stale snapshot would otherwise linger 15s.
+    function resumeIfStopped() {
+      if (stopped && !unmounted) {
+        stopped = false;
+        maybeRefresh();
+        timer = setTimeout(tick, pollIntervalMs());
+      }
+    }
 
     // Reset the activity timer on any meaningful user input. `passive: true`
     // so we never block scroll. Pointermove fires constantly so we throttle
     // it via a 1s window (only update if last activity was > 1s ago).
     function markActive() {
       lastActivityRef.current = Date.now();
+      resumeIfStopped();
     }
     function markActiveThrottled() {
       if (Date.now() - lastActivityRef.current > 1000) {
         lastActivityRef.current = Date.now();
+        resumeIfStopped();
       }
     }
     document.addEventListener('pointerdown', markActive, { passive: true });
