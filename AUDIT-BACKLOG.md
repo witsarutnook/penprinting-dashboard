@@ -4,7 +4,9 @@
 >
 > Data-integrity scan: **2026-05-15** (`runPhase2IntegrityScan` — 9-dimension Sheet scan post Phase 2; see "Data integrity scan" section below)
 >
-> Latest update: **2026-05-16** — `DATA-dateIn-double-encoded` root-caused via `/diagnose` → **accepted** (ไม่ใช่ `addOrder` แต่เป็น `objectToRow` Date bug, source fixed 2026-05-08; ดู Data integrity scan section). ไม่มี code/data fix — display self-corrects อยู่แล้ว.
+> Latest update: **2026-05-19** — performance audit (penprinting-auditor, perf-only scope). **M1-card-memo-deep-compare ปิด = invalid** (บรรยายโค้ดที่ PERF-C1 ลบไปแล้ว — ดู Medium section). ของจริง: PA-H1 auto-sync idle leak (แก้แล้ว) + PA-H2/M2/M3/M4 open — ดู "Perf audit — 2026-05-19" section.
+>
+> Previous: **2026-05-16** — `DATA-dateIn-double-encoded` root-caused via `/diagnose` → **accepted** (ไม่ใช่ `addOrder` แต่เป็น `objectToRow` Date bug, source fixed 2026-05-08; ดู Data integrity scan section). ไม่มี code/data fix — display self-corrects อยู่แล้ว.
 >
 > Previous: **2026-05-12** — **10 audit items closed across 5 commits today**:
 >
@@ -56,7 +58,7 @@ _(ปิดครบ — ดู Closed section)_
 
 ## 🟡 Medium (open — defer per audit recommendation)
 
-- [ ] ⏳ **M1-card-memo-deep-compare** — `app/board/card.tsx:459-489` field-level comparator JSON-compare `a.order` vs `b.order` (O(n)). 50 cards × auto-sync × ~5KB orders → measurable iPhone CPU. **Defer reason**: audit เองระบุ "verify with profiler — if measurable, switch". ยังไม่มี profiler data + naive switch (เช่น drop deep compare) อาจ break DetailContent freshness ตอน auto-sync tick. รอ measurement จริงก่อน.
+- [x] ✅ **M1-card-memo-deep-compare** (closed 2026-05-19 — **invalid**) — item บรรยาย `app/board/card.tsx:459-489` ว่ามี `JSON.stringify`/deep-compare `a.order` — **โค้ดนั้นไม่มีแล้ว**. PERF-C1 (2026-05-12) ลบ `JSON.stringify` ออกไปแล้ว. comparator ปัจจุบัน [`card.tsx:552-612`](app/board/card.tsx:552) เป็น flat primitive compare (~20-25 scalar `!==` ต่อ card → ~1000-1250 ต่อ auto-sync tick = sub-ms บน iPhone, ไม่ใช่ปัญหา CPU). verified ผ่าน perf audit 2026-05-19. ไม่มี code fix — "รอ profiler" overcautious + profile ผิดจุด. **ตัวจริงที่ควร profile** = React reconciliation ของ 50-card tree ตอน parent re-render (PA-M2) ไม่ใช่ comparator.
 - [x] ✅ **M3-jobform-stale-toast** (closed 2026-05-12) — snapshot `editId` at top of `onSubmit()` ใน `app/board/job-form.tsx`. Toasts ใช้ `editId` แทน `initial?.id` ตรง — closure ยังถูกต้องอยู่แล้ว แต่ explicit snapshot ทำให้ตามอ่านง่ายขึ้น + ป้องกัน future refactor ที่อาจ break.
 - [x] ✅ **M-restore-cancelled-parent** (closed 2026-05-12) — `app/api/jobs/restore/route.ts` ตอน reattach parent order ตรวจ `orderResult.order.status === 'cancelled'` → return 409 message "ใบสั่งงาน #N ถูกยกเลิกแล้ว — กรุณา restore ใบสั่งงานก่อน หรือ recover ผ่าน data-audit modal".
 
@@ -68,6 +70,21 @@ _(ปิดครบ — ดู Closed section)_
 - [x] ✅ **L2-currentactor-edge-comment** (closed 2026-05-12) — `lib/api.ts` `currentActor()` docstring เขียนใหม่ชัดเจน: ระบุ 3 cases ที่ return undefined (no request context / edge import fail / no session) + อธิบาย service identity fallback path ของ Apps Script v5.10.1+.
 - [ ] ⏳ **L3-edge-build-warnings** — `app/api/track/lookup/route.ts:13` + `app/api/auth/{login,logout}` Vercel logs edge runtime warnings (expected) แต่ noisy. **Defer reason**: cosmetic, no functional issue
 - [x] ✅ **L4-data-audit-modal-sales-no-action** (closed 2026-05-12) — `app/orders/data-audit-modal.tsx` `DataAuditButton` return null ถ้า `!isAdmin` → sales/staff ไม่เห็นปุ่มอีกแล้ว. Page-level role gate ของ /orders ยัง admin+sales เหมือนเดิม.
+
+---
+
+## ⚡ Perf audit — 2026-05-19 (penprinting-auditor, perf-only scope)
+
+Performance-only audit หลัง Phase 4.2 close-out. ผล: **0 critical · 2 high · 3 medium · 1 low**. Hot path โดยรวมสภาพดี — cache coalescing (2026-05-18), recharts route-split, card lazy-loading verified clean.
+
+- [x] ✅ **PA-H1-autosync-idle-leak** (closed 2026-05-19, `c43999b`) — `lib/auto-sync.tsx` backoff (15s→30s→120s) ไม่เคยถึง 0 → tab ที่เปิดทิ้งข้ามคืน fire ~720 `router.refresh()`/คืน (server re-render + stream board HTML กลับทุกครั้ง). Fix: เพิ่ม hard-stop — idle > 30 นาที หยุด poll สนิท, resume เมื่อ user input / tab re-visibility (resume refresh ทันที 1 ครั้ง = ไม่เสีย freshness).
+- [ ] ⏳ **PA-H2-loadall-overfetch** — [`lib/api-postgres.ts:74`](lib/api-postgres.ts) `loadAllFromPostgres` ดึงครบ 5 ตาราง (`jobs/orders/shipped/cancelled/templates`) ทุกหน้า. `/board` ใช้แค่ `jobs`+`orders` แต่ลาก `shipped`+`cancelled` ทั้ง history (โตไม่จำกัด) ออกจาก Postgres ทุก cache-miss. **Fix**: parameterize `tables` set + แยก `unstable_cache` key ต่อ variant (คุม variant ≤2-3).
+- [ ] ⏳ **PA-M2-parent-rerender-churn** — `app/board/page.tsx` + `components/board/kpi-bar.tsx`: `router.refresh()` ทุก tick → `KPIBar`/`BoardToolbar` ไม่ได้ memo → rebuild ทุก 15 วิ แม้ snapshot ไม่เปลี่ยน. **ปิดได้ด้วย delta-fetch** (skip render ถ้า snapshot เหมือนเดิม — งานที่ queue ใน NEXT-SESSION). Interim: wrap `KPIBar` ใน `memo`.
+- [ ] ⏳ **PA-M3-nested-cache-fallback** — [`lib/api.ts:40-53`](lib/api.ts) Apps Script fallback path มี `fetch` cache 60s ซ้อนใน `unstable_cache` 15s → TTL ไม่ตรง = latent staleness หลัง write ตอน Postgres ล่ม. Phase 4.2 ทำ fallback หายากแล้ว แต่ยัง latent. **Fix**: pass `revalidate:0` ให้ `get()` ใน fallback path (ให้ outer cache คุม TTL ชั้นเดียว).
+- [ ] ⏳ **PA-M4-auditlog-index** — [`lib/api-postgres.ts:178`](lib/api-postgres.ts) `getAuditByTargetFromPostgres` WHERE `OR` predicate บน `target_id` เสี่ยง seq-scan เมื่อ `audit_log` โต (history-tab query). **Fix**: confirm มี index `audit_log(target_id)` (เพิ่มถ้าไม่มี) หรือ rewrite เป็น `target_id = ANY(ARRAY[...])`.
+- [ ] ⏳ **PA-L1-loadorder-overfetch** — [`lib/api-postgres.ts:138`](lib/api-postgres.ts) `loadOrderFromPostgres` ยิง 4 query ขนาน (orders/jobs/shipped/cancelled) แม้ caller ต้องการแค่ active order → 2 pooled query เปล่าต่อ call. minor — trim ด้วย opts flag.
+
+Verified clean: loadAll coalescing + `revalidateTag`, auto-sync guards, recharts route-split, `html-to-image`/`qrcode` leaf-only, card lazy-loading, `React.memo` card comparator (= M1 invalid), `BulkModeProvider` `useMemo`, `computeBoard` single-pass. `computeBoard` GC churn = หายเองเมื่อ PA-H1+PA-M2 ลง.
 
 ---
 

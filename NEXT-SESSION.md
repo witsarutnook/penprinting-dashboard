@@ -2,6 +2,23 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-19 — Performance audit + PA-H1 fix (auto-sync idle hard-stop):** ✅
+>
+> ## งานที่ทำ
+> - **Performance audit** ผ่าน `penprinting-auditor` (perf-only scope, หลัง Phase 4.2 close-out) → 0 critical · 2 high · 3 medium · 1 low. ผลเต็ม + verified-clean list อยู่ใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) section "Perf audit — 2026-05-19". hot path สภาพดี (cache coalescing 2026-05-18, recharts route-split, card lazy-loading ทั้งหมด verified clean).
+> - **PA-H1 แก้แล้ว** ([`lib/auto-sync.tsx`](lib/auto-sync.tsx)) — เพิ่ม hard-stop: tab idle > 30 นาที หยุด poll สนิท. เดิม backoff 15s→30s→120s ไม่เคยถึง 0 → tab เปิดทิ้งข้ามคืน fire ~720 `router.refresh()`/คืน (server re-render + stream board HTML กลับทุกครั้ง). resume เมื่อ user input / tab re-visibility + refresh ทันที 1 ครั้ง (ไม่เสีย freshness). type-check/build/test(91/91) ผ่าน Node 22.
+> - **M1-card-memo-deep-compare ปิด = invalid** — auditor ยืนยัน comparator ปัจจุบัน [`card.tsx:552-612`](app/board/card.tsx:552) เป็น flat primitive compare ไม่มี `JSON.stringify`/deep-compare แล้ว (PERF-C1 ลบไปตั้งแต่ 2026-05-12). item เดิมบรรยาย `card.tsx:459-489` ที่ไม่มีอยู่จริง.
+>
+> ## ค้าง — perf audit findings ที่ยังไม่แก้ (track ใน AUDIT-BACKLOG "Perf audit — 2026-05-19")
+> - **PA-H2** loadAll over-fetch (ดึงครบ 5 ตารางทุกหน้า — `/board` ลาก shipped+cancelled history เปล่า)
+> - **PA-M2** parent re-render churn (KPIBar/BoardToolbar ไม่ memo) — **ปิดได้ด้วย delta-fetch** (skip render ถ้า snapshot เหมือนเดิม)
+> - **PA-M3** nested cache fallback · **PA-M4** audit_log index check · **PA-L1** loadOrder over-fetch
+> - คุณนุ๊กตัดสิน 2026-05-19: PA-M2 + ที่เหลือรอทำพร้อม delta-fetch / แยก session
+>
+> Commits: `c43999b` (PA-H1 fix)
+>
+> ---
+>
 > **Session 2026-05-18 (PM) — Phase 4.2 close-out S1-S4 + cutover:** ✅
 >
 > **Pivot:** session เริ่มจะทำ delta-fetch (board auto-sync) → คุณนุ๊กถาม "ตัด Sheet ออกเลยได้มั้ย" → ถ้า Sheet ไม่อยู่ delta-fetch trivial (ไม่มี TRUNCATE+INSERT cron รีเซ็ต cursor / ไม่มี Sheet-direct edit ที่ delta มองไม่เห็น). คุณนุ๊กตัดสิน: **เร่ง Phase 4.2 close-out ก่อน** (แลกกับ burn-in gate ต้นมิ.ย. ที่หายไป ~3-4 สัปดาห์). **delta-fetch deferred จนกว่า close-out เสร็จ.**
