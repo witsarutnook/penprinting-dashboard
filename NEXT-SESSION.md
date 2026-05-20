@@ -37,7 +37,7 @@
 > - **Trigger รวมหลายตาราง ใช้ฟังก์ชันเดียวไม่ได้** — plpgsql parse column refs ตอน first-call per-table. ถ้า function อ้าง `NEW.phase2_deleted_at` แล้ว attach กับ orders (ไม่มี column นั้น) → fail ตอน first row. แยก function ตามตาราง หรือใช้ TG_TABLE_NAME branching with `EXECUTE` dynamic SQL
 > - **`DEFAULT NOW()` rewrites table on ALTER ADD COLUMN** (NOW() เป็น volatile, ไม่ใช่ constant). PG ≥11 constant default = no rewrite, แต่ NOW() ตก fallback path = rewrite ทั้งตาราง. สำหรับตารางใหญ่ควรเพิ่ม column แบบ nullable ก่อน → backfill batches → set NOT NULL. ของเรา jobs/orders ~200-700 row = ALTER ครั้งเดียวผ่าน
 >
-> **Commits**: ([จะระบุหลัง commit])
+> **Commits**: [`50b43ca`](https://github.com/witsarutnook/penprinting-dashboard/commit/50b43ca) (code: triggers + delta endpoint + tests) · [`741f594`](https://github.com/witsarutnook/penprinting-dashboard/commit/741f594) (docs)
 >
 > ---
 >
