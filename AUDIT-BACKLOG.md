@@ -4,7 +4,9 @@
 >
 > Data-integrity scan: **2026-05-15** (`runPhase2IntegrityScan` — 9-dimension Sheet scan post Phase 2; see "Data integrity scan" section below)
 >
-> Latest update: **2026-05-19** — performance audit (penprinting-auditor) + quick wins. ปิด: PA-H1 (auto-sync idle hard-stop) · PA-M3 (nested-cache fallback) · M1 = invalid · PA-M4 = verified clean (index มีอยู่แล้ว). เหลือ open: PA-H2 · PA-M2 · PA-L1 (รอทำพร้อม delta-fetch). ดู "Perf audit — 2026-05-19" section.
+> Latest update: **2026-05-20** — Delta-fetch P1+P2 landed (schema + bump triggers + delta endpoint + 9 tests). PA-H2/M2/L1 ยัง open รอ P3 client refactor (target session ถัดไป).
+>
+> Previous: **2026-05-19** — performance audit (penprinting-auditor) + quick wins. ปิด: PA-H1 (auto-sync idle hard-stop) · PA-M3 (nested-cache fallback) · M1 = invalid · PA-M4 = verified clean (index มีอยู่แล้ว). เหลือ open: PA-H2 · PA-M2 · PA-L1 (รอทำพร้อม delta-fetch). ดู "Perf audit — 2026-05-19" section.
 >
 > Previous: **2026-05-16** — `DATA-dateIn-double-encoded` root-caused via `/diagnose` → **accepted** (ไม่ใช่ `addOrder` แต่เป็น `objectToRow` Date bug, source fixed 2026-05-08; ดู Data integrity scan section). ไม่มี code/data fix — display self-corrects อยู่แล้ว.
 >

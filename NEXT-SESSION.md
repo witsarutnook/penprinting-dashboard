@@ -2,6 +2,45 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-20 — Delta-fetch P1+P2 (schema + endpoint):** ✅
+>
+> ## งานที่ทำ
+> - **P1: Schema + bump triggers** ([`app/api/admin/db-migrate/route.ts`](app/api/admin/db-migrate/route.ts)) — `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` + index + BEFORE UPDATE triggers ใน jobs/orders/shipped/cancelled. 2 trigger functions: `bump_updated_at_jobs` (raw OR phase2_deleted_at change) + `bump_updated_at_raw` (raw only). **Conditional bump** — heal-cron `phase2_dirty_at = NULL` ไม่แตะ raw → trigger เห็นไม่ distinct → ไม่ bump → cursor ไม่ pollute. INSERT ไม่ต้องแก้ (DEFAULT NOW() คุม)
+> - **P2: Delta endpoint** ([`lib/board-delta.ts`](lib/board-delta.ts) + [`app/api/board/delta/route.ts`](app/api/board/delta/route.ts)) — `GET /api/board/delta?since=<iso>`. `since=null` → full snapshot. `since=iso` → 3 query ขนาน (active changes + orders changes + tombstoned ids) + `serverTime` (snapshot ก่อน queries กัน write-loss window). Response: `{ jobs, orders, deletedJobIds, serverTime }`
+> - **Tests** 91→100 ผ่าน Node 22 (9 ใหม่ใน `tests/board-delta.test.ts`). type-check + lint + build ผ่าน
+> - **คุม design choices** ขออนุมัติคุณนุ๊กก่อน: DB trigger > explicit (zero forget) · P1+P2 ใน session นี้ (P3 client refactor session หน้า) · migrate ผ่าน admin route
+>
+> ## ⏳ Pending user actions — เรียงลำดับ
+> 1. **คุณนุ๊กยังต้อง deploy ตามปกติ** — push บน main = Vercel auto-deploy. Session นี้ commit ให้ แต่ verify ผ่าน Vercel dashboard
+> 2. **รัน schema migration** — หลัง deploy: `curl 'https://dashboard.penprinting.co/api/admin/db-migrate'` (browser ก็ได้ ต้อง logged-in admin) → check response `applied` array ต้องมี `ALTER TABLE * ADD updated_at + index` (×4) + `CREATE FUNCTION bump_updated_at_*` (×2) + `CREATE TRIGGER trg_bump_updated_at ON *` (×4). Idempotent — ปลอดภัยถ้ารัน 2 ครั้ง
+> 3. **Smoke test delta endpoint** — `curl 'https://dashboard.penprinting.co/api/board/delta'` (admin cookie) → ดู `serverTime` + `jobs.length` ตรงกับ /board · `curl 'https://dashboard.penprinting.co/api/board/delta?since=2026-05-20T00:00:00.000Z'` → ดู delta payload เล็กกว่า full snapshot
+> 4. ค้างเดิม: **soak Phase 4.2 cutover ≥1 สัปดาห์** ก่อน Stage 5 (cutover 2026-05-18 → target Stage 5 ~26-28 พ.ค.) · **ดู Sentry + Neon transfer** หลัง cutover · **ลบ Apps Script "MorningReportV2"** + env `MORNING_REPORT_APPS_SCRIPT_URL` · deleteJob smoke test · AI Quoting Phase 0 · ORPHAN_CANCELLED cleanup · `/check-quota` · scan v2
+>
+> ## 🎯 งานหลัก session หน้า — Delta-fetch P3 (client refactor)
+> 1. **Refactor `/board`** → hybrid Server/Client:
+>    - Server component ส่ง initial snapshot (มี cookies auth) → ฝัง `<BoardClient initialJobs={...} initialOrders={...} initialServerTime={...}>`
+>    - `BoardClient` = "use client" — `useState` ถือ jobs/orders, ใช้ `computeBoard` เหมือนเดิม (pure function reuse), render kanban
+> 2. **`useDeltaSync(initial)` hook** — poll `/api/board/delta?since=<lastServerTime>` ทุก tick (ใช้ backoff schedule เดิมจาก `useAutoSync`):
+>    - merge changed jobs/orders เข้า state (`Map.set(id, newRaw)` shape — keep ordering by re-sort)
+>    - remove tombstoned ids
+>    - advance cursor → `lastServerTime = response.serverTime`
+>    - skip render ถ้า no changes (closes PA-M2 churn)
+> 3. **Feature flag** `NEXT_PUBLIC_DELTA_FETCH` — default ON ใน prod after smoke, OFF = revert to `router.refresh()`
+> 4. **ปิด audit items**: PA-H2 (loadAll 5-table over-fetch — delta query แค่ 2 ตาราง) · PA-M2 (parent re-render churn — skip render no-change) · PA-L1 (loadOrder over-fetch — minor, ค่อยทำแยก)
+> 5. **Edge cases ต้องระวัง:**
+>    - cross-tab BroadcastChannel: tab อื่น write → tab นี้ ควร trigger delta poll ทันที (broadcast ผ่าน existing `broadcastWrite()`)
+>    - tab hidden/visible: visibilitychange → refresh cursor + poll ทันที (เหมือน `useAutoSync` ปัจจุบัน)
+>    - cursor stale (client หลุดนาน): server return entire delta from old cursor; ถ้า > X rows → ส่ง full snapshot แทน (sentinel field `bootstrap: true`)?
+>    - bulk-mode selection state: client-state เดิม persist ถูก เพราะ kanban shape ไม่เปลี่ยน
+>
+> ### Lessons
+> - **Trigger รวมหลายตาราง ใช้ฟังก์ชันเดียวไม่ได้** — plpgsql parse column refs ตอน first-call per-table. ถ้า function อ้าง `NEW.phase2_deleted_at` แล้ว attach กับ orders (ไม่มี column นั้น) → fail ตอน first row. แยก function ตามตาราง หรือใช้ TG_TABLE_NAME branching with `EXECUTE` dynamic SQL
+> - **`DEFAULT NOW()` rewrites table on ALTER ADD COLUMN** (NOW() เป็น volatile, ไม่ใช่ constant). PG ≥11 constant default = no rewrite, แต่ NOW() ตก fallback path = rewrite ทั้งตาราง. สำหรับตารางใหญ่ควรเพิ่ม column แบบ nullable ก่อน → backfill batches → set NOT NULL. ของเรา jobs/orders ~200-700 row = ALTER ครั้งเดียวผ่าน
+>
+> **Commits**: ([จะระบุหลัง commit])
+>
+> ---
+>
 > **Session 2026-05-19 — Performance audit + PA-H1/PA-M3 fixes:** ✅
 >
 > ## งานที่ทำ

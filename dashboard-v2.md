@@ -300,6 +300,42 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Delta-fetch foundation — P1+P2 (2026-05-20)
+
+**Goal:** เริ่มงาน delta-fetch ที่ deferred ไว้จาก 2026-05-18 (ตัด Sheet ก่อน → delta-fetch trivial). Session นี้ลง P1 (schema + bump triggers) + P2 (delta endpoint + tests) — P3 client refactor (`/board` ใช้ delta แทน `router.refresh()`) ไว้ session หน้า.
+
+**P1 — Schema + triggers** ([`app/api/admin/db-migrate/route.ts`](app/api/admin/db-migrate/route.ts)):
+- เพิ่ม `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` + `idx_*_updated_at` ใน jobs/orders/shipped/cancelled
+- 2 trigger functions:
+  - `bump_updated_at_jobs()` — bump เมื่อ `OLD.raw IS DISTINCT FROM NEW.raw` OR `OLD.phase2_deleted_at IS DISTINCT FROM NEW.phase2_deleted_at`
+  - `bump_updated_at_raw()` — bump เฉพาะ `OLD.raw IS DISTINCT FROM NEW.raw` (orders/shipped/cancelled ไม่มี phase2_deleted_at)
+- 4 BEFORE UPDATE triggers (1 ต่อตาราง) — `DROP IF EXISTS` + `CREATE` รูปแบบ rerunnable
+- **ทำไมไม่ reuse phase2_dirty_at:** column นั้น clear กลับเป็น NULL ตอน heal-cron sync สำเร็จ = "needs heal" signal ไม่ใช่ "what changed" cursor
+- **ทำไม conditional bump:** heal-cron `UPDATE jobs SET phase2_dirty_at = NULL` ไม่แตะ `raw` → trigger เห็น `OLD.raw IS NOT DISTINCT FROM NEW.raw` → ไม่ bump (housekeeping write ไม่ pollute cursor)
+- INSERT paths ไม่ต้องแก้ — `DEFAULT NOW()` คุม 8 INSERT INTO ใน `postgres-write.ts` อัตโนมัติ
+
+**P2 — Delta endpoint** ([`lib/board-delta.ts`](lib/board-delta.ts) + [`app/api/board/delta/route.ts`](app/api/board/delta/route.ts)):
+- `GET /api/board/delta?since=<iso>`
+- `since` = null → full snapshot (active jobs + all orders) — สำหรับ bootstrap
+- `since` = ISO → 3 query ขนาน:
+  1. jobs ที่ `updated_at > since AND phase2_deleted_at IS NULL` (active changes)
+  2. orders ที่ `updated_at > since`
+  3. jobs ids ที่ `phase2_deleted_at > since` (tombstones — return เป็น `deletedJobIds`)
+- mutually exclusive (`IS NULL` vs `IS NOT NULL > since`) → row อยู่ใน bucket เดียว
+- `serverTime` snapshot **ก่อน** queries (write ที่ land ระหว่าง query รับใน delta ถัดไป — ไม่ lose)
+- Tests: 9 new (full snapshot · delta · param binding · type coercion · serverTime timing). Total 91→100 ผ่าน Node 22.
+
+**Phase 4.2 reliance:** cutover (2026-05-18) ทำให้ `updated_at` เป็น authoritative cursor — jobs/orders/shipped/cancelled cron OFF, dual-write mirror ลบไป Sheet edits ไม่ leak past cursor. ถ้ายังเปิด cron + mirror ตอนนี้ delta จะ miss Sheet-direct edits.
+
+**ค้าง — P3 client refactor (session หน้า):**
+- Refactor `/board` → hybrid: server ส่ง initial snapshot, client maintain state
+- `useDeltaSync(initialSnapshot)` hook poll `/api/board/delta?since=<lastServerTime>` + merge
+- Replace `router.refresh()` ใน /board (เก็บไว้สำหรับหน้าอื่น)
+- Feature flag `NEXT_PUBLIC_DELTA_FETCH=1` rollout
+- เสร็จ P3 = ปิด PA-H2 (over-fetch) · PA-M2 (parent re-render churn) · PA-L1 (loadOrder over-fetch) ทีเดียว
+
+**Pending user action:** หลัง deploy ต้อง `curl https://dashboard.penprinting.co/api/admin/db-migrate` (admin session) เพื่อ apply schema. Idempotent — ปลอดภัยถ้ารัน 2 ครั้ง.
+
 ### Performance audit + PA-H1/PA-M3 fixes (2026-05-19)
 
 **Audit:** perf-only scan ผ่าน `penprinting-auditor` หลัง Phase 4.2 close-out — 0 critical · 2 high · 3 medium · 1 low. hot path สภาพดี (cache coalescing, recharts route-split, card lazy-loading verified clean). ผลเต็มใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) section "Perf audit — 2026-05-19".
