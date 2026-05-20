@@ -249,6 +249,95 @@ export async function GET() {
       }
     }
 
+    // ─── Delta-fetch cursor (updated_at) ────────────────────────────
+    // Board auto-sync uses `WHERE updated_at > ${lastSync}` to send only
+    // changed rows instead of re-rendering the whole board every tick (the
+    // PA-H2 / PA-M2 / PA-L1 perf items in AUDIT-BACKLOG). Triggers bump
+    // updated_at on real data changes (raw JSONB or tombstone flip) but
+    // SKIP housekeeping writes (heal-cron clearing phase2_dirty_at), so
+    // the cursor only advances when the client actually needs to repaint.
+    //
+    // Why not reuse phase2_dirty_at: that column clears back to NULL after
+    // a successful Sheet sync — it's a "needs heal" signal, not a "what
+    // changed for the user" signal. Delta-fetch needs the latter.
+    //
+    // Phase 4.2 close-out (2026-05-18 cutover) makes this cursor
+    // authoritative: jobs/orders/shipped/cancelled cron is OFF, dual-write
+    // mirror is gone, Postgres is sole source of truth. No Sheet edits can
+    // leak past the cursor.
+    for (const table of ['jobs', 'orders', 'shipped', 'cancelled']) {
+      const r = await sql.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = $1 AND column_name = 'updated_at' LIMIT 1`,
+        [table],
+      );
+      if (r.rowCount === 0) {
+        // ADD COLUMN with NOT NULL DEFAULT NOW(): existing rows backfill to
+        // ALTER time (one timestamp for the batch — fine, the client will
+        // bootstrap with a full snapshot on first load anyway).
+        await sql.query(
+          `ALTER TABLE ${table} ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+        );
+        await sql.query(
+          `CREATE INDEX IF NOT EXISTS idx_${table}_updated_at ON ${table}(updated_at)`,
+        );
+        applied.push(`ALTER TABLE ${table} ADD updated_at + index`);
+      }
+    }
+
+    // ─── Bump triggers ──────────────────────────────────────────────
+    // Two trigger functions because jobs has a phase2_deleted_at column the
+    // others don't. plpgsql resolves column references at first call per
+    // table — referencing jobs.phase2_deleted_at in a function attached to
+    // orders/shipped/cancelled would error on first row. Split per-table.
+    //
+    // CREATE OR REPLACE so re-running the migration updates the body in
+    // place (no DROP/CREATE dance).
+    await sql.query(`
+      CREATE OR REPLACE FUNCTION bump_updated_at_jobs()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        IF OLD.raw IS DISTINCT FROM NEW.raw
+           OR OLD.phase2_deleted_at IS DISTINCT FROM NEW.phase2_deleted_at THEN
+          NEW.updated_at := NOW();
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    applied.push('CREATE FUNCTION bump_updated_at_jobs');
+
+    await sql.query(`
+      CREATE OR REPLACE FUNCTION bump_updated_at_raw()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        IF OLD.raw IS DISTINCT FROM NEW.raw THEN
+          NEW.updated_at := NOW();
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    applied.push('CREATE FUNCTION bump_updated_at_raw');
+
+    // Attach triggers. DROP IF EXISTS first so the migration is rerunnable
+    // — Postgres has no CREATE TRIGGER IF NOT EXISTS pre-v14 and the syntax
+    // varies; drop-then-create is the portable form.
+    for (const [table, fn] of [
+      ['jobs', 'bump_updated_at_jobs'],
+      ['orders', 'bump_updated_at_raw'],
+      ['shipped', 'bump_updated_at_raw'],
+      ['cancelled', 'bump_updated_at_raw'],
+    ] as const) {
+      await sql.query(`DROP TRIGGER IF EXISTS trg_bump_updated_at ON ${table}`);
+      await sql.query(`
+        CREATE TRIGGER trg_bump_updated_at
+        BEFORE UPDATE ON ${table}
+        FOR EACH ROW EXECUTE FUNCTION ${fn}()
+      `);
+      applied.push(`CREATE TRIGGER trg_bump_updated_at ON ${table}`);
+    }
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
     for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates']) {
