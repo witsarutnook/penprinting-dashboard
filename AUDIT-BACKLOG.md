@@ -4,7 +4,9 @@
 >
 > Data-integrity scan: **2026-05-15** (`runPhase2IntegrityScan` — 9-dimension Sheet scan post Phase 2; see "Data integrity scan" section below)
 >
-> Latest update: **2026-05-20** — Delta-fetch P1+P2 landed (schema + bump triggers + delta endpoint + 9 tests). PA-H2/M2/L1 ยัง open รอ P3 client refactor (target session ถัดไป).
+> Latest update: **2026-05-21** — Delta-fetch P3 landed (`BoardClient` + `useDeltaSync`, flag `NEXT_PUBLIC_DELTA_FETCH`). ปิด **PA-H2** + **PA-M2** (`6412d5b`). เหลือ **PA-L1** (loadOrder over-fetch — minor, แยก session).
+>
+> Previous: **2026-05-20** — Delta-fetch P1+P2 landed (schema + bump triggers + delta endpoint + 9 tests). PA-H2/M2/L1 ยัง open รอ P3 client refactor (target session ถัดไป).
 >
 > Previous: **2026-05-19** — performance audit (penprinting-auditor) + quick wins. ปิด: PA-H1 (auto-sync idle hard-stop) · PA-M3 (nested-cache fallback) · M1 = invalid · PA-M4 = verified clean (index มีอยู่แล้ว). เหลือ open: PA-H2 · PA-M2 · PA-L1 (รอทำพร้อม delta-fetch). ดู "Perf audit — 2026-05-19" section.
 >
@@ -80,8 +82,8 @@ _(ปิดครบ — ดู Closed section)_
 Performance-only audit หลัง Phase 4.2 close-out. ผล: **0 critical · 2 high · 3 medium · 1 low**. Hot path โดยรวมสภาพดี — cache coalescing (2026-05-18), recharts route-split, card lazy-loading verified clean.
 
 - [x] ✅ **PA-H1-autosync-idle-leak** (closed 2026-05-19, `c43999b`) — `lib/auto-sync.tsx` backoff (15s→30s→120s) ไม่เคยถึง 0 → tab ที่เปิดทิ้งข้ามคืน fire ~720 `router.refresh()`/คืน (server re-render + stream board HTML กลับทุกครั้ง). Fix: เพิ่ม hard-stop — idle > 30 นาที หยุด poll สนิท, resume เมื่อ user input / tab re-visibility (resume refresh ทันที 1 ครั้ง = ไม่เสีย freshness).
-- [ ] ⏳ **PA-H2-loadall-overfetch** — [`lib/api-postgres.ts:74`](lib/api-postgres.ts) `loadAllFromPostgres` ดึงครบ 5 ตาราง (`jobs/orders/shipped/cancelled/templates`) ทุกหน้า. `/board` ใช้แค่ `jobs`+`orders` แต่ลาก `shipped`+`cancelled` ทั้ง history (โตไม่จำกัด) ออกจาก Postgres ทุก cache-miss. **Fix**: parameterize `tables` set + แยก `unstable_cache` key ต่อ variant (คุม variant ≤2-3).
-- [ ] ⏳ **PA-M2-parent-rerender-churn** — `app/board/page.tsx` + `components/board/kpi-bar.tsx`: `router.refresh()` ทุก tick → `KPIBar`/`BoardToolbar` ไม่ได้ memo → rebuild ทุก 15 วิ แม้ snapshot ไม่เปลี่ยน. **ปิดได้ด้วย delta-fetch** (skip render ถ้า snapshot เหมือนเดิม — งานที่ queue ใน NEXT-SESSION). Interim: wrap `KPIBar` ใน `memo`.
+- [x] ✅ **PA-H2-loadall-overfetch** (closed 2026-05-21, `6412d5b`) — เดิม `/board` ดึงครบ 5 ตารางผ่าน `loadAllFromPostgres` (ลาก `shipped`+`cancelled` history เปล่า). Delta-fetch P3 ทำ /board bootstrap ด้วย `loadBoardDelta(null)` — อ่านแค่ `jobs`+`orders`. มีผลเมื่อ `NEXT_PUBLIC_DELTA_FETCH=1` (flag-OFF /board ยังใช้ `loadAll()` เดิม). หน้าอื่น (orders/analytics ฯลฯ) ใช้ตารางครบจริง — ไม่ใช่ over-fetch.
+- [x] ✅ **PA-M2-parent-rerender-churn** (closed 2026-05-21, `6412d5b`) — เดิม `router.refresh()` ทุก tick rebuild `KPIBar`/`BoardToolbar` แม้ snapshot ไม่เปลี่ยน. Delta-fetch P3: `mergeDelta` คืน state reference เดิมเมื่อ delta ว่าง → `useMemo(computeBoard)` ไม่ recompute → idle tick ไม่ re-render เลย. มีผลเมื่อ flag ON.
 - [x] ✅ **PA-M3-nested-cache-fallback** (closed 2026-05-19, `f82734f`) — `loadAllSnapshot` ([`lib/api.ts:132`](lib/api.ts)) Apps Script fallback เรียก `get('loadAll')` ด้วย default `fetch` cache 60s ขณะรันใน `loadAllCached` (`unstable_cache` 15s + tag) → cache ชั้นที่ 2 ที่ไม่ถูก tag → `revalidateTag(LOAD_ALL_TAG)` บัสต์ไม่ถึง = write ตอน Postgres ล่มไม่โผล่นานสุด 60s. Fix: pass `{ revalidate: 0 }` ให้ `get()` → outer `unstable_cache` เป็น cache + invalidation ชั้นเดียว.
 - [x] ✅ **PA-M4-auditlog-index** (closed 2026-05-19 — **no action, verified clean**) — index มีอยู่แล้ว: [`db-migrate/route.ts:52`](app/api/admin/db-migrate/route.ts:52) สร้าง `idx_audit_target ON audit_log(target_id, timestamp DESC)`. query ใน `getAuditByTargetFromPostgres` เป็น `target_id = X OR target_id = Y` บน column เดียว (`::bigint IS NOT NULL` guard constant-fold) → planner ใช้ BitmapOr ของ 2 index scan = indexed ไม่ seq-scan. auditor flag เพราะมองไม่เห็น migration route.
 - [ ] ⏳ **PA-L1-loadorder-overfetch** — [`lib/api-postgres.ts:138`](lib/api-postgres.ts) `loadOrderFromPostgres` ยิง 4 query ขนาน (orders/jobs/shipped/cancelled) แม้ caller ต้องการแค่ active order → 2 pooled query เปล่าต่อ call. minor — trim ด้วย opts flag.

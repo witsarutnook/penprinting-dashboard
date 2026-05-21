@@ -300,6 +300,39 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Delta-fetch P3 — client refactor (2026-05-21)
+
+**Goal:** ปิดงาน delta-fetch — ทำ `/board` ให้ client-driven: server ส่ง bootstrap snapshot, client ถือ state เอง + delta-poll แทน `router.refresh()` รายตึ๊ก. Flag-gated (`NEXT_PUBLIC_DELTA_FETCH`) — OFF = path เดิมไม่แตะเลย.
+
+**สถาปัตยกรรม (flag ON):**
+`page.tsx` (server, auth) → `<Suspense>` → `BoardDataDelta` (server: `loadBoardDelta(null)` = jobs+orders+serverTime) → `<BoardClient>` (client: ถือ state + render kanban ทั้งหมด)
+
+**ไฟล์ใหม่:**
+- [`lib/poll-schedule.ts`](lib/poll-schedule.ts) — แยก backoff constants + `refreshGuard` ออกจาก `auto-sync.tsx` (pure, ไม่มี React/next) → `useDeltaSync` reuse cadence เดิมได้ + `mergeDelta` unit-test ไม่ลาก Next runtime
+- [`lib/delta-sync.tsx`](lib/delta-sync.tsx) — `useDeltaSync(initial)` hook (poll loop + adaptive backoff + 30-min hard-stop + BroadcastChannel + visibilitychange + `pollNow()` coalesced) + `mergeDelta()` pure function
+- [`app/board/board-client.tsx`](app/board/board-client.tsx) — `BoardClient`: `useSearchParams`→filters, `useMemo(computeBoard)`, render providers + KPIBar + toolbar + Columns + BulkBar
+
+**ไฟล์แก้:** `auto-sync.tsx` (import จาก poll-schedule) · `board.ts` (`computeBoard` รับ `Pick<…,'jobs'|'orders'>`) · `pending-mutations.tsx` (`commit()` รับ prop `pollNow?`) · `page.tsx` (flag branch + `BoardDataDelta`)
+
+**กลไกสำคัญ — BroadcastChannel same-tab delivery:** ทุก mutation เรียก `broadcastWrite()` อยู่แล้ว. channel ชื่อเดียวกัน deliver ถึงทุก instance ยกเว้นตัวส่ง → `useDeltaSync` ที่ฟัง channel **รับ event ของ tab ตัวเองด้วย** → poll ทันที. ผล: card/column/job-form/bulk/order-form/undo writes refresh delta board **โดยไม่ต้องแก้ไฟล์พวกนั้นเลย**. มีแค่ `commit()` ที่ต้อง delta-aware (`pollNow().then(cleanup)`) เพราะ phantom-card cleanup ต้อง time ให้ตรงกับ merge.
+
+**Filtering ย้ายมา client-side:** `BoardClient` อ่าน `?dept=/?u=/?q=` จาก `useSearchParams` → `computeBoard` re-bucket ทันที ไม่มี server round-trip / skeleton flash. (flag-OFF path ยัง filter server-side + Suspense filter-key เหมือนเดิม.)
+
+**ปิด audit:** **PA-H2** (bootstrap อ่าน 2 ตาราง ไม่ใช่ `loadAll` 5 ตาราง) · **PA-M2** (`mergeDelta` คืน state ref เดิมเมื่อ delta ว่าง → idle tick ไม่ re-render). **PA-L1** (loadOrder over-fetch) ยัง open — minor, แยก session.
+
+**Tests:** +12 (`tests/delta-sync.test.ts` — `mergeDelta`: upsert/tombstone/no-op ref-identity/ordering/combined). type-check + lint + build + test (100→112) ผ่าน Node 22.
+
+**Deferred cleanup:** `router.refresh()` ใน `order-form.tsx` (×4) + `undo-context.tsx` (×1) กลายเป็น no-op ในโหมด delta (state เป็น client-owned, props ignore) — ไม่มีพิษ (`broadcastWrite`→channel→poll จัดการ update แล้ว) แค่เปลือง server round-trip 1 ครั้งต่อ order create/promote/undo. ลบทีหลังเมื่อ flag ON เสถียร.
+
+**Lessons:**
+- **`router.refresh()` = no-op ใน component ที่ owns state ผ่าน `useState(initialProp)`** — `useState` ใช้ initial value แค่ตอน mount, prop เปลี่ยนทีหลังถูก ignore. ย้าย source-of-truth มาฝั่ง client แล้วต้องมี imperative trigger (`pollNow`) แทน server re-render
+- **`broadcastWrite()` deliver ถึง tab ตัวเอง** — ใช้ channel listener เป็นจุดรวม refresh ได้ ไม่ต้องไล่แก้ N call sites
+- **`[...map.values()]` ต้อง `Array.from(map.values())`** — tsconfig target นี้ไม่รองรับ MapIterator spread (type-check จับทันที)
+
+**⏳ Pending user action:** ต้องตั้ง `NEXT_PUBLIC_DELTA_FETCH=1` ใน Vercel + redeploy เพื่อเปิดโหมด delta จริง (ทำ**หลัง** P3 deploy เสร็จ — flag เป็น `NEXT_PUBLIC_` bake ตอน build, เปิดก่อนมี `BoardClient` = build พัง).
+
+---
+
 ### Delta-fetch foundation — P1+P2 (2026-05-20)
 
 **Goal:** เริ่มงาน delta-fetch ที่ deferred ไว้จาก 2026-05-18 (ตัด Sheet ก่อน → delta-fetch trivial). Session นี้ลง P1 (schema + bump triggers) + P2 (delta endpoint + tests) — P3 client refactor (`/board` ใช้ delta แทน `router.refresh()`) ไว้ session หน้า.

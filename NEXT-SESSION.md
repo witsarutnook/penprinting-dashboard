@@ -2,6 +2,39 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-21 — Delta-fetch P3 (client refactor) + migration/smoke verified:** ✅
+>
+> ## งานที่ทำ
+> - **P3: Client refactor** — `/board` เป็น hybrid Server/Client เมื่อ `NEXT_PUBLIC_DELTA_FETCH=1`. Server ส่ง bootstrap (`loadBoardDelta(null)`) → [`<BoardClient>`](app/board/board-client.tsx) ถือ state + [`useDeltaSync`](lib/delta-sync.tsx) poll `/api/board/delta` + merge. flag-OFF = path เดิมไม่แตะเลย.
+>   - ไฟล์ใหม่: [`lib/poll-schedule.ts`](lib/poll-schedule.ts) (shared backoff + `refreshGuard`) · [`lib/delta-sync.tsx`](lib/delta-sync.tsx) (`useDeltaSync` + pure `mergeDelta`) · [`app/board/board-client.tsx`](app/board/board-client.tsx)
+>   - ไฟล์แก้: `auto-sync.tsx` (import จาก poll-schedule) · `board.ts` (`computeBoard` รับ `Pick<…,'jobs'|'orders'>`) · `pending-mutations.tsx` (`commit()` รับ prop `pollNow?`) · `page.tsx` (flag branch + `BoardDataDelta`)
+>   - **กลไก:** ทุก mutation เรียก `broadcastWrite()` อยู่แล้ว → `useDeltaSync` ฟัง BroadcastChannel (รับ event ของ tab ตัวเองด้วย) → poll ทันที ครอบคลุม card/column/job-form/bulk/order-form/undo **โดยไม่แตะไฟล์พวกนั้น**. มีแค่ `commit()` ที่ delta-aware (`pollNow().then(cleanup)`) เพราะ phantom cleanup timing
+> - **ปิด audit:** PA-H2 (bootstrap อ่าน 2 ตาราง ไม่ใช่ `loadAll` 5) + PA-M2 (`mergeDelta` คืน state ref เดิมเมื่อ delta ว่าง → idle tick ไม่ re-render). PA-L1 ยัง open
+> - **Tests** 100→112 ([`tests/delta-sync.test.ts`](tests/delta-sync.test.ts) — `mergeDelta` 12 cases). type-check + lint + build ผ่าน Node 22
+> - **ขั้น 2+3 verified แล้ว session นี้** (รันผ่าน Chrome ที่ login admin อยู่):
+>   - Schema migration `/api/admin/db-migrate` → `{ok:true}` (idempotent — `updated_at` + triggers อยู่ครบตั้งแต่ 2026-05-20, รอบนี้ยืนยันซ้ำ)
+>   - Smoke `/api/board/delta`: full snapshot `jobs:54 orders:207 deletedJobIds:0` + `serverTime` · `?since=`อนาคต → empty delta โครงสร้างถูก → **backend delta-fetch พร้อมใช้จริงบน production**
+>
+> ## ⏳ Pending user actions — เรียงลำดับ
+> 1. **verify Vercel deploy** — commit `6412d5b` push แล้ว, เช็คว่า deploy ขึ้นเรียบร้อย
+> 2. **ตั้ง `NEXT_PUBLIC_DELTA_FETCH=1`** — Vercel → Settings → Environment Variables → **redeploy**. ⚠️ ทำ**หลัง** P3 deploy เสร็จเท่านั้น — flag เป็น `NEXT_PUBLIC_` bake ตอน build; เปิดก่อนมี `BoardClient` = build พัง
+> 3. **เช็ค /board โหมด delta** — filter/search เปลี่ยนทันทีไหม · forward/reassign/cancel/ship/bulk เด้งไหม · DevTools Network ดู `/api/board/delta` poll ~ทุก 15s · idle แล้วหยุด poll ที่ 30 นาที
+> 4. ค้างเดิม: soak Phase 4.2 cutover → Stage 5 (~26-28 พ.ค.) · ดู Sentry + Neon transfer · ลบ Apps Script "MorningReportV2" + env `MORNING_REPORT_APPS_SCRIPT_URL` · deleteJob smoke test · AI Quoting Phase 0 · ORPHAN_CANCELLED cleanup · `/check-quota` · scan v2
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **หลัง flag ON เสถียร** — ปิด deferred cleanup: ลบ `router.refresh()` ที่เป็น no-op ในโหมด delta — `order-form.tsx` (×4) + `undo-context.tsx` (×1). `broadcastWrite`→channel→poll จัดการ update แล้ว; `router.refresh()` แค่เปลือง server round-trip 1 ครั้งต่อ order create/promote/undo
+> 2. **PA-L1** — `loadOrderFromPostgres` ยิง 4 query ขนานแม้ caller ต้องการ order เดียว → opts flag trim. minor
+> 3. **Consolidate** `useAutoSync`/`useDeltaSync` — ตอนนี้ duplicate poll-loop scaffolding ~80 บรรทัด (เจตนา isolate ความเสี่ยงจาก 5 routes อื่นที่ใช้ `useAutoSync`). ถ้า delta mode เสถียร → ขยาย delta-fetch ไป /orders /calendar แล้ว consolidate เป็น `usePollLoop(onTick)` ตัวเดียว
+>
+> ### Lessons
+> - **`router.refresh()` = no-op ใน component ที่ owns state ผ่าน `useState(initialProp)`** — `useState` ใช้ initial value แค่ตอน mount; prop ที่เปลี่ยนทีหลังถูก ignore. ย้าย source-of-truth มาฝั่ง client แล้วต้องมี imperative trigger (`pollNow`) แทน server re-render — ไม่งั้น mutation ไม่ขึ้นจอ
+> - **`broadcastWrite()` deliver ถึง tab ตัวเอง** — BroadcastChannel ชื่อเดียวกัน deliver ถึงทุก instance ยกเว้นตัวส่ง → channel listener ใช้เป็นจุดรวม refresh ได้ ไม่ต้องไล่แก้ N call sites
+> - **`[...map.values()]` ต้องใช้ `Array.from(map.values())`** — tsconfig target นี้ไม่รองรับ MapIterator spread (TS2802 — type-check จับทันที)
+>
+> **Commits**: [`6412d5b`](https://github.com/witsarutnook/penprinting-dashboard/commit/6412d5b) (code: P3 — BoardClient + useDeltaSync + poll-schedule + 12 tests) · docs follow-up (NEXT-SESSION + dashboard-v2 + AUDIT-BACKLOG)
+>
+> ---
+>
 > **Session 2026-05-20 — Delta-fetch P1+P2 (schema + endpoint):** ✅
 >
 > ## งานที่ทำ
