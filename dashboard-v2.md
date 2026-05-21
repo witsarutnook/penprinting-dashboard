@@ -300,6 +300,24 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### ID-allocation → Postgres (2026-05-21)
+
+**Goal:** ตัด Apps Script ออกจาก critical path การสร้าง order/job. จาก diagnose order-submit latency — กด "ส่งใบสั่งงาน" 2-3 วิ, ~80-90% หมดกับ Apps Script ID round-trip (`getNextOrderId` + `getNextId`).
+
+**กลไก:** ตาราง `counters(key, value)` — mint ด้วย `UPDATE counters SET value = value + N ... RETURNING` (atomic row-lock; concurrent mint serialize บน row เดียว — ดีกว่า Apps Script LockService ที่ lock ทั้งแอป). Job id = monotonic counter ล้วน (**ห้าม MAX-derive** — job ถูก hard-delete ตอนย้าย shipped/cancelled → MAX ต่ำกว่า id ที่เคยใช้). Order id = `YYYYMMNNN` per-month + cross-check `MAX(orders.id)` ของเดือน (orders ไม่เคยลบ → MAX เชื่อถือได้; Bangkok-TZ prefix).
+
+**ไฟล์:** ใหม่ [`lib/id-allocation.ts`](lib/id-allocation.ts) (`mintJobId`/`mintJobIds`/`mintOrderId`) · [`/api/admin/seed-id-counters`](app/api/admin/seed-id-counters/route.ts) (raise-only seed) · `counters` table ใน db-migrate. branch 6 routes ด้วย flag `ALLOCATE_IDS_IN_POSTGRES` — orders/add · promote-draft · jobs/add · forward · forward-undo · bulk-forward. แผนเต็ม + risk table: [migration-plan-id-allocation.md](migration-plan-id-allocation.md).
+
+**Rollout (2026-05-21):** db-migrate → seed (`nextId`=740, verified ตรง Sheet `config.nextId`) → flag ON + redeploy → smoke ✅ — job `740`, order `202605145`, ไม่มี ID ชน, ส่งใบสั่ง 2-3 วิ → ~0.3-0.6 วิ (คุณนุ๊กยืนยัน).
+
+**PIN/QR ไม่กระทบ:** PIN เป็นเลขสุ่ม ไม่เกี่ยว counter · QR เข้ารหัสแค่ order id (`track?id=`) — format `YYYYMMNNN` คงเดิม → QR เก่า/ใหม่ใช้ได้หมด.
+
+**Rollback:** Apps Script `config.nextId` ค้างค่าเดิม → ก่อนปิด flag ต้องแก้ cell `config.nextId` ใน Sheet = ค่า Postgres `counters.nextId` ปัจจุบัน. order id self-heal เอง (`getNextOrderId` cross-check Sheet).
+
+**ค้าง:** soak ~1 สัปดาห์ → Step 7 retire (`getNext*` Apps Script). **Tests:** +10 ([`tests/id-allocation.test.ts`](tests/id-allocation.test.ts)) — total 112→122.
+
+---
+
 ### Delta-fetch P3 — client refactor (2026-05-21)
 
 **Goal:** ปิดงาน delta-fetch — ทำ `/board` ให้ client-driven: server ส่ง bootstrap snapshot, client ถือ state เอง + delta-poll แทน `router.refresh()` รายตึ๊ก. Flag-gated (`NEXT_PUBLIC_DELTA_FETCH`) — OFF = path เดิมไม่แตะเลย.

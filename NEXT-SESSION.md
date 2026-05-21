@@ -2,6 +2,33 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-21 (PM) — ID-allocation migration → Postgres: ✅ LIVE & verified**
+>
+> ## งานที่ทำ
+> - **ทำตามแผน [migration-plan-id-allocation.md](migration-plan-id-allocation.md)** — ย้าย order/job ID minting จาก Apps Script (`getNextOrderId`/`getNextId`/`getNextIds`) มา Postgres `counters` table. 11 ไฟล์, commit [`44006d3`](https://github.com/witsarutnook/penprinting-dashboard/commit/44006d3)
+>   - ใหม่: [`lib/id-allocation.ts`](lib/id-allocation.ts) (`mintJobId`/`mintJobIds`/`mintOrderId` — atomic `UPDATE...RETURNING`) · [`/api/admin/seed-id-counters`](app/api/admin/seed-id-counters/route.ts) · `counters` table ใน db-migrate
+>   - branch 6 routes ด้วย `allocateIdsInPostgres()`: orders/add · promote-draft · jobs/add · forward · forward-undo · bulk-forward
+> - **Rollout เสร็จใน session นี้** (lunch-break window): db-migrate → seed (`nextId`=740, verified ตรงกับ Sheet `config.nextId`=740) → ตั้ง `ALLOCATE_IDS_IN_POSTGRES=1` + redeploy → smoke
+> - **Verified live**: ใบทดสอบ → job id `740` (counter→741) · order id `202605145` (`YYYYMMNNN` ถูก, seq 144→145) · ไม่มี ID ชน · **คุณนุ๊กยืนยัน "กดใบสั่งเร็วขึ้นเยอะ"** (2-3 วิ → ~0.3-0.6 วิ)
+> - tests 112→122 (+10 [`tests/id-allocation.test.ts`](tests/id-allocation.test.ts)) · type-check/lint/build ผ่าน Node 22
+>
+> ## ⏳ Pending
+> 1. **ลบใบ "ทดสอบ ID migration" (#202605145)** — คุณนุ๊กลบผ่าน data-audit
+> 2. **Soak ~1 สัปดาห์** (ถึง ~28 พ.ค.) — ดู Sentry + สังเกตการสร้างงานปกติ
+> 3. **Rollback note** — job 740+ ออกจาก Postgres แล้ว Apps Script `config.nextId` ยังค้าง 740: **ถ้าจะ rollback ต้องแก้ cell `config.nextId` ใน Google Sheet `config` tab = ค่า Postgres `counters.nextId` ปัจจุบันก่อน** แล้วค่อยปิด flag. order id ไม่ต้องทำ (`getNextOrderId` cross-check Sheet self-heal)
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Step 7 — Retire** (หลัง soak ≥1 สัปดาห์): ลบ `getNext*` else-branch ออกจาก 6 routes + ลบ flag `ALLOCATE_IDS_IN_POSTGRES` + ลบ `getNextId`/`getNextOrderId`/`getNextIds` ฝั่ง Apps Script (เช็คก่อนว่าไม่มี caller อื่น)
+> 2. **Optional hardening** — post-insert read-back assertion ใน `createOrderInPostgres`/`addJobInPostgres` (กัน `ON CONFLICT DO NOTHING` กลบ collision เงียบ — §6 ของแผน)
+>
+> ### Lessons
+> - **Apps Script `config.nextId` = แค่ cell ใน Google Sheet `config` tab** — แก้ตรงๆ ได้ → rollback ของ counter migration ง่าย ไม่ต้องเขียน Apps Script sync action (decision 2 ในแผนเดิม over-engineered)
+> - **seed ของ counter migration ต้องชิดกับ flag flip** — seed endpoint ออกแบบเป็น raise-only + re-runnable ให้รันซ้ำได้ก่อน flip เพื่อ catch row ที่เกิดช่วงรอยต่อ
+>
+> **Commits**: `44006d3` (code) · `9fbc637` (decisions) · `7405ca7` (plan) · `99b6492` + `ac44fa4` (plan docs) + docs ปิด session
+>
+> ---
+>
 > **Session 2026-05-21 — Delta-fetch P3 (client refactor) + migration/smoke verified:** ✅
 >
 > ## งานที่ทำ
