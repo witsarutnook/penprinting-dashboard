@@ -3,7 +3,8 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { mintJobId } from '@/lib/id-allocation';
 import { bulkForwardInPostgres, appendAuditToPostgres } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -82,11 +83,15 @@ export async function POST(req: Request) {
   // is missing (would write a blank-id row).
   let nextId: number;
   try {
-    const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-    if (r.error || !r.nextId) {
-      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+    if (allocateIdsInPostgres()) {
+      nextId = await mintJobId();
+    } else {
+      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
+      if (r.error || !r.nextId) {
+        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+      }
+      nextId = Number(r.nextId);
     }
-    nextId = Number(r.nextId);
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });

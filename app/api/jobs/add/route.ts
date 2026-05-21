@@ -8,7 +8,8 @@ import {
   type JobPayload,
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { mintJobId } from '@/lib/id-allocation';
 import { addJobToPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -89,26 +90,26 @@ export async function POST(req: Request) {
     }
   }
 
-  // Atomic id allocation via Apps Script getNextId (LockService-protected).
-  // Was reading snap.nextId from a fresh loadAll, which is still
-  // race-prone — two concurrent "งานเดี่ยว" submits (or งานเดี่ยว +
-  // promote-draft) could read the same counter and produce duplicate
-  // ids. getNextId mints + bumps the counter inside one lock — same
-  // pattern used by /api/jobs/forward, bulk-forward, forward-undo,
-  // and orders/promote-draft (auditor C1r).
+  // Atomic id allocation. Both paths mint + bump a counter under a lock so
+  // two concurrent submits never get the same id: Postgres via the counter
+  // row's UPDATE...RETURNING, Apps Script via getNextId's LockService.
   let nextId: number;
   try {
-    const idResult = await post<{ nextId?: number; error?: string }>('getNextId', {});
-    if (idResult.error || typeof idResult.nextId !== 'number') {
-      return NextResponse.json(
-        { error: idResult.error || 'getNextId returned no id' },
-        { status: 502 },
-      );
+    if (allocateIdsInPostgres()) {
+      nextId = await mintJobId();
+    } else {
+      const idResult = await post<{ nextId?: number; error?: string }>('getNextId', {});
+      if (idResult.error || typeof idResult.nextId !== 'number') {
+        return NextResponse.json(
+          { error: idResult.error || 'getNextId returned no id' },
+          { status: 502 },
+        );
+      }
+      nextId = idResult.nextId;
     }
-    nextId = idResult.nextId;
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `getNextId failed — ${msg}` }, { status: 502 });
+    return NextResponse.json({ error: `id allocation failed — ${msg}` }, { status: 502 });
   }
 
   const payload: JobPayload = {

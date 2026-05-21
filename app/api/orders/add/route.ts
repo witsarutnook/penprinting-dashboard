@@ -4,7 +4,8 @@ import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate, bangkokTodayISO } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { mintOrderId, mintJobId } from '@/lib/id-allocation';
 import {
   createOrderInPostgres,
   findDuplicateOrdersInPostgres,
@@ -378,31 +379,42 @@ async function phase2CreateOrder(args: Phase2CreateOrderArgs): Promise<NextRespo
     }
   }
 
-  // ── Allocate ids via Apps Script (sequential — Sheet UI friendly) ─
+  // ── Allocate ids — Postgres counter (fast) or Apps Script (legacy) ─
   let orderId: number;
   let jobId: number | null = null;
+  const needJobId = !isDraft && !!jobPayloadBase;
   try {
-    const [orderIdRes, jobIdRes] = await Promise.all([
-      post<{ id?: number; error?: string }>('getNextOrderId', {}),
-      isDraft || !jobPayloadBase
-        ? Promise.resolve({ nextId: 0 } as { nextId?: number; error?: string })
-        : post<{ nextId?: number; error?: string }>('getNextId', {}),
-    ]);
-    if (orderIdRes.error || !orderIdRes.id) {
-      return NextResponse.json(
-        { error: `ขอเลขใบสั่งไม่สำเร็จ — ${orderIdRes.error || 'unknown'}` },
-        { status: 502 },
-      );
-    }
-    orderId = Number(orderIdRes.id);
-    if (!isDraft && jobPayloadBase) {
-      if (jobIdRes.error || !jobIdRes.nextId) {
+    if (allocateIdsInPostgres()) {
+      const [oid, jid] = await Promise.all([
+        mintOrderId(),
+        needJobId ? mintJobId() : Promise.resolve(null),
+      ]);
+      orderId = oid;
+      jobId = jid;
+    } else {
+      // Apps Script — sequential ids, LockService-protected.
+      const [orderIdRes, jobIdRes] = await Promise.all([
+        post<{ id?: number; error?: string }>('getNextOrderId', {}),
+        needJobId
+          ? post<{ nextId?: number; error?: string }>('getNextId', {})
+          : Promise.resolve({ nextId: 0 } as { nextId?: number; error?: string }),
+      ]);
+      if (orderIdRes.error || !orderIdRes.id) {
         return NextResponse.json(
-          { error: `ขอ job id ไม่สำเร็จ — ${jobIdRes.error || 'unknown'}` },
+          { error: `ขอเลขใบสั่งไม่สำเร็จ — ${orderIdRes.error || 'unknown'}` },
           { status: 502 },
         );
       }
-      jobId = Number(jobIdRes.nextId);
+      orderId = Number(orderIdRes.id);
+      if (needJobId) {
+        if (jobIdRes.error || !jobIdRes.nextId) {
+          return NextResponse.json(
+            { error: `ขอ job id ไม่สำเร็จ — ${jobIdRes.error || 'unknown'}` },
+            { status: 502 },
+          );
+        }
+        jobId = Number(jobIdRes.nextId);
+      }
     }
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
+import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { mintJobId } from '@/lib/id-allocation';
 import { bulkForwardInPostgres, appendAuditToPostgres } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -57,15 +58,18 @@ export async function POST(req: Request) {
 
   if (phase2WriteEnabled('forwardUndo')) {
     // Allocate the restored row's id — bulkForwardInPostgres requires a real
-    // id (unlike Apps Script bulkForward's id:0 auto-allocate). Keeps the
-    // Sheet nextId counter accurate so Sheet UI ids stay sequential.
+    // id (unlike Apps Script bulkForward's id:0 auto-allocate).
     let nextId: number;
     try {
-      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-      if (r.error || !r.nextId) {
-        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+      if (allocateIdsInPostgres()) {
+        nextId = await mintJobId();
+      } else {
+        const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
+        if (r.error || !r.nextId) {
+          return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
+        }
+        nextId = Number(r.nextId);
       }
-      nextId = Number(r.nextId);
     } catch (err) {
       const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });

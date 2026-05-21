@@ -338,6 +338,21 @@ export async function GET() {
       applied.push(`CREATE TRIGGER trg_bump_updated_at ON ${table}`);
     }
 
+    // ─── counters (Postgres-minted order/job ids) ──────────────────
+    // Replaces Apps Script getNextOrderId / getNextId / getNextIds. Key/value
+    // rows: `nextId` (global job counter) + `orderCounter_YYYYMM` (per-month).
+    // Created empty here — SEED separately via /api/admin/seed-id-counters
+    // right before flipping ALLOCATE_IDS_IN_POSTGRES (the seed must reflect
+    // the latest max, so it can't be baked into a one-time migration run).
+    // See migration-plan-id-allocation.md.
+    await sql`
+      CREATE TABLE IF NOT EXISTS counters (
+        key   TEXT PRIMARY KEY,
+        value BIGINT NOT NULL
+      )
+    `;
+    applied.push('CREATE TABLE counters');
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
     for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates']) {
