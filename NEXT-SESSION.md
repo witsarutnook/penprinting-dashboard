@@ -25,6 +25,7 @@
 > 1. **หลัง flag ON เสถียร** — ปิด deferred cleanup: ลบ `router.refresh()` ที่เป็น no-op ในโหมด delta — `order-form.tsx` (×4) + `undo-context.tsx` (×1). `broadcastWrite`→channel→poll จัดการ update แล้ว; `router.refresh()` แค่เปลือง server round-trip 1 ครั้งต่อ order create/promote/undo
 > 2. **PA-L1** — `loadOrderFromPostgres` ยิง 4 query ขนานแม้ caller ต้องการ order เดียว → opts flag trim. minor
 > 3. **Consolidate** `useAutoSync`/`useDeltaSync` — ตอนนี้ duplicate poll-loop scaffolding ~80 บรรทัด (เจตนา isolate ความเสี่ยงจาก 5 routes อื่นที่ใช้ `useAutoSync`). ถ้า delta mode เสถียร → ขยาย delta-fetch ไป /orders /calendar แล้ว consolidate เป็น `usePollLoop(onTick)` ตัวเดียว
+> 4. **ID allocation → Postgres** — แผนละเอียดเขียนเสร็จแล้ว: [migration-plan-id-allocation.md](migration-plan-id-allocation.md) (commit `7405ca7`). ย้าย `getNextOrderId`/`getNextId`/`getNextIds` ออกจาก Apps Script → counter ใน Postgres → ส่งใบสั่งงาน 2-3 วิ เหลือ ~0.3-0.6 วิ. มาจาก diagnose order-submit latency (2026-05-21). PIN + QR ตรวจแล้วไม่กระทบ (§3 ของแผน). ⏳ **รอคุณนุ๊กตัดสิน 3 decisions ใน §10** (flag เดียว / sync AS counter ช่วง soak / ย้าย order+job พร้อมกัน) ก่อนเริ่ม implement
 >
 > ### Lessons
 > - **`router.refresh()` = no-op ใน component ที่ owns state ผ่าน `useState(initialProp)`** — `useState` ใช้ initial value แค่ตอน mount; prop ที่เปลี่ยนทีหลังถูก ignore. ย้าย source-of-truth มาฝั่ง client แล้วต้องมี imperative trigger (`pollNow`) แทน server re-render — ไม่งั้น mutation ไม่ขึ้นจอ
