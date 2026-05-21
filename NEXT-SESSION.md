@@ -13,9 +13,10 @@
 > - tests 112→122 (+10 [`tests/id-allocation.test.ts`](tests/id-allocation.test.ts)) · type-check/lint/build ผ่าน Node 22
 >
 > ## ⏳ Pending
-> 1. **ลบใบ "ทดสอบ ID migration" (#202605145)** — คุณนุ๊กลบผ่าน data-audit
+> 1. ✅ ใบ "ทดสอบ ID migration" (#202605145) — ยกเลิกแล้ว (cancel cascade verified สะอาด: job 740 tombstoned, order status=cancelled)
 > 2. **Soak ~1 สัปดาห์** (ถึง ~28 พ.ค.) — ดู Sentry + สังเกตการสร้างงานปกติ
-> 3. **Rollback note** — job 740+ ออกจาก Postgres แล้ว Apps Script `config.nextId` ยังค้าง 740: **ถ้าจะ rollback ต้องแก้ cell `config.nextId` ใน Google Sheet `config` tab = ค่า Postgres `counters.nextId` ปัจจุบันก่อน** แล้วค่อยปิด flag. order id ไม่ต้องทำ (`getNextOrderId` cross-check Sheet self-heal)
+> 3. **เช็ค Neon network transfer rate ~25 พ.ค.** — วัดผล delta-fetch P3 จริง. baseline ก่อน optimize = 0.7 GB/วัน (5.6GB/8d) · 21 พ.ค. วัดได้ ~0.35-0.4 GB/วัน = ผลของ loadAll caching (P3 เพิ่ง live 21 พ.ค. ~10:00 ยังไม่สะท้อน). ดูกราฟ transfer รายวันใน Neon → "View all metrics" เทียบก่อน/หลัง 21 พ.ค.
+> 4. **Rollback note** — job 740+ ออกจาก Postgres แล้ว Apps Script `config.nextId` ยังค้าง 740: **ถ้าจะ rollback ต้องแก้ cell `config.nextId` ใน Google Sheet `config` tab = ค่า Postgres `counters.nextId` ปัจจุบันก่อน** แล้วค่อยปิด flag. order id ไม่ต้องทำ (`getNextOrderId` cross-check Sheet self-heal)
 >
 > ## 🎯 งานหลัก session หน้า
 > 1. **Step 7 — Retire** (หลัง soak ≥1 สัปดาห์): ลบ `getNext*` else-branch ออกจาก 6 routes + ลบ flag `ALLOCATE_IDS_IN_POSTGRES` + ลบ `getNextId`/`getNextOrderId`/`getNextIds` ฝั่ง Apps Script (เช็คก่อนว่าไม่มี caller อื่น)
