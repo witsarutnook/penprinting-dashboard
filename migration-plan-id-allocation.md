@@ -140,31 +140,37 @@ COMMIT;
 
 ## 7. ขั้นตอน Migration (มี checklist)
 
-### Step 0 — Prep + Seed (สำคัญสุด — ทำในช่วงคนใช้น้อย)
-- [ ] เพิ่มตาราง `counters` ใน [`app/api/admin/db-migrate/route.ts`](app/api/admin/db-migrate/route.ts) (idempotent `CREATE TABLE IF NOT EXISTS`)
-- [ ] **Seed `nextId`** = `GREATEST(` ค่า `config.nextId` ปัจจุบันจาก Apps Script `,` max id ข้าม `jobs ∪ shipped ∪ cancelled` `) + 1` — อ่านค่า Apps Script ผ่าน `getConfig('nextId')` (ทำ helper Apps Script เฉพาะกิจ หรืออ่าน config sheet)
-- [ ] **Seed `orderCounter_YYYYMM`** เดือนปัจจุบัน (+ เดือนก่อนหน้าเผื่อ) = max seq ใน `orders` ของเดือนนั้น
-- [ ] เขียน Apps Script helper / SQL ยืนยัน seed ก่อน flip
+> **โค้ดลงครบแล้ว 2026-05-21 — commit `44006d3` (flag OFF).** Step 1-3 ✅.
+> เหลือ rollout: db-migrate → seed → flip → soak (Step 0/4/5/6/7).
 
-### Step 1 — Implement minters
-- [ ] สร้าง `lib/id-allocation.ts` — `mintJobId()`, `mintJobIds(n)`, `mintOrderId()`
-- [ ] Unit test **concurrency**: ยิง `mintJobId` ขนาน 50 ตัว → assert ได้ 50 เลขไม่ซ้ำ + ต่อเนื่อง
-- [ ] Unit test order id format = `^\d{6}\d{3}$` ของเดือน Bangkok ปัจจุบัน
+### Step 1 — Implement minters ✅
+- [x] [`lib/id-allocation.ts`](lib/id-allocation.ts) — `mintJobId` / `mintJobIds` / `mintOrderId` (atomic `UPDATE...RETURNING`)
+- [x] Unit tests — `tests/id-allocation.test.ts` (+10): mint shape · monotonic batch · order-id format `^\d{9}$` · errors. (atomicity แบบ concurrency จริงเป็น Postgres-level guarantee — verify ตอน smoke Step 4)
 
-### Step 2 — Feature flag
-- [ ] flag `ALLOCATE_IDS_IN_POSTGRES` (1 ตัว) — แต่ละ route ใน 6 routes branch: on → Postgres minter, off → Apps Script `getNext*`
+### Step 2 — Feature flag ✅
+- [x] `allocateIdsInPostgres()` ([`lib/feature-flags.ts`](lib/feature-flags.ts)) + branch ครบ 6 routes (orders/add · promote-draft · jobs/add · forward · forward-undo · bulk-forward)
 
-### Step 3 — Deploy flag OFF
-- [ ] push + deploy — ไม่มีการเปลี่ยนพฤติกรรม
+### Step 3 — Deploy flag OFF ✅
+- [x] commit `44006d3` push แล้ว — Vercel auto-deploy, ไม่มีการเปลี่ยนพฤติกรรม (flag default OFF)
 
-### Step 4 — Smoke ใน preview (flag on)
-- [ ] สร้าง order/job หลายใบ → เช็คเลขเรียง, ไม่ซ้ำ, format ถูก, /track + QR เปิดถูกใบ
+### Step 0 — Schema + Seed (ทำหลัง deploy เสร็จ — ช่วงคนใช้น้อย)
+- [x] `counters` table — เพิ่มใน [`db-migrate/route.ts`](app/api/admin/db-migrate/route.ts) แล้ว (สร้างตอนรัน db-migrate)
+- [ ] **รัน `/api/admin/db-migrate`** (admin) → สร้างตาราง `counters` ว่าง
+- [ ] **รัน `/api/admin/seed-id-counters`** (admin) — seed `nextId` = `MAX(jobs∪shipped∪cancelled∪audit) + 1`. endpoint return ค่ามาให้ดู
+- [ ] **เทียบ `nextIdCounter` กับ `config.nextId` ใน Google Sheet** (tab `config`) — ถ้า Sheet สูงกว่า → รันซ้ำ `/api/admin/seed-id-counters?min=<config.nextId>` (seed เป็น raise-only — รันซ้ำปลอดภัย)
+- ℹ️ ไม่ต้อง seed `orderCounter_*` — `mintOrderId` self-seed ผ่าน orders-table cross-check
+
+### Step 4 — Smoke (flag ON ใน preview / หรือ production ช่วงเงียบ)
+- [ ] สร้าง order/job หลายใบ → เช็คเลขเรียง, ไม่ซ้ำ, format `YYYYMMNNN` ถูก, /track + QR เปิดถูกใบ
+- [ ] ยิงสร้างพร้อมกันหลายอัน → ยืนยันไม่มีเลขซ้ำ (atomicity)
 
 ### Step 5 — Flip flag ON production (ช่วงคนใช้น้อย)
-- [ ] watch Sentry + รัน dup-ID scan (orders + jobs) ทุกชั่วโมงในวันแรก
+- [ ] ตั้ง `ALLOCATE_IDS_IN_POSTGRES=1` ใน Vercel → redeploy
+- [ ] watch Sentry + รัน dup-ID scan (orders + jobs) ในวันแรก
 
-### Step 6 — Soak — sync Apps Script counter (decision — ดู §9)
-- [ ] (ถ้าเลือก) bump `config.nextId` แบบ best-effort fire-and-forget 1 สัปดาห์ เพื่อให้ rollback ปลอดภัย
+### Step 6 — Soak — sync Apps Script counter (decision 2)
+- [ ] sync `config.nextId` ฝั่ง Apps Script 1 สัปดาห์ เพื่อ rollback ปลอดภัย — ⚠️ **ต้อง deploy Apps Script action ใหม่** (`setConfig`-type) + เรียกผ่าน `waitUntil()`. ทางเลือกที่ง่ายกว่า: เขียน Apps Script editor helper `reseedJobCounter()` ที่ admin รันเอง*เฉพาะตอนจะ rollback* (ไม่ต้องแตะ hot path) — ตัดสินตอนถึง Step 6
+- 🔒 **post-insert read-back assertion** (§6 / R5) — แนะนำเพิ่มใน `createOrderInPostgres`/`addJobInPostgres` ก่อน flip เป็น safety net กัน `ON CONFLICT DO NOTHING` กลบ collision
 
 ### Step 7 — Retire
 - [ ] หลัง soak ≥1 สัปดาห์ — ลบ `getNext*` calls ออกจาก 6 routes + ลบ flag
