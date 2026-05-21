@@ -3,6 +3,7 @@ import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import {
   computeBoard,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/board';
 import type { Urgency } from '@/lib/calendar';
 import { Column } from './column';
+import { BoardClient } from './board-client';
 import { BoardToolbar } from './toolbar';
 import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -67,6 +69,33 @@ export default async function BoardPage({
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/board');
+
+  // ── Delta-fetch P3 (NEXT_PUBLIC_DELTA_FETCH) ──────────────────────────
+  // Client-driven board: the server ships a bootstrap snapshot, then the
+  // client delta-polls `/api/board/delta` and merges changed rows. Filtering
+  // moves client-side (BoardClient reads searchParams) so this path needs no
+  // `filters` / Suspense filter-key. Flag OFF → the original server-rendered
+  // `router.refresh()` path below, untouched.
+  if (process.env.NEXT_PUBLIC_DELTA_FETCH === '1') {
+    return (
+      <DashboardShell user={session.user} role={session.role}>
+        {/* Top date row + search — no data dep, render in the first chunk */}
+        <div className="bg-white border-b border-stone-100">
+          <div className="px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="text-sm text-stone-500">{todayThaiLong()}</div>
+            </div>
+            <SearchBox />
+          </div>
+        </div>
+        <div className="px-4 sm:px-6 py-4 space-y-4">
+          <Suspense fallback={<BoardSkeleton />}>
+            <BoardDataDelta session={session} />
+          </Suspense>
+        </div>
+      </DashboardShell>
+    );
+  }
 
   const filters: BoardFilters = {
     dept: VALID_DEPTS.includes(searchParams.dept as Dept) ? (searchParams.dept as Dept) : '',
@@ -184,6 +213,42 @@ async function BoardData({
 
       <BulkActionsBar jobs={visibleJobs} isAdmin={session.role === 'admin'} />
     </>
+  );
+}
+
+/** Delta-fetch data section (NEXT_PUBLIC_DELTA_FETCH path). Awaits the
+ *  bootstrap snapshot — `loadBoardDelta(null)` returns jobs + orders +
+ *  serverTime, reading only the 2 tables /board needs (closes audit PA-H2,
+ *  vs `loadAll()`'s 5-table over-fetch) — then hands it to the client
+ *  `<BoardClient>`. Lives behind a Suspense boundary so the page shell
+ *  (sidebar, date row, search) streams to the client first.
+ *
+ *  On a Postgres error there is no client mount to retry, so the error
+ *  surfaces as a panel; the user reloads. (The flag-OFF path's `<AutoSync>`
+ *  would retry, but delta mode drops it — acceptable for an opt-in flag.) */
+async function BoardDataDelta({ session }: { session: Session }) {
+  let initial: BoardDelta | null = null;
+  let errorMessage: string | null = null;
+  try {
+    initial = await loadBoardDelta(null);
+  } catch (err) {
+    errorMessage = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!initial) {
+    return <ErrorPanel message={errorMessage || 'โหลด Kanban ไม่สำเร็จ'} />;
+  }
+
+  return (
+    <BoardClient
+      initialJobs={initial.jobs}
+      initialOrders={initial.orders}
+      initialServerTime={initial.serverTime}
+      sessionRole={session.role}
+      canCreate={session.role === 'admin' || session.role === 'sales'}
+      isAdmin={session.role === 'admin'}
+      defaultOrderer={session.user}
+    />
   );
 }
 

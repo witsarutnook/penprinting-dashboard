@@ -2,61 +2,29 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  POLL_ACTIVE_MS,
+  POLL_IDLE_MS,
+  POLL_LONG_IDLE_MS,
+  ACTIVE_WINDOW_MS,
+  LONG_IDLE_AFTER_MS,
+  POLL_STOP_AFTER_MS,
+  CHANNEL_NAME,
+  refreshGuard,
+  type SyncMessage,
+} from '@/lib/poll-schedule';
 
-// Backoff schedule — when a user is actively interacting (mouse / keyboard /
-// scroll), poll fast (matches WP 15s). After a couple of minutes of no user
-// input the screen is just being watched; back off to 30s. After 5 minutes
-// it's almost certainly idle (lunch / left for the day) — 120s is plenty.
+// Backoff schedule + refreshGuard now live in lib/poll-schedule.ts so the
+// delta-fetch hook (useDeltaSync) can share the exact same cadence without
+// importing this file's `next/navigation` dependency. See that module for
+// the rationale behind each threshold.
 //
-// User input resets the timer, so the moment they touch anything we're back
-// to 15s for a full pickup. Plus the visibilitychange + BroadcastChannel
-// paths fire immediate refreshes, so coming back from a hidden tab or another
-// tab's mutation is still instant.
-//
-// Why this matters: every poll is a `router.refresh()` → server re-renders
-// the route → `loadAll()` snapshot read. With the loadAll() unstable_cache
-// (15s coalescing) most polls now hit cache, but the long-idle tail still
-// dominates Postgres network transfer — a board left open all day. Entering
-// long-idle after 5 min (was 10) at a 120s interval (was 60s) roughly
-// quarters the cost of an abandoned tab, with no effect on active use.
-//
-// Hard-stop: backoff alone never reaches zero, so a tab abandoned overnight
-// still fires ~720 router.refresh() ticks (auditor H1, 2026-05-19). After
-// 30 min of zero activity polling stops entirely; the next user input or
-// tab re-visibility resumes it (both already trigger an immediate refresh,
-// so resume loses nothing).
-const POLL_ACTIVE_MS     = 15000;   // fresh activity within last 2 min
-const POLL_IDLE_MS       = 30000;   // 2-5 min since last activity
-const POLL_LONG_IDLE_MS  = 120000;  // 5-30 min since last activity
-const ACTIVE_WINDOW_MS   = 2 * 60 * 1000;
-const LONG_IDLE_AFTER_MS = 5 * 60 * 1000;
-const POLL_STOP_AFTER_MS = 30 * 60 * 1000;  // > 30 min idle — stop polling entirely
-const CHANNEL_NAME = 'pp_dashboard_sync';
-
-interface SyncMessage {
-  type: 'write';
-  action: string;
-  ts: number;
-}
-
-/** True when refreshing now would disrupt the user — port of WP
- *  autoRefreshTick guards (production-monitoring.js:5666). Returns the
- *  reason for the skip (used for a debug log) or null when safe. */
-function refreshGuard(): string | null {
-  if (document.visibilityState !== 'visible') return 'tab-hidden';
-  // 1. Any open native <dialog open>? (forward / cowork / detail / order-form)
-  if (document.querySelector('dialog[open]')) return 'dialog-open';
-  // 2. User typing into an input?
-  const ae = document.activeElement;
-  if (ae) {
-    const tag = ae.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return 'input-focused';
-    if ((ae as HTMLElement).isContentEditable) return 'contenteditable';
-  }
-  // 3. User mid-drag — set on the body during card drag (see card.tsx).
-  if (document.body.dataset.dragging === '1') return 'dragging';
-  return null;
-}
+// Why the cadence matters here specifically: every poll in THIS hook is a
+// `router.refresh()` → server re-renders the route → `loadAll()` snapshot
+// read. With the loadAll() unstable_cache (15s coalescing) most polls hit
+// cache, but the long-idle tail still dominates Postgres network transfer.
+// useDeltaSync replaces the refresh with a small JSON delta — same schedule,
+// far cheaper per tick.
 
 /**
  * Auto-refresh hook for read pages (board / orders / shipped / cancelled /

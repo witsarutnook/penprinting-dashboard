@@ -163,9 +163,16 @@ export interface BoardFilters {
   query?: string;
 }
 
-/** Build the kanban view from loadAll snapshot. Sort: urgency severity → due date asc → name.
- *  Optional `filters` apply server-side so the rendered HTML reflects URL state immediately. */
-export function computeBoard(data: LoadAllResponse, filters: BoardFilters = {}): BoardSnapshot {
+/** Build the kanban view from a snapshot. Sort: urgency severity → due date asc → name.
+ *  Optional `filters` apply so the rendered output reflects URL state immediately.
+ *
+ *  Input is narrowed to `jobs` + `orders` (the only fields read) so both the
+ *  server `loadAll()` snapshot AND the client delta-fetch state ({ jobs,
+ *  orders } held in BoardClient) satisfy it — see lib/delta-sync.tsx. */
+export function computeBoard(
+  data: Pick<LoadAllResponse, 'jobs' | 'orders'>,
+  filters: BoardFilters = {},
+): BoardSnapshot {
   const today = getBangkokToday();
   const ordersById = new Map<number, Order>();
   data.orders.forEach((o) => ordersById.set(Number(o.id), o));

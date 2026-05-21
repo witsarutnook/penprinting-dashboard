@@ -77,7 +77,19 @@ const Ctx = createContext<PendingState>({
   commit: () => {},
 });
 
-export function PendingMutationsProvider({ children }: { children: ReactNode }) {
+/**
+ * @param pollNow  Delta-fetch trigger (from `useDeltaSync`). When provided
+ *   (Delta-fetch P3, `NEXT_PUBLIC_DELTA_FETCH` on), `commit()` polls the
+ *   delta endpoint instead of `router.refresh()` — see `commit` below.
+ *   Omitted on the legacy server-rendered path → `router.refresh()`.
+ */
+export function PendingMutationsProvider({
+  children,
+  pollNow,
+}: {
+  children: ReactNode;
+  pollNow?: (() => Promise<void>) | null;
+}) {
   const router = useRouter();
   const [hiddenIds, setHiddenIds] = useState<Set<number>>(new Set());
   const [pendingInserts, setPendingInserts] = useState<PendingInsertEntry[]>([]);
@@ -149,11 +161,24 @@ export function PendingMutationsProvider({ children }: { children: ReactNode }) 
   }, []);
 
   const commit = useCallback((cleanup: () => void) => {
+    // Delta-fetch path: there is no server re-render to wait on — the board
+    // updates by merging a delta poll. Fire one poll now (it covers the
+    // mutation's just-committed write), then run cleanup. The poll's
+    // `setState` merge and the cleanup's `setHiddenIds`/`setPendingInserts`
+    // land in the same microtask continuation → React 18 batches them into
+    // one render, so the real card replaces the phantom with no bounceback.
+    // On a failed poll, still run cleanup (the next backoff tick recovers).
+    if (pollNow) {
+      pollNow().then(cleanup, cleanup);
+      return;
+    }
+    // Legacy path: refresh the server tree; cleanup fires when the
+    // transition (and thus the new SSR snapshot) has landed.
     queuedCleanups.current.push(cleanup);
     startTransition(() => {
       router.refresh();
     });
-  }, [router]);
+  }, [router, pollNow]);
 
   return (
     <Ctx.Provider
