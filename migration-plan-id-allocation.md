@@ -202,11 +202,11 @@ COMMIT;
 
 ---
 
-## 10. Decisions ที่ต้องให้คุณนุ๊กเลือกก่อนเริ่ม
+## 10. Decisions — ✅ DECIDED 2026-05-21 (คุณนุ๊ก: "ตามแนะนำ")
 
-1. **flag เดียว หรือ per-route?** — แนะนำ flag เดียว (`ALLOCATE_IDS_IN_POSTGRES`) ย้ายทั้ง 6 routes พร้อมกัน — กัน R7 (counter ปนกัน)
-2. **sync Apps Script counter ช่วง soak ไหม?** — แนะนำ **sync** 1 สัปดาห์แรก (rollback ปลอดภัยกว่า, cost น้อย fire-and-forget) แล้วค่อยถอด
-3. **ย้าย order+job พร้อมกัน หรือแยก?** — แนะนำพร้อมกัน (ทั้งคู่อยู่ใน `orders/add` route เดียว, แยกไม่ได้ประโยชน์)
+1. ✅ **flag เดียว** (`ALLOCATE_IDS_IN_POSTGRES`) ย้ายทั้ง 6 routes พร้อมกัน — กัน R7 (counter ปนกัน)
+2. ✅ **sync Apps Script counter ช่วง soak** 1 สัปดาห์แรก แล้วถอด — implement ผ่าน `waitUntil()` (Vercel) ให้รันเบื้องหลัง **ไม่ block response** → soak ไม่ทำให้ช้าลง
+3. ✅ **ย้าย order+job พร้อมกัน** — ทั้งคู่อยู่ใน `orders/add` route เดียว แยกไม่ได้ประโยชน์
 
 ---
 
