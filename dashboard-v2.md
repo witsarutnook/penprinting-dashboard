@@ -300,6 +300,33 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Delta-fetch — extend to /orders + /calendar (2026-05-22)
+
+**Goal:** ขยาย delta-fetch (เดิมมีแค่ `/board`) ไป `/orders` + `/calendar` — เลิก `router.refresh()` poll เต็มหน้ารายตึ๊ก. Flag-gated (`NEXT_PUBLIC_DELTA_FETCH_LIST`) — OFF = path เดิมไม่แตะ; deploy = 0 impact จน flip.
+
+**`/calendar` (ง่าย):** `computeCalendar` อ่านแค่ jobs+orders → reuse `/api/board/delta` + `useDeltaSync` verbatim. `<CalendarClient>` ถือ state + re-run `computeCalendar` ตาม `useSearchParams` (month/filter URL-driven).
+
+**`/orders` (ต้อง 4 ตาราง):** status badge ต้องรู้ shipped/cancelled. `loadBoardDelta(since, {lists:true})` คืนเพิ่ม `shippedOrderIds`/`cancelledOrderIds` — **full sorted number array ต่อ poll** (set เล็ก ~150 แถว; เลี่ยงปัญหา shipped/cancelled hard-delete ที่ delta-by-`updated_at` จับไม่ได้). `mergeDelta` เทียบ array — ไม่เปลี่ยน keep ref เดิม → idle poll ไม่ re-render (PA-M2). enrichment (orders→table rows + orphans + duplicates) ย้ายเป็น pure `computeOrdersList()` — server `OrdersData` + client `OrdersListClient` ใช้ตัวเดียวกัน.
+
+**ไฟล์ใหม่:** [`lib/orders-list.ts`](lib/orders-list.ts) (`computeOrdersList`) · [`app/orders/orders-list-client.tsx`](app/orders/orders-list-client.tsx) · [`app/orders/orders-body.tsx`](app/orders/orders-body.tsx) (shared toolbar+table) · [`app/calendar/calendar-client.tsx`](app/calendar/calendar-client.tsx)
+**ไฟล์แก้:** `board-delta.ts` (+`lists` opt) · `delta/route.ts` (`?lists=1`) · `delta-sync.tsx` (`DeltaState`/`mergeDelta`/`useDeltaSync` รับ list — **board path byte-identical** เมื่อไม่ส่ง `?lists=1`) · `calendar.ts` (`computeCalendar` รับ `Pick`) · 2× `page.tsx` (flag branch)
+
+**Rollout (2026-05-22):** commit `88b31d7` deploy (flag OFF) → ตั้ง `NEXT_PUBLIC_DELTA_FETCH_LIST=1` + redeploy → smoke-verify ✅ /orders poll `?...&lists=1` (~0.34KB) · /calendar poll `/api/board/delta` 200. **Tests:** 128→139.
+
+**Rollback:** ลบ env var + redeploy = กลับ path เดิมทันที.
+
+---
+
+### Hardening — ID-collision guard + loadOrder over-fetch trim (2026-05-22)
+
+**A — post-insert read-back assertion (§6/R5):** fresh-id INSERT 4 จุดที่ใช้ `ON CONFLICT (id) DO NOTHING` (createOrder order+job · promoteDraft · bulkForward) — ถ้า Postgres counter mint id ซ้ำ DO NOTHING กลบ INSERT เงียบ + route return success → order/job หาย. Fix: `... RETURNING id` + helper `assertNoIdCollision()` — RETURNING ว่าง = conflict → SELECT row เดิมเทียบ name(+orderId); ต่าง = collision → throw ดังๆ. (`addJobToPostgres` เป็น plain INSERT ไม่มี ON CONFLICT → throw ดังอยู่แล้ว.)
+
+**B2 — PA-L1 loadOrder over-fetch:** `loadOrderFromPostgres` เดิมยิง 4 query ขนานเสมอ. เพิ่ม opt `orderOnly` → caller ที่อ่านแค่ `.order` (print page · tracking-card · `/api/orders/raw` · restore parent-status check) รัน 1 query. full-shape path (`/track`) ไม่แตะ.
+
+**Tests:** 122→128. **Commit:** `74ac78d`.
+
+---
+
 ### ID-allocation → Postgres (2026-05-21)
 
 **Goal:** ตัด Apps Script ออกจาก critical path การสร้าง order/job. จาก diagnose order-submit latency — กด "ส่งใบสั่งงาน" 2-3 วิ, ~80-90% หมดกับ Apps Script ID round-trip (`getNextOrderId` + `getNextId`).

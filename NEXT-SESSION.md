@@ -2,6 +2,36 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-22 — Hardening (A/B2) + delta-fetch → /orders + /calendar:** ✅ LIVE & verified
+>
+> ## งานที่ทำ
+> - **A — post-insert collision guard** (§6/R5 ของ [migration-plan-id-allocation.md](migration-plan-id-allocation.md)) — helper `assertNoIdCollision()` ใน [`postgres-write.ts`](lib/postgres-write.ts): fresh-id INSERT 4 จุดที่ใช้ `ON CONFLICT (id) DO NOTHING` (createOrder order+job · promoteDraft · bulkForward) เปลี่ยนเป็น `RETURNING id` + read-back — minted id ชน → throw ดังๆ แทนปล่อย phantom success. (`addJobToPostgres` เป็น plain INSERT ไม่มี ON CONFLICT → loud อยู่แล้ว — แผน §6 เขียนชื่อ/สมมติฐานผิด)
+> - **B2 — PA-L1 loadOrder over-fetch** — `loadOrder`/`loadOrderFromPostgres` มี opt `orderOnly` → 4 callers (print · tracking-card · `/api/orders/raw` · restore parent-status) ที่อ่านแค่ `.order` รัน **1 query แทน 4**. full path (`/track`) ไม่แตะ
+> - **#3 — L3 edge-build-warnings: wontfix** — build สะอาด เหลือ warning เดียวที่ inherent กับ edge runtime ลบไม่ได้ถ้าไม่ทิ้ง edge optimization
+> - **#4 — scan v2** ([`_scan-phase2.gs`](../production-monitoring/_scan-phase2.gs)) — §3 orphan-order cross-ref `jobs∪shipped∪cancelled` (เดิม false-positive 122) · §6 เพิ่ม `INVALID_DATEDUE`. push.sh + **รันแล้ว** → 0 critical/0 high · ORPHAN_ORDER false-positive หายเกลี้ยง · INVALID_DATEDUE จับ orders 202605046/047
+> - **#2 — delta-fetch → /orders + /calendar** ([`88b31d7`](https://github.com/witsarutnook/penprinting-dashboard/commit/88b31d7)) — flag `NEXT_PUBLIC_DELTA_FETCH_LIST`. /calendar reuse `/api/board/delta` ตรงๆ (jobs+orders) · /orders: `loadBoardDelta(…,{lists:true})` คืน `shippedOrderIds`/`cancelledOrderIds` (full sorted array ต่อ poll — เลี่ยง hard-delete) · enrichment ย้ายเป็น pure `computeOrdersList` (shared server+client) · ไฟล์ใหม่ `orders-list.ts` · `OrdersListClient` · `OrdersBody` · `CalendarClient`
+> - **flag flip + smoke-verify (live)** — คุณนุ๊กตั้ง `NEXT_PUBLIC_DELTA_FETCH_LIST=1` + redeploy → verify ผ่าน Chrome: /orders poll `?...&lists=1` ✅ (~0.34KB) · /calendar poll `/api/board/delta` 200 ✅ · 2 หน้า render ถูก ไม่มี console error
+> - tests 112→139 · type-check/lint/build ผ่าน Node 22 · security review diff A+B2 — ไม่พบช่องโหว่
+>
+> ## ⏳ Pending user actions
+> 1. **orphan-cancelled ×4 cleanup** — helper `cleanupOrphanCancelled` push ขึ้น editor แล้ว ยังไม่รัน (2 test rows `202605039`/`202605055` ลบได้ · 2 historical `202604024`/`202604068` รอตัดสิน)
+> 2. **DATE_ANOMALY 3 orders** (202605046/047/049) — optional: Postgres SQL `UPDATE orders SET date_in/date_due` (double-encoded date — impact ใกล้ศูนย์, `displayDate` unwrap ให้แล้ว)
+> 3. ค้างเดิม: Neon transfer ~25 พ.ค. · ID-migration Step 7 retire ~28 พ.ค.
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **#1 — Consolidate `useAutoSync`/`useDeltaSync`** (deferred) — รวม poll-loop เป็น `usePollLoop(onTick)`. **เลื่อนเพราะ:** poll-loop effect ไม่มี test เลย → consolidation bug หลุด type-check/build/test · roadmap วางไว้หลัง delta-list เสถียร (ตอนนั้น `useAutoSync` อาจลบทิ้งได้เลย = ง่ายกว่า). ทำหลัง flag `NEXT_PUBLIC_DELTA_FETCH_LIST` soak
+> 2. **soak delta-list** — ดู Sentry หลัง flag ON
+> 3. ค้างเดิม: ลบ Apps Script "MorningReportV2" + env · deleteJob smoke · AI Quoting Phase 0 · `/check-quota`
+>
+> ### Decisions / Lessons
+> - **B1 (ลบ no-op `router.refresh()`) — ข้าม:** premise ใน NEXT-SESSION เดิมผิด — `OrderForm` ใช้ 3 routes (`/board` + `/orders/new` + `/orders/[id]/edit`); 2 อันหลังไม่มี delta → `router.refresh()` ไม่ใช่ no-op. `undo-context` no-op เฉพาะตอน flag ON. ทำได้ต่อเมื่อ retire flag-OFF path ถาวร
+> - **delta-fetch ขยาย route ใหม่ pattern:** extend `loadBoardDelta` ด้วย opt · ข้อมูลที่ delta จับ "ลบ" ไม่ได้ (shipped/cancelled hard-delete) → ส่ง full sorted orderId array ต่อ poll (set เล็กพอ) + `mergeDelta` เทียบ ref-stable กัน idle re-render
+> - **planning-doc claims ต้อง grep code ก่อน:** แผน §6 เขียนว่า `addJobInPostgres` ใช้ ON CONFLICT — ของจริง `addJobToPostgres` เป็น plain INSERT (loud อยู่แล้ว)
+>
+> **Commits:** [`74ac78d`](https://github.com/witsarutnook/penprinting-dashboard/commit/74ac78d) (A+B2) · [`88b31d7`](https://github.com/witsarutnook/penprinting-dashboard/commit/88b31d7) (#2 delta-fetch) · docs ปิด session
+>
+> ---
+>
 > **Session 2026-05-21 (PM) — ID-allocation migration → Postgres: ✅ LIVE & verified**
 >
 > ## งานที่ทำ
