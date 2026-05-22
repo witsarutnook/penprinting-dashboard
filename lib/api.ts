@@ -245,7 +245,11 @@ export async function loadOrderAndJobs(id: number): Promise<{
  *  FALLBACK only — Postgres reads aren't cached at the fetch layer.
  *  Pass 0 if the Apps Script fallback needs to bust cache (e.g. caller
  *  just wrote to Sheet via a legacy path). Pass 30 for read-display
- *  hot paths that want repeat opens within 30s to skip the round-trip. */
+ *  hot paths that want repeat opens within 30s to skip the round-trip.
+ *
+ *  `orderOnly` — set when the caller reads ONLY `.order` (never `.job`,
+ *  `.shipped`, `.cancelled`). The Postgres path then runs 1 query instead
+ *  of 4; those three keys come back null. */
 export interface LoadOrderResponse {
   order: Order | null;
   job: Record<string, unknown> | null;
@@ -254,7 +258,7 @@ export interface LoadOrderResponse {
 }
 export async function loadOrder(
   id: number | string,
-  opts: { revalidate?: number } = {},
+  opts: { revalidate?: number; orderOnly?: boolean } = {},
 ): Promise<LoadOrderResponse> {
   // Postgres-first always. Phase 2 (2026-05-11) made Postgres the source
   // of truth for createOrder/updateOrder/promote/cancel/forward/move —
@@ -273,7 +277,7 @@ export async function loadOrder(
   // Script (which is the right behavior for Phase 1.x stragglers).
   const pg = await tryPostgres('loadOrder', async () => {
     const { loadOrderFromPostgres } = await import('@/lib/api-postgres');
-    return loadOrderFromPostgres(id);
+    return loadOrderFromPostgres(id, { orderOnly: opts.orderOnly });
   });
   if (pg) return pg;
   const data = await get<Partial<LoadOrderResponse>>(

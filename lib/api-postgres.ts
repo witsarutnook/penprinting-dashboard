@@ -130,10 +130,26 @@ export async function loadAllFromPostgres(opts: { audit?: boolean } = {}): Promi
  *  → a brand-new Phase 2 order wasn't in the Sheet yet → print page 404.
  *  Gating a Postgres-authoritative single-row read on mirror freshness is
  *  the same anti-pattern the 2026-05-12 loadOrder refactor removed. */
-export async function loadOrderFromPostgres(orderId: number | string): Promise<LoadOrderResponse> {
+export async function loadOrderFromPostgres(
+  orderId: number | string,
+  opts: { orderOnly?: boolean } = {},
+): Promise<LoadOrderResponse> {
   if (!isPostgresConfigured()) throw new PostgresStaleError('not configured');
   const id = Number(orderId);
   if (!Number.isFinite(id) || !id) throw new Error('Invalid orderId');
+
+  // orderOnly — callers that render only the order row (print page,
+  // tracking-card, /api/orders/raw, restore's parent-status check) never
+  // touch job/shipped/cancelled, so skip those three lookups: 1 query
+  // instead of 4. The full-shape path below is left untouched so its
+  // 4 reads still fan out in parallel with no added latency.
+  if (opts.orderOnly) {
+    const orderR = await sql<{ raw: Order }>`SELECT raw FROM orders WHERE id = ${id} LIMIT 1`;
+    if (!orderR.rows[0]) {
+      throw new PostgresStaleError(`order ${id} not found in Postgres`);
+    }
+    return { order: orderR.rows[0].raw, job: null, shipped: null, cancelled: null };
+  }
 
   const [orderR, jobR, shippedR, cancelledR] = await Promise.all([
     sql<{ raw: Order }>`SELECT raw FROM orders WHERE id = ${id} LIMIT 1`,

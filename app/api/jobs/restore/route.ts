@@ -105,7 +105,7 @@ export async function POST(req: Request) {
   let orderDateIn = '';
   if (cjOrderId) {
     try {
-      const orderResult = await loadOrder(cjOrderId);
+      const orderResult = await loadOrder(cjOrderId, { orderOnly: true });
       if (orderResult.order) {
         // Block restoring a job whose parent order has been cancelled — the
         // restored job would point at a tombstoned parent and surface as

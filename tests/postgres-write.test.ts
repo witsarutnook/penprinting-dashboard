@@ -402,7 +402,7 @@ describe('createOrderInPostgres', () => {
   });
 
   it('INSERTs order row with phase2_dirty_at + draft (no job)', async () => {
-    queueResult({ rowCount: 1 }); // order insert
+    queueResult({ rows: [{ id: 202605070 }], rowCount: 1 }); // order insert
     const r = await createOrderInPostgres({
       orderId: 202605070,
       order: {
@@ -430,8 +430,8 @@ describe('createOrderInPostgres', () => {
   });
 
   it('INSERTs both order + job rows with shared phase2_dirty_at', async () => {
-    queueResult({ rowCount: 1 }); // order
-    queueResult({ rowCount: 1 }); // job
+    queueResult({ rows: [{ id: 202605071 }], rowCount: 1 }); // order
+    queueResult({ rows: [{ id: 480 }], rowCount: 1 }); // job
 
     const r = await createOrderInPostgres({
       orderId: 202605071,
@@ -455,7 +455,7 @@ describe('createOrderInPostgres', () => {
   });
 
   it('throws when job is provided without jobId (caller bug guard)', async () => {
-    queueResult({ rowCount: 1 }); // order succeeds
+    queueResult({ rows: [{ id: 202605072 }], rowCount: 1 }); // order succeeds
     await expect(
       createOrderInPostgres({
         orderId: 202605072,
@@ -590,7 +590,7 @@ describe('bulkForwardInPostgres', () => {
   it('row-missing item goes to failed[] — does NOT block other items', async () => {
     // Item 1: row exists (SELECT returns row, then INSERT + UPDATE)
     queueResult({ rows: [{ id: 100 }], rowCount: 1 });
-    queueResult({ rowCount: 1 }); // INSERT new
+    queueResult({ rows: [{ id: 500 }], rowCount: 1 }); // INSERT new
     queueResult({ rowCount: 1 }); // UPDATE old (tombstone)
     // Item 2: row missing (SELECT empty)
     queueResult({ rows: [], rowCount: 0 });
@@ -608,7 +608,7 @@ describe('bulkForwardInPostgres', () => {
 
   it('successful item INSERTs new with dirty mark + tombstones old', async () => {
     queueResult({ rows: [{ id: 200 }], rowCount: 1 });
-    queueResult({ rowCount: 1 });
+    queueResult({ rows: [{ id: 700 }], rowCount: 1 });
     queueResult({ rowCount: 1 });
 
     await bulkForwardInPostgres([
@@ -684,7 +684,7 @@ describe('promoteDraftInPostgres', () => {
 
   it('INSERTs job + flips order to sent + marks both dirty', async () => {
     queueResult({ rows: [{ raw: { id: 202605061, status: 'draft', name: 'order-X' }, status: 'draft' }], rowCount: 1 });
-    queueResult({ rowCount: 1 });  // INSERT jobs
+    queueResult({ rows: [{ id: 510 }], rowCount: 1 });  // INSERT jobs
     queueResult({ rowCount: 1 });  // UPDATE orders
 
     const r = await promoteDraftInPostgres({
@@ -1007,7 +1007,7 @@ describe('bulkForwardInPostgres — cowork pass-through', () => {
 
   it('preserves cowork in the new row when newJob.cowork is provided (forward-undo)', async () => {
     queueResult({ rows: [{ id: 100 }], rowCount: 1 });  // SELECT exists
-    queueResult({ rowCount: 1 });  // INSERT new
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 });  // INSERT new
     queueResult({ rowCount: 1 });  // UPDATE tombstone old
     const r = await bulkForwardInPostgres([{
       oldId: 100,
@@ -1023,7 +1023,7 @@ describe('bulkForwardInPostgres — cowork pass-through', () => {
 
   it('clears cowork (null) when newJob.cowork is omitted (forward)', async () => {
     queueResult({ rows: [{ id: 101 }], rowCount: 1 });
-    queueResult({ rowCount: 1 });
+    queueResult({ rows: [{ id: 201 }], rowCount: 1 });
     queueResult({ rowCount: 1 });
     await bulkForwardInPostgres([{
       oldId: 101,
@@ -1033,5 +1033,50 @@ describe('bulkForwardInPostgres — cowork pass-through', () => {
     expect(insert!.values[8]).toBeNull();
     // raw snapshot carries no cowork key when none was passed
     expect(JSON.parse(insert!.values[9] as string)).not.toHaveProperty('cowork');
+  });
+});
+
+describe('ID-collision guard — post-insert read-back (§6/R5)', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('createOrder throws when the order INSERT is swallowed by a colliding row', async () => {
+    queueResult({ rows: [], rowCount: 0 });                  // INSERT...RETURNING empty = conflict
+    queueResult({ rows: [{ name: 'a different order' }] });  // read-back → name mismatch
+    await expect(
+      createOrderInPostgres({ orderId: 202605070, order: { name: 'Brochure 1000' } }),
+    ).rejects.toThrow(/ID collision on order 202605070/);
+  });
+
+  it('createOrder tolerates a colliding row that is identical (idempotent retry)', async () => {
+    queueResult({ rows: [], rowCount: 0 });                  // INSERT...RETURNING empty = conflict
+    queueResult({ rows: [{ name: 'Brochure 1000' }] });      // read-back → name matches
+    const r = await createOrderInPostgres({ orderId: 202605070, order: { name: 'Brochure 1000' } });
+    expect(r).toEqual({ ok: true, orderId: 202605070, jobId: null });
+  });
+
+  it('promoteDraft throws when the minted job ID collides with a different job', async () => {
+    queueResult({ rows: [{ raw: { id: 202605061, status: 'draft', name: 'order-X' }, status: 'draft' }], rowCount: 1 }); // order SELECT
+    queueResult({ rows: [], rowCount: 0 });                               // job INSERT → conflict
+    queueResult({ rows: [{ name: 'someone elses job', order_id: 999 }] }); // read-back → mismatch
+    await expect(
+      promoteDraftInPostgres({
+        orderId: 202605061, jobId: 510,
+        job: { name: 'order-X', dept: 'graphic', staff: 'aor' },
+      }),
+    ).rejects.toThrow(/ID collision on job 510/);
+  });
+
+  it('bulkForward routes a colliding new-job ID to failed[] and skips tombstoning the old job', async () => {
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 });           // old job SELECT exists
+    queueResult({ rows: [], rowCount: 0 });                      // new job INSERT → conflict
+    queueResult({ rows: [{ name: 'unrelated', order_id: 7 }] }); // read-back → mismatch
+    const r = await bulkForwardInPostgres([
+      { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top', orderId: 202605061 } },
+    ]);
+    expect(r.succeeded).toHaveLength(0);
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].error).toMatch(/ID collision on job 700/);
+    // a failed forward must NOT tombstone the old job
+    expect(callsContaining('UPDATE jobs SET phase2_deleted_at')).toHaveLength(0);
   });
 });

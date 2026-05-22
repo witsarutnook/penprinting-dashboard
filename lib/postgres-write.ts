@@ -28,6 +28,56 @@ class PostgresWriteError extends Error {
 
 interface AnyRow { [k: string]: unknown }
 
+/** Post-insert read-back guard for the freshly-minted-ID write paths
+ *  (§6 / R5 of migration-plan-id-allocation.md).
+ *
+ *  Every fresh-id INSERT uses `ON CONFLICT (id) DO NOTHING` for idempotent
+ *  retries. If the Postgres counter ever mints a duplicate id, DO NOTHING
+ *  swallows the INSERT silently and the route still returns success — the
+ *  order/job vanishes with no error. Calling the INSERT with `RETURNING id`
+ *  lets us tell the two cases apart:
+ *   - `inserted.rows` non-empty → a real row was written, nothing to check.
+ *   - empty → the id was already taken. A legitimate idempotent retry leaves
+ *     an IDENTICAL row (same name + parent order); a minted-ID collision
+ *     leaves a DIFFERENT row → throw loudly so the route surfaces it. */
+async function assertNoIdCollision(
+  op: string,
+  table: 'orders' | 'jobs',
+  inserted: { rows: unknown[] },
+  id: number,
+  attempted: { name: string; orderId?: number | null },
+): Promise<void> {
+  if (inserted.rows.length > 0) return; // row was freshly inserted — no conflict
+
+  let existingName: string | null;
+  let existingOrderId: number | null = null;
+  if (table === 'orders') {
+    const r = await sql<{ name: string | null }>`
+      SELECT name FROM orders WHERE id = ${id}::bigint LIMIT 1
+    `;
+    existingName = r.rows[0]?.name ?? null;
+  } else {
+    const r = await sql<{ name: string | null; order_id: string | number | null }>`
+      SELECT name, order_id FROM jobs WHERE id = ${id}::bigint LIMIT 1
+    `;
+    existingName = r.rows[0]?.name ?? null;
+    const oid = r.rows[0]?.order_id;
+    existingOrderId = oid == null ? null : Number(oid);
+  }
+
+  const nameMatches = existingName === attempted.name;
+  const orderMatches = table === 'orders' || existingOrderId === (attempted.orderId ?? null);
+  if (nameMatches && orderMatches) return; // identical row — idempotent retry, fine
+
+  throw new PostgresWriteError(
+    op,
+    `ID collision on ${table.slice(0, -1)} ${id}: the minted ID was already in use and `
+      + `ON CONFLICT DO NOTHING swallowed the write. `
+      + `existing=${JSON.stringify({ name: existingName, orderId: existingOrderId })} `
+      + `attempted=${JSON.stringify({ name: attempted.name, orderId: attempted.orderId ?? null })}`,
+  );
+}
+
 // ─── templates ────────────────────────────────────────────────────
 
 export interface AddTemplateInput {
@@ -411,7 +461,7 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
   const rawDataJson = rawData != null ? JSON.stringify(rawData) : null;
   const orderRawJson = JSON.stringify(orderRaw);
 
-  await sql`
+  const orderInsert = await sql<{ id: number }>`
     INSERT INTO orders
       (id, name, customer, date_in, date_due, price, assign_dept, assign_staff,
        orderer, status, details, raw_data, raw, phase2_dirty_at)
@@ -421,7 +471,9 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
        ${detailsJson}::jsonb, ${rawDataJson}::jsonb, ${orderRawJson}::jsonb,
        NOW())
     ON CONFLICT (id) DO NOTHING
+    RETURNING id
   `;
+  await assertNoIdCollision('createOrder', 'orders', orderInsert, orderIdNum, { name });
 
   let jobIdOut: number | null = null;
   if (input.job) {
@@ -453,14 +505,16 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
     };
     const jobRawJson = JSON.stringify(jobRaw);
 
-    await sql`
+    const jobInsert = await sql<{ id: number }>`
       INSERT INTO jobs
         (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
       VALUES
         (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
          ${jStaff}, ${jDept}, ${jStatus}, ${null}::jsonb, ${jobRawJson}::jsonb, NOW())
       ON CONFLICT (id) DO NOTHING
+      RETURNING id
     `;
+    await assertNoIdCollision('createOrder', 'jobs', jobInsert, jobIdNum, { name: jName, orderId: orderIdNum });
     jobIdOut = jobIdNum;
   }
 
@@ -890,14 +944,16 @@ export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<
   };
   const jobRawJson = JSON.stringify(jobRaw);
 
-  await sql`
+  const jobInsert = await sql<{ id: number }>`
     INSERT INTO jobs
       (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
     VALUES
       (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
        ${jStaff}, ${jDept}, 'pending', ${null}::jsonb, ${jobRawJson}::jsonb, NOW())
     ON CONFLICT (id) DO NOTHING
+    RETURNING id
   `;
+  await assertNoIdCollision('promoteDraft', 'jobs', jobInsert, jobIdNum, { name: jName, orderId: orderIdNum });
 
   // Flip order status draft→sent + mark dirty.
   const newOrderRaw = { ...oldOrderRaw, status: 'sent' };
@@ -1094,14 +1150,18 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
       // INSERT new (with dirty mark) + tombstone old. Two statements, not
       // transactional — retries hit ON CONFLICT DO NOTHING + the tombstone
       // UPDATE is idempotent (NOW() override is fine).
-      await sql`
+      const jobInsert = await sql<{ id: number }>`
         INSERT INTO jobs
           (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
         VALUES
           (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
            ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb, NOW())
         ON CONFLICT (id) DO NOTHING
+        RETURNING id
       `;
+      // Throw lands in the per-item catch below → collision item goes to
+      // failed[] and the old job is NOT tombstoned (next statement skipped).
+      await assertNoIdCollision('bulkForward', 'jobs', jobInsert, newIdNum, { name, orderId });
       await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${oldIdNum}::bigint`;
 
       succeeded.push({ oldId: oldIdNum, newId: newIdNum, name });

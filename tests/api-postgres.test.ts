@@ -49,4 +49,27 @@ describe('loadOrderFromPostgres', () => {
     queueResult({ rows: [], rowCount: 0 }); // orders — empty → caller falls back to Apps Script
     await expect(loadOrderFromPostgres(999999)).rejects.toBeInstanceOf(PostgresStaleError);
   });
+
+  it('orderOnly runs a single query and leaves job/shipped/cancelled null', async () => {
+    const orderRaw = { id: 202605100, name: 'เคสด่วน', customer: 'ลูกค้า A', status: 'sent' };
+    queueResult({ rows: [{ raw: orderRaw }], rowCount: 1 }); // orders — the only query
+
+    const r = await loadOrderFromPostgres(202605100, { orderOnly: true });
+
+    expect(r.order).toEqual(orderRaw);
+    expect(r.job).toBeNull();
+    expect(r.shipped).toBeNull();
+    expect(r.cancelled).toBeNull();
+    // The point of orderOnly — skip the jobs/shipped/cancelled lookups.
+    expect(callsContaining('FROM jobs')).toHaveLength(0);
+    expect(callsContaining('FROM shipped')).toHaveLength(0);
+    expect(callsContaining('FROM cancelled')).toHaveLength(0);
+  });
+
+  it('orderOnly still throws PostgresStaleError when the order is missing', async () => {
+    queueResult({ rows: [], rowCount: 0 }); // orders empty
+    await expect(
+      loadOrderFromPostgres(999999, { orderOnly: true }),
+    ).rejects.toBeInstanceOf(PostgresStaleError);
+  });
 });

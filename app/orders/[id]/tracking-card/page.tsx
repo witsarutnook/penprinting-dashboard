@@ -28,7 +28,7 @@ export default async function TrackingCardPage({ params }: { params: { id: strin
   let order;
   let errorMessage: string | null = null;
   try {
-    const result = await loadOrder(id);
+    const result = await loadOrder(id, { orderOnly: true });
     order = result.order;
   } catch (err) {
     errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
