@@ -158,7 +158,7 @@ function dateKey(d: Date): string {
 
 /** Main entry: build the calendar grid + per-day jobs for the cursor month. */
 export function computeCalendar(
-  data: LoadAllResponse,
+  data: Pick<LoadAllResponse, 'jobs' | 'orders'>,
   cursorYear: number,
   cursorMonth: number /* 0-11 */,
   filters: CalendarFilters = {},

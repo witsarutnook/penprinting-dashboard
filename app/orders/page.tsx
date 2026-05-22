@@ -2,19 +2,17 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
+import Link from 'next/link';
 import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { AutoSync } from '@/lib/auto-sync';
-import { IconSearch, IconFileText, IconPlus } from '@/lib/icons';
-import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
-import { computeUrgency, getBangkokToday, URGENCY_LABELS } from '@/lib/calendar';
-import { parseDateDMY } from '@/lib/analytics';
-import { OrdersClient } from './client';
-import { OrdersTable, type OrderRow } from './orders-table';
+import { IconSearch } from '@/lib/icons';
 import { resolvePerPage, resolvePage } from '@/lib/page-size';
-import { DataAuditButton, type OrphanOrder, type DuplicateGroup } from './data-audit-modal';
-import Link from 'next/link';
+import { computeOrdersList } from '@/lib/orders-list';
+import { OrdersBody } from './orders-body';
+import { OrdersListClient } from './orders-list-client';
 
 export const metadata: Metadata = {
   title: 'รายการใบสั่งงาน',
@@ -76,6 +74,30 @@ export default async function OrdersListPage({
   // prior result on screen.
   const dataKey = `${filters.query}|${filters.statusFilter}|${filters.fromIso}|${filters.toIso}|${filters.perPage}|${filters.page}`;
 
+  // Delta-fetch (NEXT_PUBLIC_DELTA_FETCH_LIST) — client-driven list: the
+  // server ships a bootstrap snapshot (incl. shipped/cancelled orderId sets),
+  // then the client delta-polls and re-runs `computeOrdersList` locally.
+  // Filters + pagination stay URL-driven. Flag OFF → the server-rendered
+  // `router.refresh()` path below, untouched.
+  if (process.env.NEXT_PUBLIC_DELTA_FETCH_LIST === '1') {
+    return (
+      <DashboardShell user={session.user} role={session.role}>
+        <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+          <div className="pl-4 pr-12 sm:pl-6 sm:pr-6 py-3 flex items-center gap-2">
+            <h1 className="text-xl font-bold text-stone-900">รายการใบสั่งงาน</h1>
+          </div>
+        </header>
+        <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto space-y-4">
+          <FilterForm filters={filters} />
+          <StatusPills filters={filters} />
+          <Suspense fallback={<OrdersSkeleton />}>
+            <OrdersDataDelta session={session} />
+          </Suspense>
+        </div>
+      </DashboardShell>
+    );
+  }
+
   return (
     <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
@@ -102,6 +124,8 @@ export default async function OrdersListPage({
   );
 }
 
+/** Server-rendered data section (flag OFF). Awaits `loadAll()`, enriches via
+ *  the shared `computeOrdersList`, and renders the shared `<OrdersBody>`. */
 async function OrdersData({
   filters,
   session,
@@ -117,240 +141,63 @@ async function OrdersData({
     errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
   }
 
-  const today = getBangkokToday();
-  const allOrders = snap ? [...snap.orders].sort((a, b) => Number(b.id) - Number(a.id)) : [];
-
-  // Index jobs / shipped / cancelled by orderId. Jobs is one-to-many because
-  // an order can have multiple active jobs during recovery scenarios — keep
-  // ALL of them and surface a "+N" badge when the count > 1 (auditor
-  // M-jobByOrderId-last-write-wins). Picking the lowest job id makes the
-  // primary "ขั้นตอนปัจจุบัน" stable across renders.
-  const jobsByOrderId = new Map<number, Array<{ id: number; dept: string; staff: string; date: string }>>();
-  const shippedByOrderId = new Set<number>();
-  const cancelledByOrderId = new Set<number>();
-  if (snap) {
-    for (const j of snap.jobs) {
-      if (!j.orderId) continue;
-      const key = Number(j.orderId);
-      const arr = jobsByOrderId.get(key) || [];
-      arr.push({ id: Number(j.id), dept: j.dept, staff: j.staff, date: j.date });
-      jobsByOrderId.set(key, arr);
-    }
-    for (const s of snap.shipped) {
-      if (s.orderId) shippedByOrderId.add(Number(s.orderId));
-    }
-    for (const c of snap.cancelled) {
-      if (c.orderId) cancelledByOrderId.add(Number(c.orderId));
-    }
-  }
-
-  const enriched: OrderRow[] = allOrders.map((o) => {
-    const status = String(o.status || '').toLowerCase();
-    const isShipped = status === 'shipped' || shippedByOrderId.has(Number(o.id));
-    const isCancelled = status === 'cancelled' || cancelledByOrderId.has(Number(o.id));
-    const orderJobs = jobsByOrderId.get(Number(o.id));
-    const job = orderJobs && orderJobs.length > 0
-      ? orderJobs.reduce((a, b) => (a.id <= b.id ? a : b))
-      : undefined;
-    const extraJobCount = orderJobs ? Math.max(0, orderJobs.length - 1) : 0;
-
-    let step = '—';
-    let jobUrgency: 'overdue' | 'dday' | 'urgent' | 'normal' = 'normal';
-    let jobUrgencyLabel = '';
-    let isOrphan = false;
-
-    if (isCancelled) {
-      step = 'ยกเลิก';
-      jobUrgencyLabel = 'ยกเลิก';
-    } else if (isShipped) {
-      step = 'จัดส่งแล้ว';
-      jobUrgencyLabel = 'จัดส่งแล้ว';
-    } else if (job) {
-      const deptLabel = DEPT_LABELS[job.dept as Dept] || job.dept;
-      const staffName = STAFF[job.dept as Dept]?.find((s) => s.id === job.staff)?.name || job.staff;
-      step = `${deptLabel} → ${staffName}`;
-      if (extraJobCount > 0) step += ` (+${extraJobCount})`;
-      const due = parseDateDMY(job.date);
-      jobUrgency = computeUrgency(due, today);
-      jobUrgencyLabel = URGENCY_LABELS[jobUrgency];
-    } else if (status !== 'draft') {
-      // Active order with no matching job — orphan
-      step = 'ไม่พบงาน';
-      jobUrgencyLabel = 'orphan';
-      isOrphan = true;
-    } else {
-      step = 'ร่าง';
-      jobUrgencyLabel = 'ร่าง';
-    }
-
-    let orderStatusLabel: string, orderStatusClass: string, normalised: string;
-    if (isCancelled) {
-      orderStatusLabel = 'ยกเลิก'; orderStatusClass = 'bg-red-50 text-red-700'; normalised = 'cancelled';
-    } else if (isShipped) {
-      orderStatusLabel = 'จัดส่งแล้ว'; orderStatusClass = 'bg-emerald-50 text-emerald-700'; normalised = 'shipped';
-    } else if (status === 'draft') {
-      orderStatusLabel = 'ร่าง'; orderStatusClass = 'bg-amber-50 text-amber-700'; normalised = 'draft';
-    } else {
-      orderStatusLabel = 'สั่งแล้ว'; orderStatusClass = 'bg-sky-50 text-sky-700'; normalised = 'sent';
-    }
-
-    // Pull PIN from order rawData (if present) — surfaced in detail modal
-    const rawData = (o.rawData && typeof o.rawData === 'object'
-      ? o.rawData as Record<string, unknown>
-      : {});
-    const detailsRecord = (o.details && typeof o.details === 'object'
-      ? o.details as Record<string, unknown>
-      : {});
-    const pin = String(rawData.pin || detailsRecord.pin || '');
-
-    // Merge rawData ⊕ details so the modal sees the full spec inline
-    // without a /api/orders/raw roundtrip — same data source as the
-    // Kanban card detail (which renders straight from `job.order.details`).
-    // rawData wins on key collisions because the v2 OrderForm writes
-    // there first; details is a legacy / fallback shape.
-    const inlineRaw: Record<string, unknown> = { ...detailsRecord, ...rawData };
-
-    return {
-      id: Number(o.id),
-      name: String(o.name || ''),
-      customer: String(o.customer || ''),
-      dateIn: String(o.dateIn || ''),
-      dateDue: String(o.dateDue || ''),
-      orderer: String(o.orderer || ''),
-      pin,
-      orderStatus: normalised,
-      orderStatusLabel,
-      orderStatusClass,
-      step,
-      jobUrgency,
-      jobUrgencyLabel,
-      isOrphan,
-      rawData: Object.keys(inlineRaw).length > 0 ? inlineRaw : null,
-    };
-  });
-
-  // Compare dates as `YYYY-MM-DD` strings in Bangkok time. The previous
-  // shape compared Date objects across mixed time zones — `parseDateDMY`
-  // returns a UTC midnight while `new Date('YYYY-MM-DDT00:00:00')` is in
-  // server-local time. On Vercel (UTC server) with Bangkok-origin Sheet
-  // dates, comparisons drifted by a day at boundaries (auditor
-  // M-orders-date-range-tz). Lexical YYYY-MM-DD compare is timezone-free.
-  const bangkokIsoFmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const dateInIso = (raw: string): string | null => {
-    const d = parseDateDMY(raw);
-    if (!d) return null;
-    return bangkokIsoFmt.format(d); // 'YYYY-MM-DD'
-  };
-
-  const filtered = enriched.filter((o) => {
-    if (filters.statusFilter && o.orderStatus !== filters.statusFilter) return false;
-    if (filters.fromIso || filters.toIso) {
-      const iso = dateInIso(o.dateIn);
-      if (!iso) return false;
-      if (filters.fromIso && iso < filters.fromIso) return false;
-      if (filters.toIso && iso > filters.toIso) return false;
-    }
-    if (filters.query) {
-      const haystack = `${o.name} ${o.customer} ${o.id}`.toLowerCase();
-      if (!haystack.includes(filters.query)) return false;
-    }
-    return true;
-  });
-
-  // Build the data-audit sets from the same snapshot — no extra round-trip.
-  // Orphans = orders.status='sent' with no matching job/shipped/cancelled
-  // (already flagged in `enriched.isOrphan`); pull the assignDept/Staff from
-  // the original snapshot for recovery preselect.
-  const ordersById = new Map<number, typeof allOrders[number]>();
-  for (const o of allOrders) ordersById.set(Number(o.id), o);
-  const orphans: OrphanOrder[] = enriched
-    .filter((o) => o.isOrphan)
-    .map((o) => {
-      const src = ordersById.get(o.id);
-      return {
-        id: o.id,
-        name: o.name,
-        customer: o.customer,
-        dateIn: o.dateIn,
-        dateDue: o.dateDue,
-        assignDept: String(src?.assignDept || ''),
-        assignStaff: String(src?.assignStaff || ''),
-      };
-    });
-
-  // Duplicates = jobs grouped by orderId+name with >1 row. Mirrors WP
-  // scanDataIssues. Caused by partial-failure forwards before bulkForward
-  // atomic landed.
-  const duplicates: DuplicateGroup[] = (() => {
-    if (!snap) return [];
-    const groups = new Map<string, Array<{ id: number; dept: string; staff: string }>>();
-    for (const j of snap.jobs) {
-      if (!j.orderId) continue;
-      const key = `${j.orderId}|${j.name || ''}`;
-      const arr = groups.get(key) || [];
-      arr.push({ id: Number(j.id), dept: String(j.dept || ''), staff: String(j.staff || '') });
-      groups.set(key, arr);
-    }
-    const out: DuplicateGroup[] = [];
-    groups.forEach((rows, key) => {
-      if (rows.length > 1) {
-        const sorted = [...rows].sort((a, b) => b.id - a.id);  // newest first
-        const [, name = ''] = key.split('|');
-        out.push({ orderId: Number(key.split('|')[0]), name, rows: sorted });
-      }
-    });
-    return out;
-  })();
+  const result = snap
+    ? computeOrdersList(
+        {
+          orders: snap.orders,
+          jobs: snap.jobs,
+          shippedOrderIds: snap.shipped.filter((s) => s.orderId != null).map((s) => Number(s.orderId)),
+          cancelledOrderIds: snap.cancelled.filter((c) => c.orderId != null).map((c) => Number(c.orderId)),
+        },
+        filters,
+      )
+    : { rows: [], totalCount: 0, orphans: [], duplicates: [] };
 
   return (
-    <>
-      {/* Toolbar — Export CSV + ตรวจสอบข้อมูล + count + + สั่งงานใหม่ */}
-      <div className="flex flex-wrap items-center gap-2">
-        <OrdersClient rows={filtered} />
-        <DataAuditButton
-          orphans={orphans}
-          duplicates={duplicates}
-          isAdmin={session.role === 'admin'}
-        />
-        <span className="text-xs text-stone-500 tabular-nums">
-          {filtered.length}/{enriched.length} ใบ
-        </span>
-        {(session.role === 'admin' || session.role === 'sales') && (
-          <Link
-            href="/orders/new"
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-          >
-            <IconPlus size={13} />
-            สั่งงานใหม่
-          </Link>
-        )}
-      </div>
+    <OrdersBody
+      result={result}
+      role={session.role}
+      perPage={filters.perPage}
+      page={filters.page}
+      hasActiveFilter={!!(filters.query || filters.statusFilter || filters.fromIso || filters.toIso)}
+      errorMessage={errorMessage}
+    />
+  );
+}
 
-      {errorMessage ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-          <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
-          <p className="text-sm text-amber-800 mt-2 font-mono">{errorMessage}</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
-          <div className="flex justify-center mb-2 text-stone-300">
-            <IconFileText size={36} />
-          </div>
-          <p className="text-sm text-stone-500">
-            {filters.query || filters.statusFilter || filters.fromIso || filters.toIso
-              ? 'ไม่พบใบสั่งงานตามเงื่อนไข'
-              : 'ยังไม่มีใบสั่งงาน'}
-          </p>
-        </div>
-      ) : (
-        <OrdersTable rows={filtered} role={session.role} perPage={filters.perPage} page={filters.page} />
-      )}
-    </>
+/** Delta-fetch data section (NEXT_PUBLIC_DELTA_FETCH_LIST path). Awaits the
+ *  bootstrap snapshot — `loadBoardDelta(null, { lists: true })` returns jobs +
+ *  orders + the shipped/cancelled orderId sets — then hands it to the client
+ *  `<OrdersListClient>`. */
+async function OrdersDataDelta({ session }: { session: Session }) {
+  let initial: BoardDelta | null = null;
+  let errorMessage: string | null = null;
+  try {
+    initial = await loadBoardDelta(null, { lists: true });
+  } catch (err) {
+    errorMessage = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!initial) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+        <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
+        <p className="text-sm text-amber-800 mt-2 font-mono">
+          {errorMessage || 'โหลดรายการใบสั่งงานไม่สำเร็จ'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <OrdersListClient
+      initialJobs={initial.jobs}
+      initialOrders={initial.orders}
+      initialShippedOrderIds={initial.shippedOrderIds ?? []}
+      initialCancelledOrderIds={initial.cancelledOrderIds ?? []}
+      initialServerTime={initial.serverTime}
+      role={session.role}
+    />
   );
 }
 

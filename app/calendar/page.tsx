@@ -14,6 +14,8 @@ import {
   URGENCY_COLORS,
 } from '@/lib/calendar';
 import { CalendarGrid } from './grid';
+import { CalendarClient } from './calendar-client';
+import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { AutoSync } from '@/lib/auto-sync';
 import { IconArrowLeft, IconArrowRight } from '@/lib/icons';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -90,6 +92,34 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
 
   const dataKey = `${year}-${month}|${filters.dept}|${filters.urgency}|${filters.customer}`;
 
+  // Delta-fetch (NEXT_PUBLIC_DELTA_FETCH_LIST) — client-driven calendar: the
+  // server ships a bootstrap snapshot, then the client delta-polls and
+  // re-runs computeCalendar locally. Month nav + filters stay URL-driven.
+  // Flag OFF → the server-rendered `router.refresh()` path below, untouched.
+  if (process.env.NEXT_PUBLIC_DELTA_FETCH_LIST === '1') {
+    return (
+      <DashboardShell user={session.user} role={session.role}>
+        <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
+          <div className="px-4 sm:px-6 py-3">
+            <h1 className="text-lg sm:text-xl font-bold text-stone-900">ปฏิทิน</h1>
+          </div>
+        </header>
+        <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto">
+          <NavBar
+            monthLabel={monthLabelFromInput}
+            prevHref={prev}
+            nextHref={next}
+            todayHref={todayHref}
+          />
+          <FilterBar current={filters} year={year} month={month} />
+          <Suspense fallback={<CalendarSkeleton />}>
+            <CalendarDataDelta />
+          </Suspense>
+        </div>
+      </DashboardShell>
+    );
+  }
+
   return (
     <DashboardShell user={session.user} role={session.role}>
       <AutoSync />
@@ -149,6 +179,31 @@ async function CalendarData({
         cache 60s · server-rendered · Asia/Bangkok TZ
       </p>
     </>
+  );
+}
+
+/** Delta-fetch data section (NEXT_PUBLIC_DELTA_FETCH_LIST path). Awaits the
+ *  bootstrap snapshot — `loadBoardDelta(null)` returns jobs + orders, which
+ *  is everything `computeCalendar` reads — then hands it to the client
+ *  `<CalendarClient>`. Lives behind a Suspense boundary so the page shell
+ *  (header, month nav, filter bar) streams first. */
+async function CalendarDataDelta() {
+  let initial: BoardDelta | null = null;
+  let errorMessage: string | null = null;
+  try {
+    initial = await loadBoardDelta(null);
+  } catch (err) {
+    errorMessage = err instanceof Error ? err.message : String(err);
+  }
+  if (!initial) {
+    return <ErrorPanel message={errorMessage || 'โหลด Calendar ไม่สำเร็จ'} />;
+  }
+  return (
+    <CalendarClient
+      initialJobs={initial.jobs}
+      initialOrders={initial.orders}
+      initialServerTime={initial.serverTime}
+    />
   );
 }
 

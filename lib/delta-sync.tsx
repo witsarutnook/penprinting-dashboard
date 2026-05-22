@@ -32,6 +32,22 @@ import {
 export interface DeltaState {
   jobs: Job[];
   orders: Order[];
+  /** Distinct orderIds with a shipped / cancelled row. Empty `[]` on /board
+   *  and /calendar (they don't request `?lists=1`); populated on /orders. */
+  shippedOrderIds: number[];
+  cancelledOrderIds: number[];
+}
+
+/** True when `b` carries no change vs `a`. `b === undefined` → the delta
+ *  didn't include list data (a /board or /calendar poll) → treat as no
+ *  change so those callers stay byte-identical to the pre-lists behavior. */
+function sameOrderIds(a: number[], b: number[] | undefined): boolean {
+  if (b === undefined) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 /**
@@ -48,7 +64,11 @@ export interface DeltaState {
 export function mergeDelta(state: DeltaState, delta: BoardDelta): DeltaState {
   const noJobChanges = delta.jobs.length === 0 && delta.deletedJobIds.length === 0;
   const noOrderChanges = delta.orders.length === 0;
-  if (noJobChanges && noOrderChanges) return state;
+  // shippedOrderIds / cancelledOrderIds arrive FULL when present (/orders);
+  // keep the existing ref when unchanged so an idle poll never re-renders.
+  const shippedSame = sameOrderIds(state.shippedOrderIds, delta.shippedOrderIds);
+  const cancelledSame = sameOrderIds(state.cancelledOrderIds, delta.cancelledOrderIds);
+  if (noJobChanges && noOrderChanges && shippedSame && cancelledSame) return state;
 
   let jobs = state.jobs;
   if (!noJobChanges) {
@@ -65,12 +85,22 @@ export function mergeDelta(state: DeltaState, delta: BoardDelta): DeltaState {
     orders = Array.from(m.values()).sort((a, b) => Number(b.id) - Number(a.id));
   }
 
-  return { jobs, orders };
+  // `!` is sound: sameOrderIds returns false only when delta.* is defined.
+  return {
+    jobs,
+    orders,
+    shippedOrderIds: shippedSame ? state.shippedOrderIds : delta.shippedOrderIds!,
+    cancelledOrderIds: cancelledSame ? state.cancelledOrderIds : delta.cancelledOrderIds!,
+  };
 }
 
 export interface DeltaSync {
   jobs: Job[];
   orders: Order[];
+  /** Shipped / cancelled orderId sets — populated only when the hook was
+   *  created with `{ lists: true }` (/orders); otherwise empty `[]`. */
+  shippedOrderIds: number[];
+  cancelledOrderIds: number[];
   /** Force an immediate delta poll. Resolves once the response has been
    *  merged into state. The optimistic-UI commit() path awaits this so
    *  phantom-card cleanup fires in the same render as the real row landing
@@ -83,18 +113,28 @@ export interface DeltaSync {
  *                 `loadBoardDelta(null)`, plus its `serverTime` as the first
  *                 cursor. Used only on mount; later state is delta-merged.
  */
-export function useDeltaSync(initial: {
-  jobs: Job[];
-  orders: Order[];
-  serverTime: string;
-}): DeltaSync {
+export function useDeltaSync(
+  initial: {
+    jobs: Job[];
+    orders: Order[];
+    serverTime: string;
+    shippedOrderIds?: number[];
+    cancelledOrderIds?: number[];
+  },
+  opts: { lists?: boolean } = {},
+): DeltaSync {
   const [state, setState] = useState<DeltaState>({
     jobs: initial.jobs,
     orders: initial.orders,
+    shippedOrderIds: initial.shippedOrderIds ?? [],
+    cancelledOrderIds: initial.cancelledOrderIds ?? [],
   });
   const cursorRef = useRef<string>(initial.serverTime);
   const lastActivityRef = useRef<number>(Date.now());
   const inFlightRef = useRef<Promise<void> | null>(null);
+  // `lists` is fixed for a mount — a ref keeps pollOnce's useCallback([])
+  // dep list empty while still threading the flag into the poll URL.
+  const wantListsRef = useRef<boolean>(opts.lists ?? false);
 
   // One poll round-trip: fetch the delta since the cursor, merge it, advance
   // the cursor. Ref-stable so the timer effect below never re-subscribes.
@@ -102,7 +142,8 @@ export function useDeltaSync(initial: {
     let res: Response;
     try {
       res = await fetch(
-        `/api/board/delta?since=${encodeURIComponent(cursorRef.current)}`,
+        `/api/board/delta?since=${encodeURIComponent(cursorRef.current)}`
+          + (wantListsRef.current ? '&lists=1' : ''),
         { cache: 'no-store' },  // session cookie rides along same-origin
       );
     } catch {
@@ -243,5 +284,11 @@ export function useDeltaSync(initial: {
     };
   }, []);
 
-  return { jobs: state.jobs, orders: state.orders, pollNow };
+  return {
+    jobs: state.jobs,
+    orders: state.orders,
+    shippedOrderIds: state.shippedOrderIds,
+    cancelledOrderIds: state.cancelledOrderIds,
+    pollNow,
+  };
 }

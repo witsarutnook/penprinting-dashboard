@@ -17,6 +17,9 @@ export const maxDuration = 30;
  * Response shape (BoardDelta):
  *   { jobs: Job[], orders: Order[], deletedJobIds: number[], serverTime: string }
  *
+ * `?lists=1` additionally returns `shippedOrderIds` / `cancelledOrderIds`
+ * (the /orders list view derives its status badge from them).
+ *
  * The client persists `serverTime` and passes it back as `since` on the
  * next call. See lib/board-delta.ts for cursor semantics.
  */
@@ -25,6 +28,7 @@ export async function GET(req: Request) {
   if (session instanceof NextResponse) return session;
 
   const url = new URL(req.url);
+  const wantLists = url.searchParams.get('lists') === '1';
   const sinceParam = url.searchParams.get('since');
   let since: Date | null = null;
   if (sinceParam) {
@@ -36,7 +40,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const delta = await loadBoardDelta(since);
+    const delta = await loadBoardDelta(since, { lists: wantLists });
     return NextResponse.json(delta);
   } catch (err) {
     const status = err instanceof BoardDeltaError ? 503 : 500;
