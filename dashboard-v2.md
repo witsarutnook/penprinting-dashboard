@@ -704,12 +704,12 @@ Bench-driven decision shipped same session as the PoC. Migration plan estimated 
 
 ปิด Tier B (cron 3/4 migration + KV rate limit) + perf compound (TextFinder write paths + /board fetch storm fix + quota dashboard widget). 6 tasks ใน 1 session.
 
-**1. Morning Report cron migration (Tier B 3/4)**
-- Morning Report Apps Script project ได้ `doPost` handler ใหม่ (verify body.token = Script Property `CRON_TOKEN` → run `morningReport()`). Health-check endpoint via `doGet`.
-- `app/api/cron/morning-report/route.ts` — daily 8 AM Bangkok (1 AM UTC), `0 1 * * *`. POSTs to morning-report Apps Script web app with shared token.
+**1. Morning Report cron migration (Tier B 3/4)** — ✅ standalone Apps Script retired 2026-05-23
+- ~~Morning Report Apps Script project ได้ `doPost` handler ใหม่~~ ของเดิมถูกแทนด้วย self-contained Vercel route ใน revamp ถัดมา (`lib/morning-report.ts` + `app/api/cron/morning-report/route.ts` ใช้ `loadAll()` + LINE push API ตรง — ไม่มี Apps Script hop)
+- `app/api/cron/morning-report/route.ts` — daily 8 AM Bangkok (1 AM UTC), `0 1 * * *`. Auth: `CRON_SECRET` (Vercel-injected) หรือ `?token=${MORNING_REPORT_TOKEN}` (manual `&dry=1` test).
 - `vercel.json` — 3rd cron entry.
-- Env vars: `MORNING_REPORT_APPS_SCRIPT_URL` + `MORNING_REPORT_TOKEN` (set in Vercel after Apps Script web app deploy returns URL).
-- ⏳ Pending user actions: deploy morning-report Apps Script as Web App (first time), set Script Property + Vercel env vars, delete Apps Script time trigger after verification.
+- Env vars: `MORNING_REPORT_TOKEN` (manual test) + `LINE_CHANNEL_TOKEN` + `LINE_GROUP_ID` + `CRON_SECRET` (auto). ~~`MORNING_REPORT_APPS_SCRIPT_URL`~~ ลบแล้ว (ไม่ถูก reference ใน code อีก).
+- ✅ "Morning Report V2" standalone Apps Script project ลบทิ้งแล้ว (2026-05-23). Vercel cron เป็น single scheduler.
 
 **2. Vercel KV rate limit (Tier B 4/4)**
 - `lib/rate-limit.ts` — fail-open Upstash REST helper. Keys: `KV_REST_API_URL` + `KV_REST_API_TOKEN` (Vercel Marketplace auto-injects). Without them logs warn + lets requests through.

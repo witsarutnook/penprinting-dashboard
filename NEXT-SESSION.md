@@ -2,6 +2,32 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-23 — Backlog cleanup (MorningReportV2 retire) + B consolidate risk-audit:** ✅
+>
+> ## งานที่ทำ
+> - **Apps Script "Morning Report V2" project retired** — verify code: `MORNING_REPORT_APPS_SCRIPT_URL` ไม่ถูก reference ใน code อีกแล้ว (`grep -rn` ใน .ts/.tsx/.js เหลือแค่ `MORNING_REPORT_TOKEN` สำหรับ manual `?token=` test). คุณนุ๊กลบ env var + Apps Script project แล้ว. doc [`dashboard-v2.md:707-712`](dashboard-v2.md) update: mark retired 2026-05-23, ลบ `MORNING_REPORT_APPS_SCRIPT_URL` ออกจาก env list, ระบุ Vercel cron = single scheduler.
+> - **B consolidate (`useAutoSync` ↔ `useDeltaSync`) — risk-audit + defer ต่อ** — อ่าน source ทั้ง 2 hooks เทียบ behavior + caller (`board-client` · `orders-list-client` · `calendar-client` · `pending-mutations`). พบ 5 risk: ไม่มี test ของ poll-loop effect เลย (`tests/delta-sync.test.ts` cover แค่ `mergeDelta` pure) · visibility behavior diff (`useAutoSync` กัน double-refresh, `useDeltaSync` ไม่กัน — cursor handles dedup) · signature ไม่สมมาตร (sync void vs Promise + coalesced) · 4 callers ต้องไม่พัง + flag OFF fallback ต้องเก็บ · rollback แพง (delta-fetch live ~1 wk ยัง soak). **recommend:** รอ flag soak ≥2 wk → flip permanent → **ลบ `useAutoSync` ทิ้ง** (ง่ายกว่า consolidate) + เขียน test ของ poll-loop ก่อนทำจริง
+> - **Drop 2 pending จาก backlog:** (1) orphan-cancelled cleanup ×4 — คุณนุ๊กยืนยันใบเทสช่วงแรกไม่กระทบ data จริง, helper push ขึ้น editor แล้วก็ไม่ต้องรัน; (2) deleteJob smoke — คุณนุ๊กแจ้งว่าเคย smoke ผ่านแล้ว
+>
+> ## ⏳ Pending user actions (carry forward)
+> 1. **DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL `UPDATE orders SET date_in/date_due` (double-encoded date, impact ใกล้ศูนย์ — `displayDate` unwrap ให้แล้ว)
+> 2. **Neon transfer rate check ~25 พ.ค.** — วัดผล delta-fetch P3 จริง (อีก 2 วัน). baseline 0.7 GB/วัน → 21 พ.ค. ~0.35-0.4 (ก่อน delta-list) → คาดหลัง delta-list ON ลดอีก
+> 3. **ID-migration Step 7 retire ~28 พ.ค.** — ลบ `getNext*` else-branch + flag `ALLOCATE_IDS_IN_POSTGRES` + Apps Script `getNextId`/`getNextOrderId`/`getNextIds` (เช็ค caller อื่นก่อน)
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **soak `NEXT_PUBLIC_DELTA_FETCH_LIST` + ดู Sentry/Neon transfer** — รอ ≥2 wk ก่อนตัดสิน retire `useAutoSync`
+> 2. **AI Quoting Phase 0** (deferred) — spec/scaffold
+> 3. **`/check-quota`** — Apps Script + Cloudflare Worker quota เช็ค
+> 4. **DATE_ANOMALY fix** ถ้าเริ่มงาน DB cleanup
+>
+> ### Decisions / Lessons
+> - **MorningReport env vars หลัง revamp:** `MORNING_REPORT_TOKEN` (manual test) + `LINE_CHANNEL_TOKEN` + `LINE_GROUP_ID` + `CRON_SECRET` (auto). `MORNING_REPORT_APPS_SCRIPT_URL` ลบทิ้งได้แล้ว — route ใหม่ self-contained ผ่าน `loadAll()` + LINE push API ตรง
+> - **B consolidate ไม่ใช่ low-risk refactor** — duplicate scaffolding ~80 บรรทัดเป็น isolation เจตนา ไม่ใช่ tech debt: poll-loop effect + visibility + channel + cleanup เป็น timing-sensitive ที่ไม่มี test → bug หลุดทุก gate. ทำ "ลบ useAutoSync ทิ้ง" หลัง flag permanent ง่ายกว่า consolidate
+>
+> **Commits:** [`(pending — docs only)`] (NEXT-SESSION + dashboard-v2)
+>
+> ---
+>
 > **Session 2026-05-22 — Hardening (A/B2) + delta-fetch → /orders + /calendar:** ✅ LIVE & verified
 >
 > ## งานที่ทำ
