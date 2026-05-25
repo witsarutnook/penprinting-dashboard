@@ -13,8 +13,8 @@
 > - **Neon transfer rate guide** — เขียน checklist ขั้นตอนเปิด console.neon.tech → project → Monitoring → Data Transfer → กราฟรายวัน เทียบ baseline 0.7 GB/วัน (ก่อน optimize) · 0.35-0.4 (post P3 21 พ.ค.) · คาด <0.3 หลัง delta-list (22 พ.ค. ON). บันทึกผลใน NEXT-SESSION เมื่อคุณนุ๊กดูเสร็จ
 >
 > ## ⏳ Pending user actions
-> 1. ~~**Push Apps Script ผ่าน clasp**~~ ✅ source pushed 11:33 (Claude run ให้). **เหลือคุณนุ๊กทำ**: Apps Script editor → Manage deployments → ✏️ **Edit existing → New version** (⚠️ ห้าม "New deployment" — URL จะเปลี่ยน)
-> 2. **ลบ env var `ALLOCATE_IDS_IN_POSTGRES`** ใน Vercel project settings — no-op หลัง deploy (ไม่มี code อ่านแล้ว) แต่ clean
+> 1. ~~**Push + deploy Apps Script**~~ ✅ source pushed 11:33 (Claude clasp), version ใหม่ deployed โดยคุณนุ๊ก (Edit existing — URL คงเดิม)
+> 2. ~~**ลบ env var `ALLOCATE_IDS_IN_POSTGRES`**~~ ✅ ลบจาก Vercel แล้ว — Step 7 retire LIVE ครบทั้งระบบ
 > 3. ~~**Neon transfer-rate check**~~ ✅ — คุณนุ๊กแจ้งผล: **1.16 GB / 7 วัน (18-25 พ.ค.) = ~0.166 GB/วัน**. ลด **76% จาก baseline 0.7 GB/วัน** · ทะลุเป้า P3 (<0.3) ~2×. Storage 35.64 MB เล็กมาก ไม่ใช่ bottleneck. Compute 17.05 CU-hrs / 7d = ~2.4 CU-hrs/วัน
 > 4. **ค้างเดิม — DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL (impact ใกล้ศูนย์)
 >
