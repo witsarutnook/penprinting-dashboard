@@ -20,10 +20,11 @@
 > 4. **ค้างเดิม — DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL (impact ใกล้ศูนย์)
 >
 > ## 🎯 งานหลัก session หน้า
-> 1. **soak `NEXT_PUBLIC_DELTA_FETCH_LIST` ต่อ** — รอ ≥2 wk ก่อนตัดสิน retire `useAutoSync` (อยู่ใน B consolidate plan)
-> 2. **`/check-quota`** — Apps Script + Cloudflare Worker quota check skill
-> 3. **AI Quoting Phase 0** (deferred 3 sessions) — spec/scaffold
-> 4. **DATE_ANOMALY fix** ถ้าเริ่มงาน DB cleanup
+> 1. **⭐ §12 — Apps Script shrink** ([migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md)) — ตัด Sheet sidecar (sync-to/from-sheet cron) + read fallback (`tryPostgres` AS path) + 17 legacy write else-branches + dead Apps Script handlers ในก้อนเดียว. **Pre-execute decisions**: คุณนุ๊ก confirm 4 ข้อใน §10 ก่อนเริ่ม (r2-backup option, audit_log import, R2 snapshot ก่อนตัด, Sheet permission). Effort ~5-6 ชม. แนะนำแบ่ง 2 sessions (code+deploy / Apps Script cleanup+soak)
+> 2. **soak `NEXT_PUBLIC_DELTA_FETCH_LIST` ต่อ** — รอ ≥2 wk ก่อนตัดสิน retire `useAutoSync` (อยู่ใน B consolidate plan)
+> 3. **`/check-quota`** — Apps Script + Cloudflare Worker quota check skill (จะมีค่าน้อยลงหลัง §12 — quota loss = acceptable, ดู §12 Trap 3)
+> 4. **AI Quoting Phase 0** (deferred 3 sessions) — spec/scaffold
+> 5. **DATE_ANOMALY fix** ถ้าเริ่มงาน DB cleanup
 >
 > ### Decisions / Lessons
 > - **Soak 4 วัน ปลอดภัย ถ้า hardening ครบ:** soak window 1 wk ใน plan เป็น guardrail สำหรับ "ปลอดภัยใจ". Hardening 2026-05-22 (post-insert read-back assertion, `74ac78d`) ปิด collision-silent risk ทำให้ retire เร็วขึ้นได้ปลอดภัย. Soak สั้นได้ก็ต่อเมื่อ root cause guard ลงและ Sentry สะอาด
