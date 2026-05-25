@@ -339,11 +339,9 @@ export async function GET() {
     }
 
     // ─── counters (Postgres-minted order/job ids) ──────────────────
-    // Replaces Apps Script getNextOrderId / getNextId / getNextIds. Key/value
-    // rows: `nextId` (global job counter) + `orderCounter_YYYYMM` (per-month).
-    // Created empty here — SEED separately via /api/admin/seed-id-counters
-    // right before flipping ALLOCATE_IDS_IN_POSTGRES (the seed must reflect
-    // the latest max, so it can't be baked into a one-time migration run).
+    // Authoritative since Step 7 retire (2026-05-25). Key/value rows:
+    // `nextId` (global job counter) + `orderCounter_YYYYMM` (per-month).
+    // Created empty here — SEED separately via /api/admin/seed-id-counters.
     // See migration-plan-id-allocation.md.
     await sql`
       CREATE TABLE IF NOT EXISTS counters (

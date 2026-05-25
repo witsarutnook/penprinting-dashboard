@@ -3,7 +3,7 @@ import { post, loadOrderAndJobs, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
-import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobId } from '@/lib/id-allocation';
 import {
   promoteDraftInPostgres,
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
   }
 
   // Parallelize the order lookup with the speculative job-id allocation —
-  // we need the order anyway to validate, and getNextId is a lock-safe
+  // we need the order anyway to validate, and mintJobId is a row-locked
   // monotonic counter so allocating early just burns one id slot if the
   // promote is rejected (acceptable trade for ~1s perceived latency).
   //
@@ -53,20 +53,18 @@ export async function POST(req: Request) {
   try {
     const [snapResult, idResult] = await Promise.all([
       loadOrderAndJobs(id),
-      (allocateIdsInPostgres()
-        ? mintJobId().then((n): { nextId?: number; error?: string } => ({ nextId: n }))
-        : post<{ nextId?: number; error?: string }>('getNextId', {})
-      ).catch(
-        (err): { nextId?: number; error?: string } => ({
+      mintJobId().then(
+        (n): { id?: number; error?: string } => ({ id: n }),
+        (err): { id?: number; error?: string } => ({
           error: err instanceof Error ? err.message : String(err),
         }),
       ),
     ]);
     snap = snapResult;
-    if (idResult.error || !idResult.nextId) {
+    if (idResult.error || !idResult.id) {
       speculativeJobIdErr = idResult.error || 'no id returned';
     } else {
-      speculativeJobId = Number(idResult.nextId);
+      speculativeJobId = Number(idResult.id);
     }
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);

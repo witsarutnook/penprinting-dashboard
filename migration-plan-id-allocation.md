@@ -1,6 +1,6 @@
 # Migration Plan — ย้าย ID Allocation จาก Apps Script → Postgres
 
-> สถานะ: **PLANNED — ยังไม่เริ่มทำ** · เขียน 2026-05-21 · context จาก diagnose ของ order-submit latency
+> สถานะ: **✅ DONE (Step 7 retire — 2026-05-25)** · เขียน 2026-05-21 · context จาก diagnose ของ order-submit latency
 >
 > เป้าหมาย: ตัด Apps Script round-trip (~1.5-2.5 วิ) ออกจากทุก route ที่สร้าง order/job
 > → ส่งใบสั่งงาน 2-3 วิ เหลือ ~0.3-0.6 วิ (เร็วขึ้น ~4-6 เท่า)
@@ -140,8 +140,7 @@ COMMIT;
 
 ## 7. ขั้นตอน Migration (มี checklist)
 
-> **✅ LIVE 2026-05-21 — flag ON, verified บน production.** Step 0-5 ✅.
-> เหลือ: soak ~1 สัปดาห์ (Step 6) → retire (Step 7).
+> **✅ DONE 2026-05-25 — Step 7 retire เสร็จสมบูรณ์.** Step 0-7 ✅.
 > Smoke: job `740`, order `202605145`, ไม่มี ID ชน, ส่งใบสั่ง 2-3 วิ → ~0.3-0.6 วิ.
 
 ### Step 1 — Implement minters ✅
@@ -167,14 +166,20 @@ COMMIT;
 ### Step 5 — Flip flag ON ✅ (2026-05-21)
 - [x] ตั้ง `ALLOCATE_IDS_IN_POSTGRES=1` ใน Vercel + redeploy — flag live
 
-### Step 6 — Soak ~1 สัปดาห์ (กำลังทำ — ถึง ~28 พ.ค.)
-- [ ] ดู Sentry + สังเกตการสร้างงานปกติ ไม่มี ID ชน
-- **Decision 2 simplified:** ไม่ต้อง sync `config.nextId` ต่อเนื่อง / ไม่ต้อง Apps Script action — `config.nextId` เป็นแค่ cell ใน Sheet. **Rollback = แก้ cell `config.nextId` = ค่า Postgres `counters.nextId` ปัจจุบัน → ปิด flag** (ดู §9). order id self-heal เอง
-- 🔒 **post-insert read-back assertion** (§6 / R5) — optional hardening ก่อน Step 7 retire (กัน `ON CONFLICT DO NOTHING` กลบ collision เงียบ)
+### Step 6 — Soak (2026-05-21 → 2026-05-25, ~4 วัน) ✅
+- [x] Sentry ไม่มี error ที่เกี่ยวกับ ID allocation + ไม่มี ID collision
+- [x] Hardening 2026-05-22 — post-insert read-back assertion (`74ac78d`, §6/R5) ปิด collision-silent risk ก่อน retire
 
-### Step 7 — Retire (หลัง soak ≥1 สัปดาห์)
-- [ ] ลบ `getNext*` else-branch ออกจาก 6 routes + ลบ flag `ALLOCATE_IDS_IN_POSTGRES`
-- [ ] ลบ `getNextId`/`getNextOrderId`/`getNextIds` ฝั่ง Apps Script (เช็คก่อนว่าไม่มี caller อื่น)
+### Step 7 — Retire ✅ (2026-05-25)
+- [x] ลบ `if (allocateIdsInPostgres()) … else …` ทั้ง 6 routes — Postgres-only path
+- [x] ลบ `allocateIdsInPostgres()` + comment block จาก [`lib/feature-flags.ts`](lib/feature-flags.ts)
+- [x] ลบ `getNextId`/`getNextIds`/`getNextOrderId` case handlers จาก Apps Script `api.ts`/`api.js` + 3 action exemptions ใน audit-log gate
+- [x] ลบ function definitions `getNextId`/`getNextIds`/`getNextOrderId` จาก Apps Script `helpers.ts`/`helpers.js`
+- [x] Clean comment ใน Apps Script `auth.ts`/`auth.js`/`Code.js`
+- [x] Clean docstrings ใน `seed-id-counters/route.ts` + `db-migrate/route.ts` (ลบการอ้างอิง flag)
+- [x] Gates ผ่าน Node 22: type-check / lint / vitest 139 passed / next build
+- ⚠️ **Internal `getNext*` calls ใน Apps Script `write.ts`** (legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` handlers) ยังเหลือ — เป็น dead code (Phase 2 flags ON ใน prod ไม่ถูก call) จะลบรวมกับ phase Apps Script write retire ตามแผน §12. ถ้า ถูก call จริงจะ `ReferenceError`
+- 📋 **Pending user action**: ลบ env var `ALLOCATE_IDS_IN_POSTGRES` ใน Vercel (no-op หลัง deploy — ไม่มี code อ่านแล้ว) + push Apps Script ผ่าน clasp (helpers/api/auth/Code) → Manage deployments → Edit existing → New version
 
 ---
 

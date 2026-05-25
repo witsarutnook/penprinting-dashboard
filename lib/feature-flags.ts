@@ -132,14 +132,3 @@ export function phase2OwnsTable(table: 'templates' | 'orders' | 'jobs' | 'shippe
   }
 }
 
-/** True when order/job ids are minted from the Postgres `counters` table
- *  (lib/id-allocation.ts) instead of Apps Script getNextOrderId / getNextId /
- *  getNextIds. Default off — Apps Script remains the minter until flipped.
- *
- *  ⚠️ Before flipping ON: run /api/admin/db-migrate (creates `counters`) then
- *  /api/admin/seed-id-counters (seeds nextId — verify vs Sheet config.nextId).
- *  See migration-plan-id-allocation.md. Affects the Phase 2 paths of the 6
- *  id-allocating routes; legacy Apps Script fallback paths are unaffected. */
-export function allocateIdsInPostgres(): boolean {
-  return process.env.ALLOCATE_IDS_IN_POSTGRES === '1';
-}

@@ -3,7 +3,7 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
-import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobIds } from '@/lib/id-allocation';
 import { bulkForwardInPostgres, appendAuditToPostgres, type BulkForwardItem } from '@/lib/postgres-write';
 
@@ -101,46 +101,18 @@ export async function POST(req: Request) {
     cleaned.push({ id, targetDept, targetStaff, src });
   }
 
-  // Allocate N sequential ids in one round-trip — keeps backwards-compat
-  // with the pre-v5.10.2 Apps Script that doesn't auto-allocate when
-  // newJob.id is missing. Falls back to N×getNextId on legacy projects.
+  // Allocate N sequential ids in one round-trip via Postgres counter —
+  // mintJobIds bumps `counters.nextId` by N atomically and returns the
+  // reserved range [start, start+N-1].
   let allocatedIds: number[];
-  if (allocateIdsInPostgres()) {
-    try {
-      allocatedIds = await mintJobIds(cleaned.length);
-      if (allocatedIds.length !== cleaned.length) {
-        throw new Error('mintJobIds returned unexpected count');
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `ขอ job ids ไม่สำเร็จ — ${msg}` }, { status: 502 });
+  try {
+    allocatedIds = await mintJobIds(cleaned.length);
+    if (allocatedIds.length !== cleaned.length) {
+      throw new Error('mintJobIds returned unexpected count');
     }
-  } else {
-    try {
-      const r = await post<{ ids?: number[]; error?: string }>('getNextIds', { count: cleaned.length });
-      if (!Array.isArray(r.ids) || r.ids.length !== cleaned.length) {
-        throw new Error('getNextIds returned unexpected shape');
-      }
-      allocatedIds = r.ids.map(Number);
-    } catch (errBatch) {
-      console.warn('[bulk-forward] getNextIds unavailable, falling back to N×getNextId:', errBatch);
-      allocatedIds = [];
-      try {
-        for (let i = 0; i < cleaned.length; i++) {
-          const single = await post<{ nextId?: number; error?: string }>('getNextId', {});
-          if (single.error || !single.nextId) {
-            return NextResponse.json(
-              { error: `ขอ job id ไม่สำเร็จ — ${single.error || 'no id returned'}` },
-              { status: 502 },
-            );
-          }
-          allocatedIds.push(Number(single.nextId));
-        }
-      } catch (err) {
-        const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-        return NextResponse.json({ error: `ขอ job ids ไม่สำเร็จ — ${msg}` }, { status: 502 });
-      }
-    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `ขอ job ids ไม่สำเร็จ — ${msg}` }, { status: 502 });
   }
 
   const buildItems: Array<{ oldId: number; newJob: Record<string, unknown> }> = cleaned.map((it, idx) => ({

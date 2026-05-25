@@ -2,6 +2,37 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-25 — ID-allocation Step 7 retire + Neon transfer-rate check guide:** ✅ deployed
+>
+> ## งานที่ทำ
+> - **Step 7 retire** ([migration-plan-id-allocation.md §7](migration-plan-id-allocation.md)) — soak จริง 4 วัน (เร็วกว่า plan 3 วัน) เพราะคุณนุ๊กตัดสินใจ "ทำทั้งหมดตอนนี้ deploy ทันที" หลัง audit แล้วไม่มี Sentry / ID collision ใน window
+>   - **Dashboard (6 routes + lib)** — ลบ `if (allocateIdsInPostgres()) … else { post('getNext*') }` → keep Postgres-only mint. ลบ `allocateIdsInPostgres()` + comment block จาก [`lib/feature-flags.ts`](lib/feature-flags.ts). clean docstring ของ [`/api/admin/seed-id-counters`](app/api/admin/seed-id-counters/route.ts) + [`/api/admin/db-migrate`](app/api/admin/db-migrate/route.ts) (ลบการอ้างอิง flag)
+>   - **Apps Script** — ลบ 3 case handlers (`getNextId`/`getNextIds`/`getNextOrderId`) จาก `api.ts`/`api.js` + 3 action exemptions ใน audit-log gate + function definitions จาก `helpers.ts`/`helpers.js` + clean comment ใน `auth.ts`/`auth.js`/`Code.js`
+>   - **Gates Node 22:** type-check ✅ · lint ✅ · vitest **139 passed** · next build ✅
+>   - **ระวัง — known live wart:** Apps Script `write.ts`/`write.js` ยังมี internal call `getNextId`/`getNextIds`/`getNextOrderId` ใน legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` action handlers — เป็น dead code (Phase 2 flags ON → ไม่ถูก call จากใด) แต่ถ้า call จริง = `ReferenceError`. รอลบรวมกับ Apps Script write-retire phase ตามแผน §12
+> - **Neon transfer rate guide** — เขียน checklist ขั้นตอนเปิด console.neon.tech → project → Monitoring → Data Transfer → กราฟรายวัน เทียบ baseline 0.7 GB/วัน (ก่อน optimize) · 0.35-0.4 (post P3 21 พ.ค.) · คาด <0.3 หลัง delta-list (22 พ.ค. ON). บันทึกผลใน NEXT-SESSION เมื่อคุณนุ๊กดูเสร็จ
+>
+> ## ⏳ Pending user actions
+> 1. **Push Apps Script ผ่าน clasp** — `cd production-monitoring/apps-script/dashboard && ./push.sh` → Apps Script editor → Manage deployments → ✏️ Edit existing → New version (⚠️ ห้าม "New deployment" — URL จะเปลี่ยน). ⚠️ ระวัง: ถ้า WP page เรียก action `getNextId`/`getNextOrderId`/`getNextIds` ตรงๆ จะได้ `{error: "Unknown action: ..."}` — แต่ WP retired แล้ว 2026-05-09, ไม่มี caller อื่นที่เจอจาก audit
+> 2. **ลบ env var `ALLOCATE_IDS_IN_POSTGRES`** ใน Vercel project settings — no-op หลัง deploy (ไม่มี code อ่านแล้ว) แต่ clean
+> 3. **Neon transfer-rate check** — เปิด console.neon.tech (โครงการ penprinting) → Monitoring → Data Transfer → ดูกราฟ 21-25 พ.ค. + แจ้งผล (จะ update memo ตอน session หน้า)
+> 4. **ค้างเดิม — DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL (impact ใกล้ศูนย์)
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **soak `NEXT_PUBLIC_DELTA_FETCH_LIST` ต่อ** — รอ ≥2 wk ก่อนตัดสิน retire `useAutoSync` (อยู่ใน B consolidate plan)
+> 2. **`/check-quota`** — Apps Script + Cloudflare Worker quota check skill
+> 3. **AI Quoting Phase 0** (deferred 3 sessions) — spec/scaffold
+> 4. **DATE_ANOMALY fix** ถ้าเริ่มงาน DB cleanup
+>
+> ### Decisions / Lessons
+> - **Soak 4 วัน ปลอดภัย ถ้า hardening ครบ:** soak window 1 wk ใน plan เป็น guardrail สำหรับ "ปลอดภัยใจ". Hardening 2026-05-22 (post-insert read-back assertion, `74ac78d`) ปิด collision-silent risk ทำให้ retire เร็วขึ้นได้ปลอดภัย. Soak สั้นได้ก็ต่อเมื่อ root cause guard ลงและ Sentry สะอาด
+> - **Dead-code internal calls = known wart, ไม่ block ship:** Apps Script `write.ts` มี internal `getNext*` ใน dead action handlers — ปล่อยไว้ดีกว่าตามไปลบทุก line (จะลบรวมกับ Apps Script write-retire phase ตามแผน §12). Document ใน commit msg + dashboard-v2.md + migration-plan §7 ว่าเป็น known dead code
+> - **Apps Script "Edit existing → New version" critical:** clasp push อย่างเดียวไม่ update web app URL — ต้อง deploy version ใหม่ใน editor. "New deployment" = URL ใหม่ = ระบบพัง (frontend ผูก URL เก่า)
+>
+> **Commits:** `(pending — commit ในส่วนถัดไป)`
+>
+> ---
+>
 > **Session 2026-05-23 — Backlog cleanup (MorningReportV2 retire) + B consolidate risk-audit:** ✅
 >
 > ## งานที่ทำ

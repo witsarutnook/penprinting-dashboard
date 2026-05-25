@@ -3,7 +3,7 @@ import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
-import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobId } from '@/lib/id-allocation';
 import { bulkForwardInPostgres, appendAuditToPostgres } from '@/lib/postgres-write';
 
@@ -78,22 +78,15 @@ export async function POST(req: Request) {
   );
   if (validationErr) return NextResponse.json({ error: validationErr }, { status: 400 });
 
-  // Allocate the new id explicitly — keeps backwards-compat with the
-  // pre-v5.10.2 Apps Script that doesn't auto-allocate when newJob.id
-  // is missing (would write a blank-id row).
+  // Allocate the new id from Postgres counter — bulkForwardInPostgres
+  // (Phase 2) needs a real id; Apps Script bulkForward fallback accepts
+  // either id:0 (auto-allocate) or an explicit id, so passing the minted
+  // id works either way.
   let nextId: number;
   try {
-    if (allocateIdsInPostgres()) {
-      nextId = await mintJobId();
-    } else {
-      const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-      if (r.error || !r.nextId) {
-        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
-      }
-      nextId = Number(r.nextId);
-    }
+    nextId = await mintJobId();
   } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
   }
 

@@ -6,22 +6,19 @@ export const maxDuration = 30;
 
 /**
  * Seed (or re-seed upward) the Postgres `counters.nextId` job-id counter —
- * admin only. Run RIGHT BEFORE flipping ALLOCATE_IDS_IN_POSTGRES, ideally in
- * a low-traffic window. See migration-plan-id-allocation.md §7 Step 0.
+ * admin only. Used at initial bring-up before mintJobId() goes live, and
+ * available as a recovery tool if the counter ever needs lifting. See
+ * migration-plan-id-allocation.md.
  *
  * The computed seed = max job id ever observed across jobs ∪ shipped ∪
  * cancelled ∪ audit_log (audit_log catches admin-hard-deleted jobs that left
  * no row), + 1.
  *
  * Safe to run repeatedly: the upsert is GREATEST(...) — the counter only ever
- * rises, never falls. So an in-flight Apps Script mint between this call and
- * the flag flip can be absorbed by simply re-running this endpoint.
+ * rises, never falls.
  *
- * ⚠️ The Apps Script `config.nextId` (Google Sheet) is the current authority.
- * Compare the returned `nextIdCounter` against it. If the Sheet value is
- * HIGHER, re-run with `?min=<sheet config.nextId>` so the counter is lifted
- * to the Sheet's value (the Sheet value is already "next free", used as-is —
- * no +1). Minting from a too-low counter would collide with existing ids.
+ * `?min=<n>` lifts the counter to at least `<n>` (used as-is, no +1).
+ * Minting from a too-low counter would collide with existing ids.
  *
  * Does NOT seed orderCounter_* — mintOrderId() self-seeds via its
  * orders-table cross-check (orders are never deleted, so MAX is reliable).

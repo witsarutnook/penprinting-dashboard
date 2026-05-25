@@ -4,7 +4,9 @@
 >
 > Data-integrity scan: **2026-05-15** (`runPhase2IntegrityScan` — 9-dimension Sheet scan post Phase 2; see "Data integrity scan" section below)
 >
-> Latest update: **2026-05-22** — Hardening (A — ID-collision read-back guard · B2 — loadOrder over-fetch trim, `74ac78d`) + delta-fetch extended to /orders + /calendar (`88b31d7`, flag `NEXT_PUBLIC_DELTA_FETCH_LIST`). ปิด **PA-L1** (`74ac78d`) + **L3** (wontfix). scan v2 รันแล้ว — **DATA-orphan-order ×122 = confirmed false-positive** (ORPHAN_ORDER หายเกลี้ยง).
+> Latest update: **2026-05-25** — ID-allocation Step 7 retire: ลบ `getNextId`/`getNextIds`/`getNextOrderId` + flag `ALLOCATE_IDS_IN_POSTGRES` จาก dashboard + Apps Script (api.ts/helpers.ts/auth.ts/Code.js). 6 routes mint จาก Postgres ตรงๆ. Gates ผ่าน Node 22 (type-check/lint/139 tests/build). Apps Script internal calls ใน write.ts ที่เหลือเป็น dead code (legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` action handlers). ดู [migration-plan-id-allocation.md §7](migration-plan-id-allocation.md).
+>
+> Previous: **2026-05-22** — Hardening (A — ID-collision read-back guard · B2 — loadOrder over-fetch trim, `74ac78d`) + delta-fetch extended to /orders + /calendar (`88b31d7`, flag `NEXT_PUBLIC_DELTA_FETCH_LIST`). ปิด **PA-L1** (`74ac78d`) + **L3** (wontfix). scan v2 รันแล้ว — **DATA-orphan-order ×122 = confirmed false-positive** (ORPHAN_ORDER หายเกลี้ยง).
 >
 > Previous: **2026-05-21** — Delta-fetch P3 landed (`BoardClient` + `useDeltaSync`, flag `NEXT_PUBLIC_DELTA_FETCH`). ปิด **PA-H2** + **PA-M2** (`6412d5b`). เหลือ **PA-L1** (loadOrder over-fetch — minor, แยก session).
 >

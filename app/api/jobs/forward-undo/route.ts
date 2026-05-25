@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
-import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobId } from '@/lib/id-allocation';
 import { bulkForwardInPostgres, appendAuditToPostgres } from '@/lib/postgres-write';
 
@@ -57,21 +57,14 @@ export async function POST(req: Request) {
   }
 
   if (phase2WriteEnabled('forwardUndo')) {
-    // Allocate the restored row's id — bulkForwardInPostgres requires a real
-    // id (unlike Apps Script bulkForward's id:0 auto-allocate).
+    // Allocate the restored row's id from Postgres counter —
+    // bulkForwardInPostgres requires a real id (unlike Apps Script
+    // bulkForward's id:0 auto-allocate).
     let nextId: number;
     try {
-      if (allocateIdsInPostgres()) {
-        nextId = await mintJobId();
-      } else {
-        const r = await post<{ nextId?: number; error?: string }>('getNextId', {});
-        if (r.error || !r.nextId) {
-          return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${r.error || 'unknown'}` }, { status: 502 });
-        }
-        nextId = Number(r.nextId);
-      }
+      nextId = await mintJobId();
     } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
     }
 

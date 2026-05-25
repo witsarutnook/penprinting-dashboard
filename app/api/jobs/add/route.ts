@@ -8,7 +8,7 @@ import {
   type JobPayload,
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
-import { phase2WriteEnabled, allocateIdsInPostgres } from '@/lib/feature-flags';
+import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobId } from '@/lib/id-allocation';
 import { addJobToPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
@@ -90,25 +90,13 @@ export async function POST(req: Request) {
     }
   }
 
-  // Atomic id allocation. Both paths mint + bump a counter under a lock so
-  // two concurrent submits never get the same id: Postgres via the counter
-  // row's UPDATE...RETURNING, Apps Script via getNextId's LockService.
+  // Atomic id allocation via Postgres counter row's UPDATE...RETURNING —
+  // two concurrent submits never get the same id (row lock serializes minters).
   let nextId: number;
   try {
-    if (allocateIdsInPostgres()) {
-      nextId = await mintJobId();
-    } else {
-      const idResult = await post<{ nextId?: number; error?: string }>('getNextId', {});
-      if (idResult.error || typeof idResult.nextId !== 'number') {
-        return NextResponse.json(
-          { error: idResult.error || 'getNextId returned no id' },
-          { status: 502 },
-        );
-      }
-      nextId = idResult.nextId;
-    }
+    nextId = await mintJobId();
   } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `id allocation failed — ${msg}` }, { status: 502 });
   }
 
