@@ -345,6 +345,8 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 **Tests:** +10 ([`tests/id-allocation.test.ts`](tests/id-allocation.test.ts)) — total 112→139 (cumulative through Step 7).
 
+**Neon transfer-rate measurement (2026-05-25):** 1.16 GB / 7 วัน (18-25 พ.ค.) = **~0.166 GB/วัน** ⭐ ลด **76% จาก baseline 0.7 GB/วัน** · ทะลุเป้า P3 (<0.3) ~2×. ปัจจัยลด: loadAll caching (60s ISR + tag) · delta-fetch P3 `/board` · delta-list `/orders` + `/calendar` ([`88b31d7`](https://github.com/witsarutnook/penprinting-dashboard/commit/88b31d7)) · Postgres mint (ตัด Apps Script proxy ออก). Storage 35.64 MB เล็กมาก — ไม่ใช่ bottleneck. Compute ~2.4 CU-hrs/วัน.
+
 ---
 
 ### Delta-fetch P3 — client refactor (2026-05-21)
