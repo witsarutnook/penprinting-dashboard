@@ -337,7 +337,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 **Rollout (2026-05-21):** db-migrate → seed (`nextId`=740, verified ตรง Sheet `config.nextId`) → flag ON + redeploy → smoke ✅ — job `740`, order `202605145`, ไม่มี ID ชน, ส่งใบสั่ง 2-3 วิ → ~0.3-0.6 วิ (คุณนุ๊กยืนยัน).
 
-**Step 7 retire (2026-05-25):** soak 4 วัน ไม่พบ ID ชน + ไม่มี Sentry. ลบ flag `ALLOCATE_IDS_IN_POSTGRES` + else-branch Apps Script จาก 6 routes + `getNextId`/`getNextIds`/`getNextOrderId` ออกจาก Apps Script `api.ts`/`helpers.ts`. legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` write handlers ใน Apps Script `write.ts` ยังมี internal call ของ `getNext*` แต่เป็น dead code (Phase 2 flags ON — ไม่ถูก call) — รอลบรวมกับ phase Apps Script write retire ตามแผน §12.
+**Step 7 retire (2026-05-25):** soak 4 วัน ไม่พบ ID ชน + ไม่มี Sentry. ลบ flag `ALLOCATE_IDS_IN_POSTGRES` + else-branch Apps Script จาก 6 routes + `getNextId`/`getNextIds`/`getNextOrderId` ออกจาก Apps Script `api.ts`/`helpers.ts`. legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` write handlers ใน Apps Script `write.ts` ยังมี internal call ของ `getNext*` แต่เป็น dead code (Phase 2 flags ON — ไม่ถูก call) — รอลบรวมกับ phase Apps Script write retire ตามแผน §12. workaround: stub 3 helpers ใน `helpers.ts` ที่ throw "RETIRED" ให้ tsc compile + fail loud ถ้าถูก call. **Smoke-verified 2026-05-25**: order `#202605171` (monotonic ต่อจาก `#202605145`@5/21) · job `#820` (ต่อจาก `#740`@5/21) · PIN `6762` random.
 
 **PIN/QR ไม่กระทบ:** PIN เป็นเลขสุ่ม ไม่เกี่ยว counter · QR เข้ารหัสแค่ order id (`track?id=`) — format `YYYYMMNNN` คงเดิม → QR เก่า/ใหม่ใช้ได้หมด.
 

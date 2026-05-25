@@ -15,6 +15,7 @@
 > ## ⏳ Pending user actions
 > 1. ~~**Push + deploy Apps Script**~~ ✅ source pushed 11:33 (Claude clasp), version ใหม่ deployed โดยคุณนุ๊ก (Edit existing — URL คงเดิม)
 > 2. ~~**ลบ env var `ALLOCATE_IDS_IN_POSTGRES`**~~ ✅ ลบจาก Vercel แล้ว — Step 7 retire LIVE ครบทั้งระบบ
+> 3. ~~**Smoke-verify**~~ ✅ ทดสอบสร้างใบสั่งงานจริง: order `#202605171` (ต่อจาก `#202605145`@5/21 monotonic) · job `#820` (ต่อจาก `#740`@5/21) · PIN random `6762` · UI render ปกติ — **Postgres-mint สมบูรณ์ 100%**
 > 3. ~~**Neon transfer-rate check**~~ ✅ — คุณนุ๊กแจ้งผล: **1.16 GB / 7 วัน (18-25 พ.ค.) = ~0.166 GB/วัน**. ลด **76% จาก baseline 0.7 GB/วัน** · ทะลุเป้า P3 (<0.3) ~2×. Storage 35.64 MB เล็กมาก ไม่ใช่ bottleneck. Compute 17.05 CU-hrs / 7d = ~2.4 CU-hrs/วัน
 > 4. **ค้างเดิม — DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL (impact ใกล้ศูนย์)
 >
