@@ -15,7 +15,7 @@
 > ## ⏳ Pending user actions
 > 1. **Push Apps Script ผ่าน clasp** — `cd production-monitoring/apps-script/dashboard && ./push.sh` → Apps Script editor → Manage deployments → ✏️ Edit existing → New version (⚠️ ห้าม "New deployment" — URL จะเปลี่ยน). ⚠️ ระวัง: ถ้า WP page เรียก action `getNextId`/`getNextOrderId`/`getNextIds` ตรงๆ จะได้ `{error: "Unknown action: ..."}` — แต่ WP retired แล้ว 2026-05-09, ไม่มี caller อื่นที่เจอจาก audit
 > 2. **ลบ env var `ALLOCATE_IDS_IN_POSTGRES`** ใน Vercel project settings — no-op หลัง deploy (ไม่มี code อ่านแล้ว) แต่ clean
-> 3. **Neon transfer-rate check** — เปิด console.neon.tech (โครงการ penprinting) → Monitoring → Data Transfer → ดูกราฟ 21-25 พ.ค. + แจ้งผล (จะ update memo ตอน session หน้า)
+> 3. ~~**Neon transfer-rate check**~~ ✅ — คุณนุ๊กแจ้งผล: **1.16 GB / 7 วัน (18-25 พ.ค.) = ~0.166 GB/วัน**. ลด **76% จาก baseline 0.7 GB/วัน** · ทะลุเป้า P3 (<0.3) ~2×. Storage 35.64 MB เล็กมาก ไม่ใช่ bottleneck. Compute 17.05 CU-hrs / 7d = ~2.4 CU-hrs/วัน
 > 4. **ค้างเดิม — DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL (impact ใกล้ศูนย์)
 >
 > ## 🎯 งานหลัก session หน้า
