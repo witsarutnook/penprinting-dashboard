@@ -178,8 +178,9 @@ COMMIT;
 - [x] Clean comment ใน Apps Script `auth.ts`/`auth.js`/`Code.js`
 - [x] Clean docstrings ใน `seed-id-counters/route.ts` + `db-migrate/route.ts` (ลบการอ้างอิง flag)
 - [x] Gates ผ่าน Node 22: type-check / lint / vitest 139 passed / next build
-- ⚠️ **Internal `getNext*` calls ใน Apps Script `write.ts`** (legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` handlers) ยังเหลือ — เป็น dead code (Phase 2 flags ON ใน prod ไม่ถูก call) จะลบรวมกับ phase Apps Script write retire ตามแผน §12. ถ้า ถูก call จริงจะ `ReferenceError`
-- 📋 **Pending user action**: ลบ env var `ALLOCATE_IDS_IN_POSTGRES` ใน Vercel (no-op หลัง deploy — ไม่มี code อ่านแล้ว) + push Apps Script ผ่าน clasp (helpers/api/auth/Code) → Manage deployments → Edit existing → New version
+- ⚠️ **Internal `getNext*` calls ใน Apps Script `write.ts`** (legacy `addOrder`/`addJob`/`bulkForward`/`createOrder` handlers) ยังเหลือ — เป็น dead code (Phase 2 flags ON ไม่ถูก call). แก้ tsc compile ด้วย **stub 3 helpers ใน helpers.ts ที่ throw** "RETIRED" message → ถ้า dead handlers ถูก call จริงจะ fail ดังๆ. รอลบ handlers จริงกับ Apps Script write retire ตามแผน §12
+- ✅ **Pushed via clasp 2026-05-25 11:33** (Claude run `./push.sh`) — 16 files compiled + uploaded to project `penprinting dashboard data`
+- 📋 **Pending user action**: (1) Apps Script editor → Manage deployments → **Edit existing → New version** (ห้าม "New deployment"); (2) ลบ env var `ALLOCATE_IDS_IN_POSTGRES` ใน Vercel (no-op หลัง deploy — ไม่มี code อ่านแล้ว)
 
 ---
 
