@@ -389,7 +389,77 @@ function schedule() {
 
 ---
 
-## 9. Where to add new patterns
+## 9. Testing rules (anti-patterns from Superpowers TDD skill, ported 2026-05-23)
+
+> Source: [`superpowers/5.1.0/skills/test-driven-development/testing-anti-patterns.md`](file:///Users/witsarut.p/.claude/plugins/cache/claude-plugins-official/superpowers/5.1.0/skills/test-driven-development/testing-anti-patterns.md) — condensed สำหรับ TS/vitest stack ของ Penprinting (139 tests). อ่านต้นฉบับเมื่อเขียน test ใหม่ หรือสงสัยว่า mock เยอะเกินไป
+>
+> **Core principle:** Test what the code does, not what the mocks do. Mocks = isolation tool, not test target.
+
+### 9.1 Iron Laws (3 ข้อ — apply ทุกครั้งก่อนเขียน test)
+
+1. **NEVER test mock behavior** — assertion ที่ผ่านเพราะ mock มีอยู่ ≠ proof ว่า code ถูก
+2. **NEVER add test-only methods to production classes** — เช่น `destroy()` ที่ใช้แค่ใน `afterEach()` — ให้ย้ายไป `tests/helpers/`
+3. **NEVER mock without understanding dependency chain** — รู้ก่อนว่า real method มี side effect อะไรบ้างที่ test พึ่ง
+
+### 9.2 Gate functions (ใช้เป็น checklist ก่อน assert / mock)
+
+**ก่อน assert ใด ๆ บน mock element:**
+```
+ถาม: "กำลัง test real component behavior หรือ test ว่า mock มีอยู่?"
+ถ้า test mock existence → STOP, ลบ assertion หรือ unmock
+```
+
+**ก่อนเพิ่ม method ใน production class:**
+```
+ถาม: "method นี้มีแค่ test ที่เรียก?"
+ถ้าใช่ → STOP, ย้ายไป tests/helpers/
+```
+
+**ก่อน mock method ใด ๆ:**
+```
+1. ถาม: real method มี side effect อะไร?
+2. ถาม: test พึ่ง side effect ตัวไหนของมั้ย?
+3. ถ้าพึ่ง → mock ที่ระดับล่างกว่า (slow/external operation จริง) ไม่ใช่ high-level method
+4. ถ้าไม่แน่ใจ → รัน test ด้วย real implementation ก่อน ดูว่าพังตรงไหน
+```
+
+### 9.3 Anti-pattern: incomplete mocks
+
+```typescript
+// ❌ BAD — mock เฉพาะ field ที่นึกได้
+const mockOrder = {
+  id: 123,
+  customer: 'ACME',
+  // missing: dateIn, dateDue, status, jobs[] — downstream code อ่าน
+};
+
+// ✅ GOOD — mirror real schema ครบ
+const mockOrder: Order = {
+  id: 123, customer: 'ACME', dateIn: '...', dateDue: '...',
+  status: 'open', jobs: [], pin: null, /* …all fields */
+};
+```
+
+**Iron Rule:** mock ต้อง mirror real data structure ครบ — partial mock fail เงียบเมื่อ downstream code อ่าน field ที่ขาด. ใช้ TS type (เช่น `Order`, `Job`) เป็น shape contract — `satisfies Order` บังคับ compile-time check
+
+### 9.4 Red flags — สังเกตในตัวเอง
+
+- assert ที่ check `*-mock` test ID
+- method ใน production code ที่ถูกเรียกแค่ใน `tests/*`
+- mock setup ยาวกว่า test logic
+- test พังเมื่อลบ mock ออก
+- อธิบายไม่ได้ว่าทำไมต้อง mock ตัวนี้
+- "mock เผื่อ safe" — เป็น smell
+
+### 9.5 Penprinting-specific implications
+
+- **`tests/postgres-write.test.ts` (42KB)** = แม่บทของ pattern ที่ดี — ใช้ vitest + pg-mem (real Postgres semantics ใน memory) ไม่ mock SQL queries → test catch SQL behavior ของจริง
+- **ถ้าจะ test poll-loop effect** (เป้า B consolidate session หน้า) — อย่า mock `setTimeout` / `BroadcastChannel` — ใช้ `vi.useFakeTimers()` + real `BroadcastChannel` API
+- **API route handlers** — test handler โดยตรง (call `POST(req)` กับ `Request` จริง) ดีกว่า mock `next/server` — handler return type คือ `NextResponse` ตรง ๆ
+
+---
+
+## 10. Where to add new patterns
 
 ถ้าเจอ pattern ใหม่ใน session ที่ใช้ซ้ำได้:
 1. เพิ่มที่นี่ใน section ที่เหมาะสม (สร้าง section ใหม่ถ้าไม่ตรงกับที่มี)
@@ -397,4 +467,4 @@ function schedule() {
 3. เขียนสั้น: pattern + reason + example file path
 4. ถ้าเป็น cross-project pattern → เพิ่มที่ workspace `CLAUDE.md` ด้วย
 
-_อัปเดตล่าสุด: 2026-05-07 afternoon — added §1.9 (lazy-load + conditional mount), §1.10 (React.memo + field comparator), §1.11 (edge runtime safe routes), §1.12 (backwards-compat param flag), §5.9 (optimistic modal close on submit), §6.4 (smart polling backoff)_
+_อัปเดตล่าสุด: 2026-05-23 — added §9 (Testing rules — ported from Superpowers TDD anti-patterns)_
