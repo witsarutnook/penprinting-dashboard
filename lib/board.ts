@@ -149,7 +149,6 @@ export interface BoardSnapshot {
    *  KPI detail modal uses this so the list matches the totals badge even
    *  when the board has a URL filter active (?u=, ?dept=, ?q=). */
   allJobs: BoardJob[];
-  generatedAt: string;
 }
 
 const URGENCY_RANK: Record<Urgency, number> = { overdue: 0, dday: 1, urgent: 2, normal: 3 };
@@ -289,6 +288,5 @@ export function computeBoard(
     totalJobs,
     totalsByUrgency: totals,
     allJobs,
-    generatedAt: new Date().toISOString(),
   };
 }
