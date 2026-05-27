@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF, type Dept } from '@/lib/board';
 import { toISODate, bangkokTodayISO } from '@/lib/jobs';
 import { validatePhotobook, type OrderFormData, type PhotobookItem } from '@/lib/photobook';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintOrderId, mintJobId } from '@/lib/id-allocation';
 import {
   createOrderInPostgres,
@@ -136,190 +134,20 @@ export async function POST(req: Request) {
     status: 'pending',
   };
 
-  // ── Phase 2 path: Postgres-first (skip Apps Script createOrder) ──────
-  // Activated by WRITE_CREATE_ORDER_TO_POSTGRES=1. Id allocation still
-  // through Apps Script (getNextOrderId + getNextId) for sequential ids
-  // that Sheet UI / morning report expect. Dedupe scan uses Postgres mirror.
-  // Sheet sync happens via heal cron `setOrderRow` + `setJobRow` within 5 min.
-  if (phase2WriteEnabled('createOrder')) {
-    return phase2CreateOrder({
-      orderPayloadBase,
-      jobPayloadBase,
-      isDraft,
-      force: !!body.force,
-      pin,
-      orderType,
-      session,
-    });
-  }
-
-  // ── Fast path: single Apps Script `createOrder` action (v5.10.3+) ───
-  // One round-trip does dedupe + alloc orderId + alloc jobId + writes both
-  // sheets inside the same LockService scope. End-to-end ~1-2s vs the
-  // 2-5s parallel-multi-call fallback below. Re-enabled 2026-05-07 PM
-  // after the user diagnosed the earlier "empty spec" symptom as the
-  // edit-mode prefill bug, not a createOrder write bug.
-  //
-  // Falls through to the legacy parallel path on:
-  //   - "Unknown action" (Apps Script not yet on v5.10.3+ — defensive)
-  //   - Any AppsScriptError text containing "Unknown action" (case-insensitive)
-  try {
-    const fast = await post<{
-      ok?: boolean;
-      orderId?: number;
-      jobId?: number | null;
-      duplicates?: Array<{ id: number; name: string; customer: string; dateIn: string }>;
-      error?: string;
-    }>('createOrder', {
-      data: {
-        order: orderPayloadBase,
-        job: jobPayloadBase,
-        force: !!body.force,
-        skipDedupe: isDraft,
-      },
-    });
-
-    if (fast.error && /unknown action/i.test(fast.error)) {
-      throw new Error('UNKNOWN_ACTION');
-    }
-    if (fast.error) {
-      return NextResponse.json({ error: fast.error }, { status: 400 });
-    }
-    if (fast.duplicates && fast.duplicates.length > 0) {
-      return NextResponse.json(
-        {
-          error: 'duplicate',
-          duplicates: fast.duplicates,
-          message: `พบใบสั่งงานคล้ายกัน ${fast.duplicates.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
-        },
-        { status: 409 },
-      );
-    }
-    if (!fast.orderId) {
-      return NextResponse.json({ error: 'createOrder ไม่ได้รับ orderId กลับมา' }, { status: 502 });
-    }
-    return NextResponse.json({
-      ok: true,
-      orderId: fast.orderId,
-      jobId: fast.jobId ?? null,
-      pin,
-      orderType,
-      draft: isDraft || undefined,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // Fall through ONLY for the "Unknown action" sentinel — every other
-    // error means createOrder failed for a real reason and we should not
-    // duplicate the work via the legacy path (would burn an extra orderId
-    // slot and might double-write).
-    if (msg !== 'UNKNOWN_ACTION' && !/unknown action/i.test(msg)) {
-      return NextResponse.json({ error: `createOrder failed — ${msg}` }, { status: 502 });
-    }
-    // else fall through to legacy multi-call flow below
-  }
-
-  // ── Legacy fallback: parallel multi-call (Apps Script pre-v5.10.3) ──
-  // Order: snapshot read + alloc IDs in parallel → dedupe in memory →
-  // write order + job in parallel. About 2-5s end-to-end depending on
-  // Sheet latency. Same partial-success semantics as before.
-  let snap: Awaited<ReturnType<typeof loadAllFresh>>;
-  let orderId: number;
-  let jobId: number | null = null;
-  try {
-    const [snapResult, orderIdResult, jobIdResult] = await Promise.all([
-      loadAllFresh(),
-      post<{ id?: number; error?: string }>('getNextOrderId', {}),
-      isDraft
-        ? Promise.resolve({ nextId: 0 } as { nextId?: number; error?: string })
-        : post<{ nextId?: number; error?: string }>('getNextId', {}),
-    ]);
-    snap = snapResult;
-    if (orderIdResult.error || !orderIdResult.id) {
-      return NextResponse.json({ error: `ขอเลขใบสั่งไม่สำเร็จ — ${orderIdResult.error || 'unknown'}` }, { status: 502 });
-    }
-    orderId = Number(orderIdResult.id);
-    if (!isDraft) {
-      if (jobIdResult.error || !jobIdResult.nextId) {
-        return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${jobIdResult.error || 'unknown'}` }, { status: 502 });
-      }
-      jobId = Number(jobIdResult.nextId);
-    }
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-  }
-
-  if (!body.force && !isDraft) {
-    const nLower = name.toLowerCase();
-    const cLower = customer.toLowerCase();
-    const dups = snap.orders
-      .filter((o) => {
-        if (String(o.status || '').toLowerCase() === 'cancelled') return false;
-        const oName = String(o.name || '').trim().toLowerCase();
-        const oCust = String(o.customer || '').trim().toLowerCase();
-        return oName === nLower && oCust === cLower;
-      })
-      .slice(0, 5)
-      .map((o) => ({
-        id: Number(o.id),
-        name: String(o.name || ''),
-        customer: String(o.customer || ''),
-        dateIn: String(o.dateIn || ''),
-      }));
-    if (dups.length > 0) {
-      return NextResponse.json(
-        { error: 'duplicate', duplicates: dups, message: `พบใบสั่งงานคล้ายกัน ${dups.length} รายการ` },
-        { status: 409 },
-      );
-    }
-  }
-
-  const orderPayloadLegacy = { ...orderPayloadBase, id: orderId };
-  if (isDraft) {
-    try {
-      const orderResp = await post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayloadLegacy });
-      if (orderResp.error) return NextResponse.json({ error: orderResp.error }, { status: 400 });
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `addOrder failed — ${msg}` }, { status: 502 });
-    }
-    return NextResponse.json({ ok: true, orderId, jobId: null, pin, orderType, draft: true });
-  }
-
-  const jobPayloadLegacy = { ...jobPayloadBase!, id: jobId!, orderId };
-  const [orderOutcome, jobOutcome] = await Promise.allSettled([
-    post<{ ok?: boolean; id?: number; error?: string }>('addOrder', { data: orderPayloadLegacy }),
-    post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: jobPayloadLegacy }),
-  ]);
-  const orderErr = orderOutcome.status === 'rejected'
-    ? (orderOutcome.reason instanceof Error ? orderOutcome.reason.message : String(orderOutcome.reason))
-    : (orderOutcome.value.error || null);
-  const jobErr = jobOutcome.status === 'rejected'
-    ? (jobOutcome.reason instanceof Error ? jobOutcome.reason.message : String(jobOutcome.reason))
-    : (jobOutcome.value.error || null);
-  if (orderErr && jobErr) {
-    return NextResponse.json({ error: `addOrder + addJob failed — ${orderErr}` }, { status: 502 });
-  }
-  if (orderErr) {
-    return NextResponse.json(
-      { ok: true, orderId: null, jobId, pin, partial: true,
-        warning: `Job #${jobId} สร้างแล้ว แต่ addOrder ล้มเหลว — ${orderErr}.` },
-      { status: 200 },
-    );
-  }
-  if (jobErr) {
-    return NextResponse.json(
-      { ok: true, orderId, jobId: null, pin, partial: true,
-        warning: `ใบสั่ง #${orderId} บันทึกแล้ว แต่ addJob ล้มเหลว — ${jobErr}.` },
-      { status: 200 },
-    );
-  }
-  return NextResponse.json({ ok: true, orderId, jobId, pin, orderType });
+  return createOrder({
+    orderPayloadBase,
+    jobPayloadBase,
+    isDraft,
+    force: !!body.force,
+    pin,
+    orderType,
+    session,
+  });
 }
 
-// ─── Phase 2 createOrder ──────────────────────────────────────────
+// ─── createOrder (Postgres-only) ──────────────────────────────────
 
-interface Phase2CreateOrderArgs {
+interface CreateOrderArgs {
   orderPayloadBase: {
     name: string;
     customer: string;
@@ -348,7 +176,7 @@ interface Phase2CreateOrderArgs {
   session: { role: string; user: string };
 }
 
-async function phase2CreateOrder(args: Phase2CreateOrderArgs): Promise<NextResponse> {
+async function createOrder(args: CreateOrderArgs): Promise<NextResponse> {
   const { orderPayloadBase, jobPayloadBase, isDraft, force, pin, orderType, session } = args;
 
   // ── Dedupe via Postgres mirror (Phase 1) ────────────────────────

@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { post, loadAll, loadAllFresh, loadOrder, AppsScriptError } from '@/lib/api';
+import { loadOrder } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
-import { restoreJobInPostgres } from '@/lib/postgres-write';
+import { sql } from '@/lib/postgres';
+import { restoreJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -15,21 +15,15 @@ interface SrcCancelled {
 }
 
 /**
- * Restore a cancelled job back into the Kanban — admin only. Mirrors WP
- * `restoreCancelledJob` (production-monitoring.js:3692).
+ * Restore a cancelled job back into the Kanban — admin only.
  *
- * Strategy: read the cancelled row + its parent order (for date / dateIn),
- * call Apps Script `restoreJob` which atomically deletes from `cancelled`
- * and appends to `jobs`.
- *
- * Perf: when the client passes `srcCancelled` (which the /cancelled page
- * already has from its loadAll snapshot), we skip the full loadAllFresh
- * read for the cancelled row. We still need the parent order for due/in
- * dates — fetched via `loadOrder(orderId)` which is a single-row read
- * (~200ms vs the full snapshot's ~600ms). If there's no parent order,
- * we skip the second fetch entirely. Net savings: ~400-600ms per restore.
+ * Reads the cancelled row from Postgres (ground truth), reattaches to parent
+ * order if any (for due/in dates), then atomically deletes from `cancelled`
+ * and inserts into `jobs` via restoreJobInPostgres.
  *
  * Request body: { id, srcCancelled?: { name, dept, staff, orderId } }
+ * srcCancelled is used for the client-snapshot sanity check; ground truth
+ * always comes from the Postgres row.
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
@@ -47,72 +41,44 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing job id' }, { status: 400 });
   }
 
-  // Resolve the cancelled-row fields. Always read the actual row from
-  // the Sheet so name/dept/staff/orderId reflect ground truth — auditor
-  // H3 (2026-05-08): previously trusted client-supplied src verbatim,
-  // which let a buggy client send a real `id` but mismatched name/dept,
-  // appending a fresh row with arbitrary content.
-  //
-  // Perf: when src is provided we use the cached `loadAll()` (60s ISR)
-  // so we still avoid the ~600ms loadAllFresh cost in the common case.
-  // Cache miss falls back to fresh read. Without src we go straight to
-  // loadAllFresh (legacy / external callers).
-  const src = body.srcCancelled;
-  let snap;
+  // Read the cancelled row from Postgres — ground truth (auditor H3).
+  let cj: Record<string, unknown> | null = null;
   try {
-    snap = src && src.name ? await loadAll() : await loadAllFresh();
+    const r = await sql<{ raw: Record<string, unknown> | null }>`
+      SELECT raw FROM cancelled WHERE id = ${id}::bigint LIMIT 1
+    `;
+    cj = r.rows[0]?.raw ?? null;
   } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-  }
-  let cj = snap.cancelled.find((c) => Number(c.id) === id);
-  // Cache might be stale for newly-cancelled rows — retry fresh.
-  if (!cj && src && src.name) {
-    try {
-      snap = await loadAllFresh();
-      cj = snap.cancelled.find((c) => Number(c.id) === id);
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
-    }
   }
   if (!cj) {
     return NextResponse.json({ error: `ไม่พบรายการยกเลิก id=${id}` }, { status: 404 });
   }
-  // If client supplied src, sanity-check that the snapshot matches —
-  // otherwise the client is out of sync (or buggy) and we shouldn't
-  // restore a row whose real content the user can't see.
+
+  // Optional client-snapshot sanity check — if name supplied, must match.
+  const src = body.srcCancelled;
   if (src && src.name && String(src.name).trim() !== String(cj.name || '').trim()) {
     return NextResponse.json(
-      {
-        error: `ข้อมูลที่ส่งมาไม่ตรงกับ row id=${id} ใน Sheet — refresh หน้า /cancelled แล้วลองใหม่`,
-      },
+      { error: `ข้อมูลที่ส่งมาไม่ตรงกับ row id=${id} ใน Sheet — refresh หน้า /cancelled แล้วลองใหม่` },
       { status: 409 },
     );
   }
+
   const cjName = String(cj.name || '');
   const cjDept = String(cj.dept || '');
   const cjStaff = String(cj.staff || '');
   const cjOrderId = cj.orderId ? Number(cj.orderId) : null;
 
-  // Reattach to parent order (if any) to recover due/in dates. Use the
-  // single-row `loadOrder` instead of dragging in the full snapshot.
-  // Note (auditor L7): cowork list is lost through the cancel→restore
-  // cycle — the cancelled sheet schema doesn't include a cowork column.
-  // To preserve it would require an Apps Script CANCELLED_HEADERS change.
-  // Acceptable for now since cowork on a cancelled job rarely stays valid.
+  // Reattach to parent order (if any) to recover due/in dates.
+  // Note (auditor L7): cowork list is lost through the cancel→restore cycle.
   let orderDateDue = '';
   let orderDateIn = '';
   if (cjOrderId) {
     try {
       const orderResult = await loadOrder(cjOrderId, { orderOnly: true });
       if (orderResult.order) {
-        // Block restoring a job whose parent order has been cancelled — the
-        // restored job would point at a tombstoned parent and surface as
-        // an orphan in /board's "ผู้สั่งงาน" lookup. Admin should restore
-        // the order first (or recover via data-audit modal which already
-        // does a fresh addJob bound to an active parent). (Auditor M3-restore
-        // finding, 2026-05-12.)
+        // Block restoring a job whose parent order has been cancelled.
         if (String(orderResult.order.status || '').toLowerCase() === 'cancelled') {
           return NextResponse.json(
             { error: `ใบสั่งงาน #${cjOrderId} ถูกยกเลิกแล้ว — กรุณา restore ใบสั่งงานก่อน หรือ recover ผ่าน data-audit modal` },
@@ -123,8 +89,7 @@ export async function POST(req: Request) {
         orderDateIn = String(orderResult.order.dateIn || '');
       }
     } catch {
-      // Non-fatal — restore the job with empty dates if the parent order
-      // lookup fails. Admin can edit afterwards.
+      // Non-fatal — restore with empty dates if parent lookup fails.
     }
   }
 
@@ -139,39 +104,28 @@ export async function POST(req: Request) {
     dateIn: toISODate(orderDateIn),
   };
 
-  // Phase 2 — when WRITE_RESTORE_JOB_TO_POSTGRES=1, the Sheet write goes
-  // through Apps Script (atomic delete-cancelled + append-jobs) and the
-  // Postgres write is made explicit via restoreJobInPostgres so restore
-  // survives the Phase 4.2 Stage 4 dual-write-mirror removal.
-  if (phase2WriteEnabled('restoreJob')) {
-    // Sheet write first — Apps Script `restoreJob` atomically deletes the
-    // cancelled row + appends the jobs row, and writes the audit entry.
-    // On failure nothing else runs (clean failure, matches legacy).
-    try {
-      const result = await post<{ ok?: boolean; error?: string }>('restoreJob', { data: restored });
-      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
-    // Postgres write — explicit so restore survives the Stage 4 mirror
-    // removal. Non-fatal: the dual-write mirror also covers this until
-    // then, and running after post() un-tombstones a not-yet-heal-pruned
-    // jobs row left by the prior cancel.
-    try {
-      await restoreJobInPostgres(restored);
-    } catch (err) {
-      console.warn('[phase2-restore] restoreJobInPostgres failed:', err instanceof Error ? err.message : String(err));
-    }
-    return NextResponse.json({ ok: true, id });
+  try {
+    await restoreJobInPostgres(restored);
+  } catch (err) {
+    const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 
+  await appendAuditToPostgres({
+    action: 'restoreJob',
+    role: session.role,
+    user: session.user,
+    targetId: id,
+    data: { name: cjName, dept: cjDept, staff: cjStaff },
+  });
+
   try {
-    const result = await post<{ ok?: boolean; error?: string }>('restoreJob', { data: restored });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true, id });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+    const { revalidatePath, revalidateTag } = await import('next/cache');
+    revalidateTag('load-all'); // bust loadAll() snapshot cache
+    revalidatePath('/board');
+    revalidatePath('/cancelled');
+    revalidatePath('/orders');
+  } catch { /* ignore */ }
+
+  return NextResponse.json({ ok: true, id });
 }

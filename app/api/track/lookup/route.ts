@@ -193,7 +193,7 @@ export async function POST(req: Request) {
   // itself, so retrying buys nothing. (Auditor M1 finding.)
   let lookup;
   try {
-    lookup = await loadOrder(id, { revalidate: 30 });
+    lookup = await loadOrder(id);
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);

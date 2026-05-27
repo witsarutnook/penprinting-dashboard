@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession, formatThaiDate } from '@/lib/route-helpers';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { moveToShippedInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -33,21 +31,10 @@ export async function POST(req: Request) {
     orderId: body.orderId || '',
   };
 
-  if (phase2WriteEnabled('moveToShipped')) {
-    return phase2MoveToShipped(payload, session.role, session.user);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('moveToShipped', { data: payload });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return moveToShipped(payload, session.role, session.user);
 }
 
-async function phase2MoveToShipped(
+async function moveToShipped(
   payload: { id: number; name: string; shippedDate: string; orderId: number | string },
   role: string,
   user: string,

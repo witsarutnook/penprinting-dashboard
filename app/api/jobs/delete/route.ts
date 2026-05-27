@@ -1,24 +1,14 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { deleteJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
 /**
- * Delete a job — admin only on dashboard v2 (per user preference 2026-05-06).
- * Apps Script `deleteJob` is open to all roles (WP relies on it for drag-drop
- * forward = deleteJob+addJob), but the v2 modal button is locked to admin.
+ * Delete a job — admin only on dashboard v2.
  * Reachable via the /orders data-audit modal.
  *
  * Request body: { id }
- *
- * Phase 2 — when WRITE_DELETE_JOB_TO_POSTGRES=1, Postgres is authoritative.
- * deleteJobInPostgres tombstones the row (phase2_deleted_at); the heal cron's
- * healJobsTombstone pushes deleteJobByIdRow to Sheet, then hard-deletes the
- * Postgres row. Falls through to legacy Apps Script when the row isn't in
- * the Postgres mirror yet (Phase 1.7 straggler).
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
@@ -37,21 +27,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
 
-  if (phase2WriteEnabled('deleteJob')) {
-    return phase2DeleteJob(id, session.role, session.user);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('deleteJob', { id });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return deleteJob(id, session.role, session.user);
 }
 
-async function phase2DeleteJob(id: number, role: string, user: string): Promise<NextResponse> {
+async function deleteJob(id: number, role: string, user: string): Promise<NextResponse> {
   let found = false;
   try {
     const r = await deleteJobInPostgres(id);
@@ -62,8 +41,6 @@ async function phase2DeleteJob(id: number, role: string, user: string): Promise<
   }
 
   if (!found) {
-    // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write would
-    // never reach Postgres = silent data loss). 409 → client refreshes.
     return NextResponse.json(
       { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
       { status: 409 },

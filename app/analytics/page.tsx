@@ -12,7 +12,6 @@ import {
   DeptWorkloadChart,
 } from './charts-lazy';
 import { MonthlyReportView } from './monthly-report';
-import { QuotaUsageWidget } from './quota-widget';
 import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { redirect } from 'next/navigation';
@@ -261,30 +260,10 @@ async function AnalyticsData({ months }: { months: Range }) {
         </h2>
         <TrendTable trend={result.trend} />
       </section>
-      <Suspense fallback={<QuotaWidgetSkeleton />}>
-        <QuotaUsageWidget />
-      </Suspense>
       <p className="text-xs text-stone-400 mt-6 text-right">
         cache 60s · server-rendered · {months} เดือนล่าสุด
       </p>
     </>
-  );
-}
-
-function QuotaWidgetSkeleton() {
-  return (
-    <section className="mt-8 bg-white rounded-xl border border-stone-200 p-5">
-      <div className="h-4 w-44 bg-stone-100 rounded animate-pulse mb-4" />
-      <div className="grid grid-cols-3 gap-4 mb-5">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="space-y-2">
-            <div className="h-2 w-12 bg-stone-100 rounded animate-pulse" />
-            <div className="h-7 w-16 bg-stone-200 rounded animate-pulse" />
-          </div>
-        ))}
-      </div>
-      <div className="h-12 w-full bg-stone-50 rounded animate-pulse" />
-    </section>
   );
 }
 

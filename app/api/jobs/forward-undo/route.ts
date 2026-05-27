@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobId } from '@/lib/id-allocation';
 import { bulkForwardInPostgres, appendAuditToPostgres } from '@/lib/postgres-write';
 
@@ -56,100 +54,51 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing currentJobId or snapshot' }, { status: 400 });
   }
 
-  if (phase2WriteEnabled('forwardUndo')) {
-    // Allocate the restored row's id from Postgres counter —
-    // bulkForwardInPostgres requires a real id (unlike Apps Script
-    // bulkForward's id:0 auto-allocate).
-    let nextId: number;
-    try {
-      nextId = await mintJobId();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
-    }
-
-    const r = await bulkForwardInPostgres([{
-      oldId: currentJobId,
-      newJob: {
-        id: nextId,
-        name: String(snap.name || ''),
-        date: toISODate(String(snap.date || '')),
-        dateIn: toISODate(String(snap.dateIn || '')),
-        staff: String(snap.staff),
-        dept: String(snap.dept),
-        status: String(snap.status || 'pending'),
-        orderId: snap.orderId ? Number(snap.orderId) : '',
-        // Restore the pre-forward cowork (forward itself clears it).
-        cowork: snap.cowork,
-      },
-    }]);
-    if (r.failed.length > 0) {
-      return NextResponse.json({ error: r.failed[0].error || 'undo failed' }, { status: 502 });
-    }
-    const s = r.succeeded[0];
-    if (!s) {
-      return NextResponse.json({ error: 'undo failed — no succeeded item' }, { status: 502 });
-    }
-
-    await appendAuditToPostgres({
-      action: 'bulkForward',
-      role: session.role,
-      user: session.user,
-      targetId: s.newId,
-      summary: `กู้คืนการส่งต่อ "${s.name}" id=${currentJobId}→${s.newId}`,
-    });
-
-    try {
-      const { revalidatePath, revalidateTag } = await import('next/cache');
-      revalidateTag('load-all'); // bust loadAll() snapshot cache
-      revalidatePath('/board');
-    } catch { /* ignore */ }
-
-    return NextResponse.json({ ok: true, restoredId: s.newId });
+  // Allocate the restored row's id from Postgres counter.
+  let nextId: number;
+  try {
+    nextId = await mintJobId();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `ขอ job id ไม่สำเร็จ — ${msg}` }, { status: 502 });
   }
 
-  // Apps Script `bulkForward` (v5.10.2+) auto-allocates the new row's id
-  // when `newJob.id` is missing/0/undefined — under the same LockService
-  // scope as the delete+append, so atomicity is preserved. We pass
-  // `id: 0` explicitly to opt in. Saves a `getNextId` round-trip
-  // (~300ms) on every undo.
-  const newJob: Record<string, unknown> = {
-    id: 0,
-    name: String(snap.name || ''),
-    date: toISODate(String(snap.date || '')),
-    dateIn: toISODate(String(snap.dateIn || '')),
-    staff: String(snap.staff),
-    dept: String(snap.dept),
-    status: String(snap.status || 'pending'),
-    orderId: snap.orderId ? Number(snap.orderId) : '',
-  };
-  if (snap.cowork !== undefined) newJob.cowork = snap.cowork;
+  const r = await bulkForwardInPostgres([{
+    oldId: currentJobId,
+    newJob: {
+      id: nextId,
+      name: String(snap.name || ''),
+      date: toISODate(String(snap.date || '')),
+      dateIn: toISODate(String(snap.dateIn || '')),
+      staff: String(snap.staff),
+      dept: String(snap.dept),
+      status: String(snap.status || 'pending'),
+      orderId: snap.orderId ? Number(snap.orderId) : '',
+      // Restore the pre-forward cowork (forward itself clears it).
+      cowork: snap.cowork,
+    },
+  }]);
+  if (r.failed.length > 0) {
+    return NextResponse.json({ error: r.failed[0].error || 'undo failed' }, { status: 502 });
+  }
+  const s = r.succeeded[0];
+  if (!s) {
+    return NextResponse.json({ error: 'undo failed — no succeeded item' }, { status: 502 });
+  }
+
+  await appendAuditToPostgres({
+    action: 'bulkForward',
+    role: session.role,
+    user: session.user,
+    targetId: s.newId,
+    summary: `กู้คืนการส่งต่อ "${s.name}" id=${currentJobId}→${s.newId}`,
+  });
 
   try {
-    const result = await post<{
-      ok?: boolean;
-      processed?: number;
-      succeeded?: Array<{ oldId: number | string; newId: number | string; name: string }>;
-      failed?: Array<{ oldId?: number; error?: string }>;
-      error?: string;
-    }>('bulkForward', { data: { items: [{ oldId: currentJobId, newJob }] } });
+    const { revalidatePath, revalidateTag } = await import('next/cache');
+    revalidateTag('load-all'); // bust loadAll() snapshot cache
+    revalidatePath('/board');
+  } catch { /* ignore */ }
 
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    if (result.failed && result.failed.length > 0) {
-      return NextResponse.json(
-        { error: result.failed[0].error || 'undo failed' },
-        { status: 502 },
-      );
-    }
-    if (!result.processed) {
-      return NextResponse.json({ error: 'undo failed — processed=0' }, { status: 502 });
-    }
-    // Surface the server-allocated id back to the client (used for the
-    // toast + audit signing on the undo toast itself).
-    const restoredId = result.succeeded?.[0]?.newId;
-    return NextResponse.json({ ok: true, restoredId: restoredId ? Number(restoredId) : undefined });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return NextResponse.json({ ok: true, restoredId: s.newId });
 }

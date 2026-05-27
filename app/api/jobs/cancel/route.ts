@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession, formatThaiDate } from '@/lib/route-helpers';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { cancelJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -41,21 +39,10 @@ export async function POST(req: Request) {
     orderId: body.orderId || '',
   };
 
-  if (phase2WriteEnabled('cancelJob')) {
-    return phase2CancelJob(payload, session.role, session.user);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('cancelJob', { data: payload });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return cancelJob(payload, session.role, session.user);
 }
 
-async function phase2CancelJob(
+async function cancelJob(
   payload: {
     id: number;
     name: string;
@@ -88,15 +75,10 @@ async function phase2CancelJob(
   }
 
   if (!found) {
-    // Job not in Postgres yet — fall through to legacy Apps Script.
-    try {
-      const result = await post<{ ok?: boolean; error?: string }>('cancelJob', { data: payload });
-      if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-      return NextResponse.json({ ok: true, fallback: 'apps-script' });
-    } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
+    return NextResponse.json(
+      { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
+      { status: 409 },
+    );
   }
 
   await appendAuditToPostgres({

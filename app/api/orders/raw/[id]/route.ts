@@ -52,7 +52,7 @@ export async function GET(
     // from the page-level loadAll snapshot (matches /board card detail),
     // so this route is rarely hit on the happy path — only as fallback
     // when the inline rawData is missing or empty.
-    result = await loadOrder(id, { revalidate: 30, orderOnly: true });
+    result = await loadOrder(id, { orderOnly: true });
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });

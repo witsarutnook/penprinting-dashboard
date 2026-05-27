@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { RESTRICTED_TARGETS } from '@/lib/forward';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -123,25 +121,11 @@ export async function POST(req: Request) {
   };
   if (src.cowork !== undefined) payload.cowork = src.cowork;
 
-  // Phase 2 reuse — reassignStaff sends action='updateJob' to Apps Script,
-  // so the WRITE_UPDATE_JOB_TO_POSTGRES flag governs this path too. No
-  // separate env var needed. prevDept/prevStaff are passed for audit trail
-  // (cross-dept moves are visible in the audit log).
-  if (phase2WriteEnabled('updateJob')) {
-    return phase2Reassign(oldId, payload, session.role, session.user, srcDept, src.staff);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('updateJob', { data: payload });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  // prevDept/prevStaff are passed for audit trail (cross-dept moves visible).
+  return reassign(oldId, payload, session.role, session.user, srcDept, src.staff);
 }
 
-async function phase2Reassign(
+async function reassign(
   id: number,
   payload: Record<string, unknown>,
   role: string,

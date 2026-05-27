@@ -1,26 +1,17 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate, validateJobInput, type JobPayload } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
 /**
- * Update an existing job — admin only on dashboard v2 (per user preference 2026-05-06).
- * Staff/sales can still reassign via WP drag-drop; here in v2 the modal route is locked.
+ * Update an existing job — admin only on dashboard v2.
  *
  * Request body: { id, name, date, dateIn?, dept, staff, orderId?, status?, cowork? }
- * → Apps Script payload = full JOBS_HEADERS row (id required, status defaults preserved)
- *
- * Phase 2 — when WRITE_UPDATE_JOB_TO_POSTGRES=1, Postgres is authoritative.
- * UPDATE goes to Postgres + marks phase2_dirty_at; the heal cron pushes to
- * Sheet via setJobRow within 5 min. Mirrors the setCowork Phase 2 pattern:
- * /board reads from Postgres so the card moves columns instantly when
- * dept/staff change without waiting for Apps Script. Falls through to
- * legacy when the row isn't in Postgres yet (Phase 1.7 stragglers).
+ * Writes directly to Postgres; /board reads from Postgres so the card moves
+ * columns instantly when dept/staff change.
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
@@ -74,21 +65,10 @@ export async function POST(req: Request) {
   // but we don't want updateJob to wipe an existing assignment.
   if (body.cowork !== undefined) payload.cowork = body.cowork;
 
-  if (phase2WriteEnabled('updateJob')) {
-    return phase2UpdateJob(id, payload, session.role, session.user);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('updateJob', { data: payload });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return updateJob(id, payload, session.role, session.user);
 }
 
-async function phase2UpdateJob(id: number, payload: JobPayload, role: string, user: string): Promise<NextResponse> {
+async function updateJob(id: number, payload: JobPayload, role: string, user: string): Promise<NextResponse> {
   let found = false;
   try {
     const r = await updateJobInPostgres({
@@ -109,15 +89,12 @@ async function phase2UpdateJob(id: number, payload: JobPayload, role: string, us
   }
 
   if (!found) {
-    // Phase 4.2 close-out — no Apps Script fallback (Sheet-only write would
-    // never reach Postgres = silent data loss). 409 → client refreshes.
     return NextResponse.json(
       { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
       { status: 409 },
     );
   }
 
-  // Postgres write succeeded — heal cron pushes to Sheet within 5 min.
   // Bust /board + /orders caches so the next render sees the new row.
   await appendAuditToPostgres({
     action: 'updateJob',

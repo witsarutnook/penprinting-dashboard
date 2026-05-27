@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { post, loadAllFresh, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import {
   toISODate,
@@ -8,28 +7,17 @@ import {
   type JobPayload,
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { mintJobId } from '@/lib/id-allocation';
 import { addJobToPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
+import { sql } from '@/lib/postgres';
 
 export const maxDuration = 30;
 
 /**
- * Add a new job — admin + sales only (matches WP `PERM.canCreate`).
+ * Add a new job — admin + sales only.
  *
  * Request body: { name, date, dateIn?, dept, staff, orderId? }
- * → Server fetches fresh `nextId` via loadAll, builds JOBS_HEADERS payload,
- *   calls Apps Script `addJob`. Apps Script bumps `nextId` config atomically.
- *
- * Note: addJob in Apps Script ROLE_REQUIREMENTS is open to all roles, but the
- * WP frontend gates create paths to admin+sales — we mirror that here.
- *
- * Phase 2 — when WRITE_ADD_JOB_TO_POSTGRES=1, Postgres is authoritative.
- * id allocation still goes through Apps Script getNextId (keeps Sheet's
- * nextId counter in sync + ids stay sequential for admin UI), but the
- * Sheet write is skipped — heal cron pushes setJobRow within 5 min. Eliminates
- * the legacy double-bump (addJob calls incrementConfig after getNextId
- * already bumped) so Phase 2 ids land contiguously instead of with gaps.
+ * id allocation atomic via mintJobId (Postgres counter UPDATE...RETURNING).
  */
 export async function POST(req: Request) {
   const session = await requireSession(['admin', 'sales']);
@@ -63,17 +51,17 @@ export async function POST(req: Request) {
   }
 
   // Idempotency guard (auditor H1, 2026-05-08): when caller supplies an
-  // orderId, reject if an active (non-cancelled) job already references
-  // it. This closes the orphan-recovery double-tap window in the data-
-  // audit modal — admin clicks "สร้าง Job" twice quickly before the
-  // optimistic UI hides the row, otherwise we'd append two jobs for the
-  // same orderId. Uses loadAllFresh (no cache) so the second call sees
-  // the first call's row even within the same 60s ISR window.
+  // orderId, reject if an active (non-cancelled) job already references it —
+  // closes the orphan-recovery double-tap window in the data-audit modal.
   const orderIdNum = body.orderId ? Number(body.orderId) : null;
   if (orderIdNum && Number.isFinite(orderIdNum)) {
     try {
-      const snap = await loadAllFresh();
-      const existing = snap.jobs.find((j) => Number(j.orderId) === orderIdNum);
+      const r = await sql<{ id: number }>`
+        SELECT id FROM jobs
+        WHERE order_id = ${orderIdNum}::bigint AND phase2_deleted_at IS NULL
+        LIMIT 1
+      `;
+      const existing = r.rows[0];
       if (existing) {
         return NextResponse.json(
           {
@@ -85,7 +73,7 @@ export async function POST(req: Request) {
         );
       }
     } catch (err) {
-      const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: `ตรวจสอบงานซ้ำไม่ได้ — ${msg}` }, { status: 502 });
     }
   }
@@ -111,21 +99,10 @@ export async function POST(req: Request) {
     orderId: body.orderId ? Number(body.orderId) : '',
   };
 
-  if (phase2WriteEnabled('addJob')) {
-    return phase2AddJob(payload, session.role, session.user);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; id?: number; error?: string }>('addJob', { data: payload });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true, id: payload.id });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return addJob(payload, session.role, session.user);
 }
 
-async function phase2AddJob(payload: JobPayload, role: string, user: string): Promise<NextResponse> {
+async function addJob(payload: JobPayload, role: string, user: string): Promise<NextResponse> {
   try {
     await addJobToPostgres({
       id: payload.id as number,

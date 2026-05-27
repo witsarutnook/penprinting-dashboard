@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { post, AppsScriptError } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { STAFF } from '@/lib/board';
-import { phase2WriteEnabled } from '@/lib/feature-flags';
 import { setCoworkInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -74,24 +72,10 @@ export async function POST(req: Request) {
     cleaned.push(staff);
   }
 
-  if (phase2WriteEnabled('setCowork')) {
-    return phase2SetCowork(id, cleaned, session.role, session.user);
-  }
-
-  try {
-    const result = await post<{ ok?: boolean; error?: string }>('setCowork', {
-      id,
-      cowork: cleaned,
-    });
-    if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true, count: cleaned.length });
-  } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return setCowork(id, cleaned, session.role, session.user);
 }
 
-async function phase2SetCowork(id: number, cleaned: string[], role: string, user: string): Promise<NextResponse> {
+async function setCowork(id: number, cleaned: string[], role: string, user: string): Promise<NextResponse> {
   let found = false;
   try {
     const r = await setCoworkInPostgres({ id, cowork: cleaned });
