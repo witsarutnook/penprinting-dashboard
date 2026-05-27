@@ -300,6 +300,49 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### §12 Step 1-5 — Postgres-only (Apps Script fallback retired) (2026-05-27)
+
+**Goal:** ตัด Apps Script dependency จาก dashboard reads + writes ในก้อนเดียว ([migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) Step 1-5). Apps Script project ยังคงอยู่ (host `searchArchive` until §13 + LINE webhook) แต่ dashboard ไม่เรียกอีก ยกเว้น /archive page.
+
+**Code surface (-4,968 LOC, 47 files):**
+- **`lib/api.ts`** — drop `tryPostgres()` + AS fallback in `loadAll`/`loadAllWithAudit`/`loadOrder`/`getAuditByTarget`. Drop `loadAllFresh`/`loadAllFromAppsScriptForSync`/`getQuotaStats`. Keep `AppsScriptError` + `post()` + `searchArchive` only. `loadOrderAndJobs` becomes Postgres-direct (was Postgres-first with AS fallback)
+- **17 write routes** — strip `if (phase2WriteEnabled(...)) ... else { post(...) }` pattern. Each route calls postgres-write helper directly. `jobs/add` idempotency check migrated from `loadAllFresh()` → direct SQL `SELECT id FROM jobs WHERE order_id = X AND phase2_deleted_at IS NULL LIMIT 1`
+- **Deleted (dead post-§12):** `lib/feature-flags.ts` (phase2WriteEnabled + 14 WRITE_* flags + phase2OwnsTable) · `lib/sync-to-sheet.ts` + `lib/sync-from-sheet.ts` (~770 LOC heal cron) · 4 cron routes (sync-to-sheet/sync-from-sheet/quota-check/r2-backup) · 9 admin diagnose/import routes (diagnose-{cowork,order,audit,board,shipped-dupes}, import-{jobs,audit-log}, sync-all, /api/board/postgres, /api/audit/postgres, /api/board/sheet) · `app/admin/bench-audit/` dir · `app/analytics/quota-widget.tsx` · `app/api/orders/delete/route.ts` (no frontend caller — verified via grep)
+- **Added:** [`app/error.tsx`](app/error.tsx) — per-route error boundary. Postgres-outage friendly UI ("⚠️ ระบบขัดข้องชั่วคราว · กำลังตรวจสอบ — กรุณารอ 30 วินาทีแล้วลองใหม่") with retry button. Auto-tags Sentry events `postgres-error=true` when error message matches `/postgres|neon|connection refused|ECONNREFUSED|relation .* does not exist/i`
+- **`vercel.json`:** 5 crons → 1 (morning-report only)
+- **Bonus cleanup:** removed `generatedAt: new Date().toISOString()` from `computeBoard` ([lib/board.ts:292](lib/board.ts:292)) — unused impure field that broke pure-compute invariant. Not the root cause of /board hydration warnings but removing it eliminates one variable
+
+**Deploy order — Trap 1 handled:** Dashboard ลบ AS-write paths **ก่อน** Apps Script cleanup (Step 6 next session). Apps Script handlers ยังเปิดทุก action — dashboard ไม่เรียกอีกแล้ว ดังนั้นไม่เกิด "Unknown action" 502. Apps Script handlers จะกลายเป็น dead code ที่จะลบใน Step 6.
+
+**Deferred (intentionally) — §12 Step 2F DB migration:** ลบ phase2_dirty_at + phase2_deleted_at columns เลื่อนไป follow-up session. **phase2_dirty_at**: column ค้าง dirty_at=NOW() ตลอด (no heal cron มาเคลียร์) — cosmetic, low cost. ลบต้อง refactor 20+ `SET phase2_dirty_at = NOW()` instances ก่อน DROP. **phase2_deleted_at**: ใช้เป็น soft-delete tombstone ใน SELECTs (`WHERE phase2_deleted_at IS NULL`) — ลบต้อง refactor moveToShipped/cancelJob/deleteJob ให้ hard-DELETE jobs row (bigger refactor, ทำเมื่อ tombstone cleanup phase)
+
+**Gates Node 22:** type-check ✅ · lint ✅ · vitest 120/120 (was 139, -19 from removed feature-flags + sync-from-sheet tests) · build ✅
+
+**Pending user actions** (post-deploy):
+1. ลบ Vercel env vars (no-op now): 14 `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
+2. สร้าง Sentry alert rule: tag `postgres-error=true` > 10 events/5min → notify
+3. Apps Script project: Step 6 cleanup ใน next session (Claude เขียน + คุณนุ๊ก deploy "Edit existing → New version")
+
+**Smoke verified (Chrome MCP):** /board · /orders (252 ใบ) · /calendar (61 รายการ) · /analytics (179 ใบ/89.4% success) · /track (lookup form). All Postgres-only path works.
+
+**Commits:** [`745d36f`](https://github.com/witsarutnook/penprinting-dashboard/commit/745d36f) (§12) · `3da9266` (generatedAt cleanup)
+
+---
+
+### /track shipping-queue active step (2026-05-27)
+
+**Bug:** ใบสั่งงานที่ `staff='ship'` (อยู่คิว "รอจัดส่ง" ใน /board) เคยค้าง active ที่ step 4 "ขั้นตอนหลังพิมพ์" บน timeline /track. Step 5 "สินค้าพร้อมรับ" ไม่เคย active จนกว่า shipped จริง (status='shipped'). User report ผ่าน screenshot ใบ #202605173.
+
+**Root cause:** `lib/board.ts` มี 3 depts (`graphic`/`print`/`post`); "รอจัดส่ง" เป็น **staff `ship`** ภายใต้ dept `post`. `/api/track/lookup` map แค่ `currentDept = (dept === 'graphic' || dept === 'print' || dept === 'post') ? dept : null` → งานที่ staff='ship' ส่ง `currentDept='post'` เหมือนงานในไดคัท/เครื่องตัด → client ไฮไลต์ step 4
+
+**Fix:** เพิ่ม `awaitingShipment: boolean` ใน `TrackResult` (set true เมื่อ `dept='post' && staff='ship'`). Client `Steps` component: เมื่อ flag = true → step 4 (หลังพิมพ์) = `done`, step 5 (สินค้าพร้อมรับ) = `current`. `statusLabel` badge override เป็น "สินค้าพร้อมรับ" ให้ตรงกับ active step. **ไม่ rename step / ไม่เพิ่ม step** (คุณนุ๊ก confirm คงชื่อ "สินค้าพร้อมรับ / Ready for pick up")
+
+**ไฟล์แก้:** [`app/api/track/lookup/route.ts:236-282`](app/api/track/lookup/route.ts) · [`app/track/client.tsx:248-315`](app/track/client.tsx)
+
+**Commit:** [`0cb98c3`](https://github.com/witsarutnook/penprinting-dashboard/commit/0cb98c3)
+
+---
+
 ### Delta-fetch — extend to /orders + /calendar (2026-05-22)
 
 **Goal:** ขยาย delta-fetch (เดิมมีแค่ `/board`) ไป `/orders` + `/calendar` — เลิก `router.refresh()` poll เต็มหน้ารายตึ๊ก. Flag-gated (`NEXT_PUBLIC_DELTA_FETCH_LIST`) — OFF = path เดิมไม่แตะ; deploy = 0 impact จน flip.

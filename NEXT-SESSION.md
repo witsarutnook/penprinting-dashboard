@@ -1,6 +1,55 @@
 # 🎯 Next Session — Pick up from here
 
-> **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-vercel-postgres.md](migration-plan-vercel-postgres.md) ก่อนเริ่ม**
+> **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
+>
+> **Session 2026-05-27 — §12 Apps Script shrink (Step 1-5) + /track shipping-queue fix + board cleanup:** ✅ deployed
+>
+> ## งานที่ทำ
+> - **/track step 5 active fix** ([commit `0cb98c3`](https://github.com/witsarutnook/penprinting-dashboard/commit/0cb98c3)) — ใบสั่งงานที่ `staff='ship'` (อยู่คิวรอจัดส่ง) เคยค้าง active ที่ step 4 "ขั้นตอนหลังพิมพ์" เพราะ `/api/track/lookup` ส่งแค่ `currentDept='post'` ไม่แยก sub-state ของ ship-staff. เพิ่ม flag `awaitingShipment` ใน response + client shift step 4=done, step 5=current. ชื่อ "สินค้าพร้อมรับ / Ready for pick up" คงเดิม (คุณนุ๊ก confirm). statusLabel badge ก็ override เป็น "สินค้าพร้อมรับ" ให้ตรงกับ active step
+> - **§12 Apps Script shrink Step 1-5** ([commit `745d36f`](https://github.com/witsarutnook/penprinting-dashboard/commit/745d36f), -4,968 LOC across 47 files) — Postgres-only, ไม่มี Apps Script fallback อีกแล้ว:
+>   - **lib/api.ts**: ลบ `tryPostgres()` + AS fallback ใน loadAll/loadAllWithAudit/loadOrder/getAuditByTarget. ลบ loadAllFresh/loadAllFromAppsScriptForSync/getQuotaStats (no caller after §12). คง AppsScriptError + post() + searchArchive (ใช้ /archive จน §13). loadOrderAndJobs เป็น Postgres-direct
+>   - **17 write routes**: ลบ `if (phase2WriteEnabled(...)) ... else { post(...) }` ทั้งหมด (jobs/{add,update,delete,cancel,move-to-shipped,reassign,cowork,bulk-forward,forward,forward-undo,restore} + orders/{add,update,cancel,promote-draft,templates/add,templates/delete}). jobs/add idempotency check migrated จาก `loadAllFresh()` → direct SQL
+>   - **Dead code deleted**: lib/feature-flags.ts (phase2WriteEnabled + 14 WRITE_* flags + phase2OwnsTable) · lib/sync-to-sheet.ts + lib/sync-from-sheet.ts (~770 LOC heal cron) · 4 cron routes (sync-to-sheet/sync-from-sheet/quota-check/r2-backup) · 9 admin diagnose/import routes + 2 bench-audit endpoints (board/postgres + audit/postgres) · app/admin/bench-audit/ dir · app/analytics/quota-widget.tsx · app/api/orders/delete (dead, no frontend caller) · 2 test files
+>   - **Added**: app/error.tsx — Postgres-outage friendly UI with retry button. Tags Sentry events `postgres-error=true` when error message matches Postgres signature
+>   - **vercel.json**: 5 crons → 1 (morning-report only)
+> - **chore(board)** ([latest commit](https://github.com/witsarutnook/penprinting-dashboard)) — ลบ `generatedAt: new Date().toISOString()` จาก computeBoard. unused impure side effect ใน pure compute function — ไม่ใช่ root cause ของ hydration warning แต่ลบเพื่อ eliminate 1 variable ตอน investigate ครั้งหน้า
+> - **Smoke verified production** ผ่าน Chrome MCP — /board (KPI + cards), /orders (252 ใบ), /calendar (61 รายการ), /analytics (179 ใบ/89.4% success), /track (lookup form) — Postgres-only path ทำงานปกติ
+> - **Diagnose hydration warnings /board** (React #422 + #425) — invoked `/diagnose` skill. **Pre-existing** since `6412d5b` (5/21 BoardClient delta-fetch), ไม่ใช่จาก §12. Math.proof ว่า getBangkokToday() TZ-stable. Hypothesis #3 (Dashlane extension injecting DOM `fiikommddbeccaoicoejoniammnalkfa`) plausible แต่ไม่ confirmed. UI works (React #422 = "recovered by client-rendering"). **Not blocking — defer to incognito test**
+>
+> ## ⏳ Pending user actions
+> 1. **Smoke verify production จริง** (~2-3 นาที หลัง deploy auto) — สร้าง order ใหม่ 1 ใบ + cancel/delete/forward 1 job → ดูทำงานปกติ + Sentry monitor 30 นาที (error rate ไม่ spike)
+> 2. **Vercel env vars cleanup** (no-op now): ลบ 14 `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`. dead flags ทั้งหมด — ปลอดภัย
+> 3. **Sentry alert rule**: สร้าง alert: tag `postgres-error=true` > 10 events/5min → notify (Sentry UI)
+> 4. **Test /track ใบ `#202605173`** — verify ว่าตอนนี้ step 5 "สินค้าพร้อมรับ" active แทน step 4 (ที่คุณนุ๊กเห็น bug ตอนเช้า)
+> 5. **(Optional) Incognito test /board** — เปิด chrome incognito → login → /board → ดูว่า hydration warnings หาย? ถ้าหาย = Dashlane extension เป็นต้นเหตุ. ถ้ายังอยู่ = need source maps debug
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **⭐ §12 Step 6 — Apps Script cleanup** (~1 ชม.) — ลบ dead handlers ใน Apps Script project. ก่อนหน้านี้เลื่อนเพราะ blast radius. ตอนนี้ dashboard ไม่เรียก AS ยกเว้น searchArchive → safe to clean:
+>    - `api.ts/api.js`: ลบ 17 legacy write case handlers + 6 heal Phase 2 handlers (setJobRow/setOrderRow/setShippedRow/setCancelledRow/deleteJobByIdRow/setTemplateRow) + 3 read handlers (loadAll/getOrder/getAuditByTarget) + saveAll/dailyQuotaCheck/getQuotaStats. **คงไว้**: searchArchive
+>    - `write.ts/write.js`: ลบทั้งไฟล์ (~750 LOC) — รวม legacy `addOrder/addJob/bulkForward/createOrder` ที่ยังมี internal `getNext*` stubs
+>    - `helpers.ts/helpers.js`: ลบ getNextId/getNextIds/getNextOrderId stubs (no caller after write.ts ตาย) + ลบ findDuplicateOrderIds/setupOrderCounters/incrementConfig. คง sheetToArray + findRowById (archive.ts ใช้)
+>    - `quota.ts/quota.js + backup.ts/backup.js + r2.ts/r2.js`: ลบทั้งหมด (Option B locked — Neon PITR)
+>    - `auth.ts/auth.js`: ลบ ROLE_REQUIREMENTS entries ของ actions ที่ลบไป
+>    - clasp push → คุณนุ๊ก deploy "Edit existing → New version"
+> 2. **§12 Step 2F deferred — DB migration DROP COLUMN** (optional, low priority):
+>    - **phase2_dirty_at**: column ค้าง dirty_at=NOW() ตลอดไป (ไม่มี heal cron มาเคลียร์). Cosmetic. Safe ลบได้ — แต่ต้อง refactor ทุก `SET phase2_dirty_at = NOW()` ใน lib/postgres-write.ts (20+ instances) ก่อน DROP
+>    - **phase2_deleted_at**: ใช้เป็น soft-delete tombstone ใน SELECTs (`WHERE phase2_deleted_at IS NULL`). ถ้าจะลบต้อง refactor moveToShipped/cancelJob/deleteJob ให้ hard-DELETE jobs row แทน. Bigger refactor — ทำเมื่อทำ tombstone cleanup phase
+> 3. **§12 Step 4 — Sentry alert rules** — set ผ่าน Sentry UI (Pending #3 ด้านบน)
+> 4. **Hydration warnings /board investigate** — รอ user incognito test ก่อน
+> 5. **B consolidate (`useAutoSync` ↔ `useDeltaSync`)** — soak ≥2 wk ตั้งแต่ 5/22 (delta-fetch-list live) — ครบ ~6/5 ก็เริ่มได้ (ลบ useAutoSync แทน consolidate, ง่ายกว่า)
+> 6. **AI Quoting Phase 0** (deferred 4 sessions) — spec/scaffold
+> 7. **`/check-quota` skill** — manual Apps Script + CF Worker quota check (value ลดลงหลัง §12 Step 6)
+> 8. **DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL
+>
+> ### Decisions / Lessons
+> - **§12 = wholesale rewrite > incremental migration**: ลบ AS fallback paths ทั้ง 17 routes พร้อมกันใน 1 commit สะอาดกว่าทยอย — incremental จะมีหลาย commit ที่ partial state (some routes Postgres-only, some hybrid) + แต่ละ commit ต้องเขียน docstring/test/audit งง. Locked plan ก่อน execute (4 decisions §10 confirmed) ทำให้ ship ครั้งเดียวจบ
+> - **Defer DB migration scope (Step 2F)** ดีกว่า bundle ใน §12: phase2_deleted_at ใช้ใน SELECT gating — DROP COLUMN ต้อง refactor 6+ helpers (moveToShipped/cancelJob/deleteJob/etc). bundle = blast radius เพิ่ม 2× โดยไม่จำเป็น. Cosmetic-only column ใช้พื้นที่ disk เล็กน้อย ปล่อยได้
+> - **Smoke verify ผ่าน Chrome MCP (incognito ไม่ได้)** — Chrome MCP เป็น user's logged-in browser. ถ้าจะทดสอบ extension impact ต้อง user manually open incognito + verify เอง
+> - **Hydration warning ไม่ได้ block ship** — React #422 = "recovered by client-rendering". UI render ปกติ + ไม่มี user impact. Defer ไป next session ดีกว่าหา smoking gun ตอนนี้ (ไม่มี source map → time-bounded)
+>
+> **Commits:** [`0cb98c3`](https://github.com/witsarutnook/penprinting-dashboard/commit/0cb98c3) (track fix) · [`745d36f`](https://github.com/witsarutnook/penprinting-dashboard/commit/745d36f) (§12 Postgres-only -4,968 LOC) · `3da9266` (generatedAt cleanup)
+>
+> ---
 >
 > **Session 2026-05-25 — ID-allocation Step 7 retire + Neon transfer-rate check guide:** ✅ deployed
 >
