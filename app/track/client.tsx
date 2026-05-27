@@ -12,6 +12,10 @@ interface TrackResult {
   statusLabel: string;
   step: string;
   currentDept: 'graphic' | 'print' | 'post' | null;
+  /** True when the job is in the shipping queue (post-press done, awaiting
+   *  pickup/ship). Shifts the active step from 4 (Post-press) to 5
+   *  (Ready for pick up) without renaming or adding a step. */
+  awaitingShipment?: boolean;
   daysHint: string;
   urgencyKey: string;
   shippedDate?: string;
@@ -219,6 +223,7 @@ function ResultView({ result, onBack }: { result: TrackResult; onBack: () => voi
             currentDept={result.currentDept}
             isShipped={isShipped}
             isCancelled={isCancelled}
+            awaitingShipment={!!result.awaitingShipment}
             shippedDate={result.shippedDate}
           />
         </div>
@@ -255,11 +260,13 @@ function Steps({
   currentDept,
   isShipped,
   isCancelled,
+  awaitingShipment,
   shippedDate,
 }: {
   currentDept: 'graphic' | 'print' | 'post' | null;
   isShipped: boolean;
   isCancelled: boolean;
+  awaitingShipment: boolean;
   shippedDate?: string;
 }) {
   const steps: React.ReactNode[] = [];
@@ -274,11 +281,15 @@ function Steps({
     return <>{steps}</>;
   }
 
-  // Steps 2-4: graphic / print / post — based on current dept
+  // Steps 2-4: graphic / print / post — based on current dept.
+  // When awaitingShipment is true, post-press counts as done — the active
+  // step shifts to step 5 (Ready for pick up) below.
   const currentIdx = currentDept ? DEPT_ORDER.findIndex((d) => d.key === currentDept) : -1;
   DEPT_ORDER.forEach((d, idx) => {
     let state: StepState = 'pending';
     if (isShipped) {
+      state = 'done';
+    } else if (awaitingShipment && d.key === 'post') {
       state = 'done';
     } else if (idx === currentIdx) {
       state = 'current';
@@ -288,11 +299,14 @@ function Steps({
     steps.push(<Step key={d.key} state={state} thai={d.thai} eng={d.eng} />);
   });
 
-  // Step 5: สินค้าพร้อมรับ — done only when shipped (no separate "ready" state)
+  // Step 5: สินค้าพร้อมรับ — current when staff='ship', done when shipped
+  let readyState: StepState = 'pending';
+  if (isShipped) readyState = 'done';
+  else if (awaitingShipment) readyState = 'current';
   steps.push(
     <Step
       key="ready"
-      state={isShipped ? 'done' : 'pending'}
+      state={readyState}
       thai="สินค้าพร้อมรับ"
       eng="Ready for pick up"
     />,

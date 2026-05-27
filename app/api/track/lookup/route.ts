@@ -92,6 +92,11 @@ interface TrackResult {
   /** Current dept of the active job — drives the 6-step progress UI on
    *  the client. null when received-but-no-job-yet, shipped, or cancelled. */
   currentDept: 'graphic' | 'print' | 'post' | null;
+  /** True when job is in the shipping queue (dept='post' AND staff='ship').
+   *  Client uses this to highlight step 5 ("สินค้าพร้อมรับ") as the active
+   *  step instead of step 4 (post-press) — without this flag the timeline
+   *  would stall at "ขั้นตอนหลังพิมพ์" even after the job moves to ship. */
+  awaitingShipment: boolean;
   daysHint: string;         // "เหลือ Xว", "ส่งวันนี้", "เกิน Xว"
   urgencyKey: Urgency | 'shipped' | 'cancelled' | 'received';
   shippedDate?: string;
@@ -234,6 +239,7 @@ export async function POST(req: Request) {
   let daysHint = '';
   let urgencyKey: TrackResult['urgencyKey'] = 'received';
   let currentDept: TrackResult['currentDept'] = null;
+  let awaitingShipment = false;
 
   if (cancelledMatch) {
     status = 'cancelled';
@@ -253,6 +259,13 @@ export async function POST(req: Request) {
       // Standard happy path — known dept drives both badge + 6-step UI.
       step = deptStepLabel(jobMatch.dept, jobMatch.staff);
       statusLabel = STATUS_BY_DEPT[dept];
+      // staff='ship' is a sub-state of dept='post' (the shipping queue).
+      // Surface it to the client so the timeline advances past post-press
+      // and the badge matches what the customer sees on step 5.
+      if (currentDept === 'post' && String(jobMatch.staff || '') === 'ship') {
+        awaitingShipment = true;
+        statusLabel = 'สินค้าพร้อมรับ';
+      }
       const due = parseDateDMY(jobMatch.date);
       const today = getBangkokToday();
       const u = computeUrgency(due, today);
@@ -290,6 +303,7 @@ export async function POST(req: Request) {
     statusLabel,
     step,
     currentDept,
+    awaitingShipment,
     daysHint,
     urgencyKey,
     shippedDate: shippedMatch ? displayDate(shippedMatch.shippedDate) : undefined,
