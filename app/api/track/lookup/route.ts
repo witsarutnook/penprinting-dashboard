@@ -186,11 +186,8 @@ export async function POST(req: Request) {
 
   // Single-order lookup is much faster than loadAll for /track:
   // public users only need ONE order — ~1KB payload vs ~200KB.
-  // loadOrder() is Postgres-first with built-in Apps Script fallback
-  // (throws PostgresStaleError on row-not-found → falls through). The
-  // pre-2026-05-12 retry-with-revalidate-0 to "force Apps Script direct"
-  // is no longer needed — the fallback now happens inside loadOrder
-  // itself, so retrying buys nothing. (Auditor M1 finding.)
+  // Post §12 loadOrder() reads Postgres directly and throws
+  // PostgresReadError on row-not-found — surfaces as the not-found UI.
   let lookup;
   try {
     lookup = await loadOrder(id);

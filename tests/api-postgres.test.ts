@@ -8,14 +8,19 @@ import {
 
 vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 
-import { loadOrderFromPostgres, PostgresStaleError } from '@/lib/api-postgres';
+import {
+  loadAllFromPostgres,
+  loadOrderFromPostgres,
+  getAuditByTargetFromPostgres,
+  PostgresReadError,
+} from '@/lib/api-postgres';
 
 describe('loadOrderFromPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
-  it('throws PostgresStaleError when Postgres is not configured', async () => {
+  it('throws PostgresReadError when Postgres is not configured', async () => {
     setConfigured(false);
-    await expect(loadOrderFromPostgres(123)).rejects.toBeInstanceOf(PostgresStaleError);
+    await expect(loadOrderFromPostgres(123)).rejects.toBeInstanceOf(PostgresReadError);
   });
 
   it('throws on invalid orderId', async () => {
@@ -23,12 +28,11 @@ describe('loadOrderFromPostgres', () => {
     await expect(loadOrderFromPostgres(0)).rejects.toThrow('Invalid orderId');
   });
 
-  it('returns the order from Postgres even when the cron mirror is stale', async () => {
-    // Regression (2026-05-18 print-page 404): a brand-new Phase 2 order must
-    // be returned straight from Postgres regardless of Sheet→Postgres cron
-    // health. The old checkStaleness(['orders']) pre-gate threw here when the
-    // mirror was briefly unhealthy → loadOrder() fell back to Apps Script →
-    // the Sheet had no row for the new order yet → print page notFound().
+  it('returns the order from Postgres without consulting sync_meta', async () => {
+    // Regression (2026-05-18 print-page 404 + 2026-05-28 /analytics "mirror
+    // stale"): post §12 Postgres is authoritative — there is no Sheet→Postgres
+    // cron and no sync_meta gate. A single-order read must never query
+    // sync_meta or short-circuit on its freshness.
     const orderRaw = { id: 202605100, name: 'เคสด่วน', customer: 'ลูกค้า A', status: 'sent' };
     const jobRaw = { id: 5001, orderId: 202605100, dept: 'graphic' };
     queueResult({ rows: [{ raw: orderRaw }], rowCount: 1 }); // orders
@@ -40,14 +44,12 @@ describe('loadOrderFromPostgres', () => {
 
     expect(r.order).toEqual(orderRaw);
     expect(r.job).toEqual(jobRaw);
-    // The order row IS the source of truth under Phase 2 — staleness of the
-    // mirror must never short-circuit a single-order read. No sync_meta query.
     expect(callsContaining('sync_meta')).toHaveLength(0);
   });
 
-  it('throws PostgresStaleError when the order is not in Postgres (fallback signal)', async () => {
-    queueResult({ rows: [], rowCount: 0 }); // orders — empty → caller falls back to Apps Script
-    await expect(loadOrderFromPostgres(999999)).rejects.toBeInstanceOf(PostgresStaleError);
+  it('throws PostgresReadError when the order is not in Postgres', async () => {
+    queueResult({ rows: [], rowCount: 0 }); // orders — empty
+    await expect(loadOrderFromPostgres(999999)).rejects.toBeInstanceOf(PostgresReadError);
   });
 
   it('orderOnly runs a single query and leaves job/shipped/cancelled null', async () => {
@@ -66,10 +68,83 @@ describe('loadOrderFromPostgres', () => {
     expect(callsContaining('FROM cancelled')).toHaveLength(0);
   });
 
-  it('orderOnly still throws PostgresStaleError when the order is missing', async () => {
+  it('orderOnly still throws PostgresReadError when the order is missing', async () => {
     queueResult({ rows: [], rowCount: 0 }); // orders empty
     await expect(
       loadOrderFromPostgres(999999, { orderOnly: true }),
-    ).rejects.toBeInstanceOf(PostgresStaleError);
+    ).rejects.toBeInstanceOf(PostgresReadError);
+  });
+});
+
+describe('loadAllFromPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws PostgresReadError when Postgres is not configured', async () => {
+    setConfigured(false);
+    await expect(loadAllFromPostgres()).rejects.toBeInstanceOf(PostgresReadError);
+  });
+
+  it('returns the snapshot without consulting sync_meta', async () => {
+    // Regression (2026-05-28 /analytics "Postgres mirror stale: jobs last
+    // synced 1491 min ago"): the §12 ship retired sync-from-sheet.ts cron
+    // → nothing updated sync_meta → the old `checkStaleness()` pre-gate
+    // threw on every loadAll after the 30-min threshold. Post §12 Postgres
+    // is authoritative — loadAll must never query sync_meta.
+    queueResult({ rows: [{ raw: { id: 5001, orderId: 202605100 } }], rowCount: 1 }); // jobs
+    queueResult({ rows: [{ raw: { id: 202605100, name: 'เคสด่วน' } }], rowCount: 1 }); // orders
+    queueResult({ rows: [], rowCount: 0 }); // shipped
+    queueResult({ rows: [], rowCount: 0 }); // cancelled
+    queueResult({ rows: [], rowCount: 0 }); // templates
+    queueResult({ rows: [], rowCount: 0 }); // audit_log
+
+    const r = await loadAllFromPostgres();
+
+    expect(r.jobs).toHaveLength(1);
+    expect(r.orders).toHaveLength(1);
+    expect(callsContaining('sync_meta')).toHaveLength(0);
+  });
+
+  it('skips the audit_log query when audit=false', async () => {
+    queueResult({ rows: [], rowCount: 0 }); // jobs
+    queueResult({ rows: [], rowCount: 0 }); // orders
+    queueResult({ rows: [], rowCount: 0 }); // shipped
+    queueResult({ rows: [], rowCount: 0 }); // cancelled
+    queueResult({ rows: [], rowCount: 0 }); // templates
+
+    const r = await loadAllFromPostgres({ audit: false });
+
+    expect(r.audit).toEqual([]);
+    expect(callsContaining('FROM audit_log')).toHaveLength(0);
+  });
+});
+
+describe('getAuditByTargetFromPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('throws PostgresReadError when Postgres is not configured', async () => {
+    setConfigured(false);
+    await expect(getAuditByTargetFromPostgres(123, null)).rejects.toBeInstanceOf(PostgresReadError);
+  });
+
+  it('returns the audit entries without consulting sync_meta', async () => {
+    // Regression (2026-05-28): same sync_meta gate removal as loadAll.
+    queueResult({
+      rows: [
+        { timestamp: new Date('2026-05-27T10:00:00Z'), role: 'admin', action: 'addJob', target_id: '5001', summary: 'เพิ่มงาน' },
+      ],
+      rowCount: 1,
+    });
+
+    const r = await getAuditByTargetFromPostgres(5001, null);
+
+    expect(r.entries).toHaveLength(1);
+    expect(callsContaining('sync_meta')).toHaveLength(0);
+  });
+
+  it('returns empty when both jobId and orderId are null', async () => {
+    const r = await getAuditByTargetFromPostgres(null, null);
+    expect(r.entries).toEqual([]);
+    // Short-circuit before any query.
+    expect(callsContaining('FROM audit_log')).toHaveLength(0);
   });
 });
