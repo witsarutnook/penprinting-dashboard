@@ -339,7 +339,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - `bumpUsage_` defined ใน quota.ts — ลบ quota.ts โดยไม่ trim api.ts call = ReferenceError runtime
 - `clasp push` ≠ deploy — push อัพ source, URL คงเดิม. ห้าม "New deployment" = URL เปลี่ยน = LINE webhook + frontend พังเงียบ
 
-**Commits:** TBD
+**Commit:** [`accce6b`](https://github.com/witsarutnook/penprinting-dashboard/commit/accce6b) (Step B code + docs covering both Step 6 + Step B; Step 6 source pushed via clasp)
 
 ---
 

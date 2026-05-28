@@ -38,7 +38,7 @@
 > - **`bumpUsage_` lived in quota.ts** — quota.ts ถูกลบ → api.ts calls `bumpUsage_()` กลายเป็น ReferenceError. ก่อนลบ module ใหญ่ ๆ grep cross-file usage ของ helpers internal เสมอ
 > - **Step B minimal vs wholesale**: user เลือก minimal ("ลบเฉพาะ 3 pages") = ลบแค่ `<AutoSync />` ใน flag-OFF branch ที่ effectively dead. ไม่ลบ branch ทั้งก้อน = leaves legacy path partially-working (no auto-refresh). มี wholesale opportunity ค้างใน #1 ของ "งานหลัก session หน้า"
 >
-> **Commits:** TBD — Step B in penprinting-dashboard repo · Step 6 lives in production-monitoring/ (not git-tracked, deployed via clasp)
+> **Commit:** [`accce6b`](https://github.com/witsarutnook/penprinting-dashboard/commit/accce6b) — Step B code change + docs covering Step 6. Step 6 source lives in production-monitoring/apps-script/dashboard/ (not git-tracked, deployed via clasp push 9 files at 2026-05-28 12:24)
 >
 > ---
 >
