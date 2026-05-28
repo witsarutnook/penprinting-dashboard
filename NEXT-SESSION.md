@@ -2,7 +2,7 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
-> **Session 2026-05-28 — §12 Step 6 Apps Script cleanup + Step B `<AutoSync />` consolidate:** ✅ deployed dashboard, ⏳ AS clasp pushed (รอ user deploy "Edit existing → New version")
+> **Session 2026-05-28 — §12 Step 6 Apps Script cleanup + Step B `<AutoSync />` consolidate + hot-fix /analytics sync_meta gate:** ✅ deployed dashboard, ⏳ AS clasp pushed (รอ user deploy "Edit existing → New version")
 >
 > ## งานที่ทำ
 > - **§12 Step 6 — Apps Script cleanup (production-monitoring/apps-script/dashboard/)** — ลบ dead handlers + dead modules หลัง §12 Step 1-5 ตัด AS path ทั้งหมด:
@@ -14,6 +14,8 @@
 >   - **clasp push -f** สำเร็จ 9 files (was 16). Gates: `npx tsc -p tsconfig.build.json` ✅ no errors. **คุณนุ๊กต้อง deploy "Edit existing → New version" ที่ Apps Script editor**
 > - **Step B — `<AutoSync />` consolidate** ([3 files, -1+8 lines]) — ลบ `<AutoSync />` JSX + import จาก [`app/board/page.tsx`](app/board/page.tsx) (legacy OFF path) · [`app/orders/page.tsx`](app/orders/page.tsx) · [`app/calendar/page.tsx`](app/calendar/page.tsx). 3 หน้านี้ delta-fetch path live ตั้งแต่ 5/21-22 → `<AutoSync />` redundant ตอนที่ flag ON (production state). คง `useAutoSync` hook + `<AutoSync />` ที่ /analytics /cancelled /shipped (ไม่มี delta-fetch). `broadcastWrite` helper ยังอยู่ใน lib/auto-sync.tsx (ใช้ทั่วระบบ). docstring `BoardDataDelta` ลบ comment เก่าที่อ้าง `<AutoSync>` ใน flag-OFF path
 > - **Gates Node 22 (penprinting-dashboard)** — type-check ✅ · lint ✅ · vitest **120 passed** · next build ✅
+> - **Hot-fix /analytics "Postgres mirror stale: jobs last synced 1491 min ago"** ([commit `5b61973`](https://github.com/witsarutnook/penprinting-dashboard/commit/5b61973)) — bomb หลัง §12 ship 24h: §12 Step 1-5 ลบ `sync-from-sheet` cron แล้ว แต่ `lib/api-postgres.ts` ยังเรียก `checkStaleness()` (อ่าน `sync_meta.last_sync_at`) ใน `loadAllFromPostgres` + `getAuditByTargetFromPostgres`. Sync_meta ไม่มี writer แล้ว → 30 min threshold ตรงทุก request → /analytics throw. **Fix:** ลบ `checkStaleness()` + 2 callsites; rename `PostgresStaleError` → `PostgresReadError` (class ใช้แค่ "not configured" + "row not found" ตอนนี้); message prefix "Postgres read failed:". Same anti-pattern ที่ 2026-05-12 `loadOrderFromPostgres` refactor เคยลบไปแล้ว — แค่ลืมขยายไปอีก 2 functions. **+6 regression tests** (no sync_meta query invariant for loadAllFromPostgres + getAuditByTargetFromPostgres + reworded loadOrder test). Gates ผ่าน (126/126 tests)
+> - **Memory เพิ่ม:** [[feedback_retire_cron_grep_readers]] — เวลา retire cron, grep readers ของ table/column ที่ cron เขียนไว้ก่อน merge. time-threshold check จะ bomb N ชั่วโมงหลัง deploy ตอน gate ปิดไปแล้ว → ผ่าน vitest/build/smoke แต่ผ่านเข้า production จะ trip ตอน threshold ตรง. Prefer presence-check (row exists?) เหนือ freshness-check (NOW - x > T?) เมื่ออ่านจาก own authoritative store
 >
 > ## ⏳ Pending user actions
 > 1. **Apps Script deploy** — เปิด Apps Script editor (project "penprinting dashboard data") → Deploy → Manage deployments → **Edit existing → New version** → publish. URL ของ deployment คงเดิม. หลัง deploy ตรวจ: /archive search ยังใช้งานได้ (เรียก `searchArchive` ผ่าน doPost)
@@ -38,7 +40,7 @@
 > - **`bumpUsage_` lived in quota.ts** — quota.ts ถูกลบ → api.ts calls `bumpUsage_()` กลายเป็น ReferenceError. ก่อนลบ module ใหญ่ ๆ grep cross-file usage ของ helpers internal เสมอ
 > - **Step B minimal vs wholesale**: user เลือก minimal ("ลบเฉพาะ 3 pages") = ลบแค่ `<AutoSync />` ใน flag-OFF branch ที่ effectively dead. ไม่ลบ branch ทั้งก้อน = leaves legacy path partially-working (no auto-refresh). มี wholesale opportunity ค้างใน #1 ของ "งานหลัก session หน้า"
 >
-> **Commit:** [`accce6b`](https://github.com/witsarutnook/penprinting-dashboard/commit/accce6b) — Step B code change + docs covering Step 6. Step 6 source lives in production-monitoring/apps-script/dashboard/ (not git-tracked, deployed via clasp push 9 files at 2026-05-28 12:24)
+> **Commits:** [`accce6b`](https://github.com/witsarutnook/penprinting-dashboard/commit/accce6b) Step B + docs · [`a579d18`](https://github.com/witsarutnook/penprinting-dashboard/commit/a579d18) hash fill-in · [`5b61973`](https://github.com/witsarutnook/penprinting-dashboard/commit/5b61973) **hot-fix sync_meta gate**. Step 6 source อยู่ production-monitoring/apps-script/dashboard/ (not git-tracked, deployed via clasp push 9 files at 12:24)
 >
 > ---
 >
