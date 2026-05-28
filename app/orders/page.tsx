@@ -7,7 +7,6 @@ import { loadAll, AppsScriptError } from '@/lib/api';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { AutoSync } from '@/lib/auto-sync';
 import { IconSearch } from '@/lib/icons';
 import { resolvePerPage, resolvePage } from '@/lib/page-size';
 import { computeOrdersList } from '@/lib/orders-list';
@@ -100,7 +99,6 @@ export default async function OrdersListPage({
 
   return (
     <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
       {/* Auditor M6 (2026-05-08): reserve pr-12 on mobile so the floating
           MobileUserMenu (top-2 right-2 w-9) doesn't overlap the title on
           narrow widths (iPhone SE 320px). Desktop has plenty of room +

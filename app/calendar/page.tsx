@@ -16,7 +16,6 @@ import {
 import { CalendarGrid } from './grid';
 import { CalendarClient } from './calendar-client';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
-import { AutoSync } from '@/lib/auto-sync';
 import { IconArrowLeft, IconArrowRight } from '@/lib/icons';
 import { DashboardShell } from '@/components/dashboard-shell';
 
@@ -122,7 +121,6 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
 
   return (
     <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
       <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
         <div className="px-4 sm:px-6 py-3">
           <h1 className="text-lg sm:text-xl font-bold text-stone-900">ปฏิทิน</h1>

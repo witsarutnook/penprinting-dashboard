@@ -300,6 +300,49 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### §12 Step 6 — Apps Script cleanup + `<AutoSync />` consolidate (2026-05-28)
+
+**Goal:** ปิด §12 ([migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) Step 6) — ลบ dead handlers + dead modules ใน Apps Script project หลัง §12 Step 1-5 ตัด dashboard→AS path. + Step B ปลีกย่อย: ลบ `<AutoSync />` JSX จาก 3 หน้าที่ delta-fetch live แล้ว (redundant).
+
+**Apps Script surface (production-monitoring/apps-script/dashboard/):**
+- **`api.ts` (8.6K → 4.2K, -50%)** — เหลือ doPost ที่ dispatch แค่ `searchArchive`; ลบ 25 handlers (17 write + 6 heal Phase 2 `setJobRow`/`setOrderRow`/`setShippedRow`/`setCancelledRow`/`deleteJobByIdRow`/`setTemplateRow` + 3 read `loadAll`/`getOrder`/`getAuditByTarget` + `saveAll` + `runQuotaCheck` + `runBackup` + `getQuotaStats`). doGet stub: return `Action retired (§12 Postgres-only): <action>`. ลบ `bumpUsage_()` calls (quota.ts ถูกลบ). inline `jsonResponse` helper
+- **`auth.ts` ROLE_REQUIREMENTS trim** — `{ searchArchive: ['admin'] }` เท่านั้น (ลบ 9 admin + 6 sales actions)
+- **7 modules ถูกลบทั้งไฟล์** —
+  - `write.ts/.js` (~30K) — 17 write handlers (addJob/updateJob/.../bulkForward) + heal helpers
+  - `quota.ts/.js` (~10K) — dailyQuotaCheck/sendQuotaReport_/bumpUsage_/getQuotaStats (quota observability moved to Vercel logs)
+  - `backup.ts/.js` (~5K) — Drive folder backup (Neon PITR replaces)
+  - `r2.ts/.js` (~7K) — Cloudflare R2 off-drive backup (Neon PITR replaces)
+  - `load.ts/.js` (~12K) — loadAll/loadOrder/getAuditByTarget (Postgres-only since §12 Step 1-5)
+  - `templates.ts/.js` (~4K) — addTemplate/deleteTemplate/setTemplateRow (templates now Postgres-native)
+  - `helpers.ts/.js` (~10K) — sheetToArray/findRowById/objectToRow/getConfig/getNextId stubs/findDuplicateOrderIds/setupOrderCounters (all callers in deleted modules)
+- **คงไว้:**
+  - `setup.ts/.js` — ops tool: `generateServiceToken` (regen `APPS_SCRIPT_TOKEN` every 5y) + `setupSheets` (first-time bootstrap). Editor-run, not called by dashboard
+  - `archive.ts/.js` — `archiveOldData` daily 3 AM trigger + `searchArchive` (serves /archive page) + setupArchiveTrigger/testArchiveNow
+  - `audit.ts/.js` — `appendAudit` (log searchArchive)
+  - `Code.js` (93 → 70 lines) — sheet IDs/headers + post-§12 module map comment block
+- **`push.sh`** — เดิม; `npx tsc -p tsconfig.build.json` compile + `clasp push -f`. Pushed 9 files (was 16) at 2026-05-28 12:24
+
+**Frontend surface (penprinting-dashboard):**
+- **Step B — `<AutoSync />` consolidate** ([`app/board/page.tsx`](app/board/page.tsx) · [`app/orders/page.tsx`](app/orders/page.tsx) · [`app/calendar/page.tsx`](app/calendar/page.tsx)) — ลบ `<AutoSync />` JSX + `import { AutoSync }` จาก 3 pages. 3 หน้านี้ delta-fetch live ตั้งแต่ 5/21 (`NEXT_PUBLIC_DELTA_FETCH`) + 5/22 (`NEXT_PUBLIC_DELTA_FETCH_LIST`); `<AutoSync />` redundant ตอน flag ON (production state). คง `useAutoSync` hook + `<AutoSync />` ใช้ที่ /analytics /cancelled /shipped (ไม่มี delta-fetch). `broadcastWrite` helper ยังอยู่ใน [lib/auto-sync.tsx](lib/auto-sync.tsx) (ใช้ทั่วระบบหลัง write mutations)
+- **Note:** legacy flag-OFF branches ยังอยู่ใน 3 pages (BoardData/OrdersData/CalendarData functions). Wholesale-strangler-finish opportunity — ดู NEXT-SESSION §1
+
+**Gates Node 22 (penprinting-dashboard):** type-check ✅ · lint ✅ · vitest **120/120** · build ✅. Apps Script: `npx tsc -p tsconfig.build.json` ✅ no errors
+
+**Deploy:**
+- **penprinting-dashboard**: git push → Vercel auto-deploy
+- **Apps Script**: clasp push -f ✅. **Pending คุณนุ๊ก deploy "Edit existing → New version"** ที่ Apps Script editor (URL คงเดิม)
+
+**Pending user actions:** Apps Script deploy + smoke verify /archive search + ค้างจากเซสชั่นก่อน (Vercel env vars cleanup, Sentry alert rule, /track ใบ #202605173 test, optional incognito test /board)
+
+**Trap หลีก:**
+- setup.ts ดูเหมือน "dead post-§12" แต่จริงๆ เป็น ops tool (token regen + bootstrap). คงไว้
+- `bumpUsage_` defined ใน quota.ts — ลบ quota.ts โดยไม่ trim api.ts call = ReferenceError runtime
+- `clasp push` ≠ deploy — push อัพ source, URL คงเดิม. ห้าม "New deployment" = URL เปลี่ยน = LINE webhook + frontend พังเงียบ
+
+**Commits:** TBD
+
+---
+
 ### §12 Step 1-5 — Postgres-only (Apps Script fallback retired) (2026-05-27)
 
 **Goal:** ตัด Apps Script dependency จาก dashboard reads + writes ในก้อนเดียว ([migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) Step 1-5). Apps Script project ยังคงอยู่ (host `searchArchive` until §13 + LINE webhook) แต่ dashboard ไม่เรียกอีก ยกเว้น /archive page.

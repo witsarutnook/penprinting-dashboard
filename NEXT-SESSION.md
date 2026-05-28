@@ -2,6 +2,46 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-28 — §12 Step 6 Apps Script cleanup + Step B `<AutoSync />` consolidate:** ✅ deployed dashboard, ⏳ AS clasp pushed (รอ user deploy "Edit existing → New version")
+>
+> ## งานที่ทำ
+> - **§12 Step 6 — Apps Script cleanup (production-monitoring/apps-script/dashboard/)** — ลบ dead handlers + dead modules หลัง §12 Step 1-5 ตัด AS path ทั้งหมด:
+>   - **api.ts (-50% LOC, 8.6K → 4.2K)** — เหลือแค่ `searchArchive` case ใน doPost; ลบ 25 handlers (17 write + 6 heal Phase 2 + 3 read + `saveAll`/`runQuotaCheck`/`runBackup`/`getQuotaStats`). ลบ `bumpUsage_()` calls (quota.ts ถูกลบ). doGet stub-return `Action retired (§12 Postgres-only): <action>` ถ้ามี stale frontend เรียก. inline `jsonResponse` helper (เพราะ helpers.ts ถูกลบ)
+>   - **auth.ts trim** — `ROLE_REQUIREMENTS` เหลือแค่ `searchArchive: ['admin']` (ลบ 9 admin + 6 sales actions ที่ retire ไปแล้ว)
+>   - **7 modules ถูกลบทั้งไฟล์** — `write.ts/.js` (~30K, 17 write handlers + heal helpers) · `quota.ts/.js` (~10K, dailyQuotaCheck/sendQuotaReport_/bumpUsage_/getQuotaStats) · `backup.ts/.js` (~5K, backupSheet + Drive folder triggers) · `r2.ts/.js` (~7K, r2BackupWeekly + S3 client) · `load.ts/.js` (~12K, loadAll/loadOrder/getAuditByTarget) · `templates.ts/.js` (~4K, addTemplate/deleteTemplate/setTemplateRow) · `helpers.ts/.js` (~10K, sheetToArray/findRowById/objectToRow/getConfig/getNextId stubs/findDuplicateOrderIds/setupOrderCounters — all dead after upstream callers gone)
+>   - **คงไว้:** `setup.ts/.js` (ops tool — `generateServiceToken` regen ทุก 5 ปี + `setupSheets` bootstrap) · `archive.ts/.js` (searchArchive + auto-archive trigger ยังจำเป็น) · `audit.ts/.js` (appendAudit ยัง log searchArchive) · `Code.js` (sheet IDs/headers + comment block trim)
+>   - **Code.js** — ลบ comment block ที่อ้างไฟล์ที่ลบไป + เขียน "post §12 module map" สั้น ๆ (70 → was 93 lines)
+>   - **clasp push -f** สำเร็จ 9 files (was 16). Gates: `npx tsc -p tsconfig.build.json` ✅ no errors. **คุณนุ๊กต้อง deploy "Edit existing → New version" ที่ Apps Script editor**
+> - **Step B — `<AutoSync />` consolidate** ([3 files, -1+8 lines]) — ลบ `<AutoSync />` JSX + import จาก [`app/board/page.tsx`](app/board/page.tsx) (legacy OFF path) · [`app/orders/page.tsx`](app/orders/page.tsx) · [`app/calendar/page.tsx`](app/calendar/page.tsx). 3 หน้านี้ delta-fetch path live ตั้งแต่ 5/21-22 → `<AutoSync />` redundant ตอนที่ flag ON (production state). คง `useAutoSync` hook + `<AutoSync />` ที่ /analytics /cancelled /shipped (ไม่มี delta-fetch). `broadcastWrite` helper ยังอยู่ใน lib/auto-sync.tsx (ใช้ทั่วระบบ). docstring `BoardDataDelta` ลบ comment เก่าที่อ้าง `<AutoSync>` ใน flag-OFF path
+> - **Gates Node 22 (penprinting-dashboard)** — type-check ✅ · lint ✅ · vitest **120 passed** · next build ✅
+>
+> ## ⏳ Pending user actions
+> 1. **Apps Script deploy** — เปิด Apps Script editor (project "penprinting dashboard data") → Deploy → Manage deployments → **Edit existing → New version** → publish. URL ของ deployment คงเดิม. หลัง deploy ตรวจ: /archive search ยังใช้งานได้ (เรียก `searchArchive` ผ่าน doPost)
+> 2. **Smoke verify Apps Script** หลัง deploy — /archive search ใช้งานได้ + Sentry monitor 30 นาที (no spike)
+> 3. **(ค้างจากเซสชั่นก่อน) Vercel env vars cleanup** — ลบ 14 `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
+> 4. **(ค้างจากเซสชั่นก่อน) Sentry alert rule** — `postgres-error=true` > 10/5min → notify
+> 5. **(ค้างจากเซสชั่นก่อน) Test /track ใบ `#202605173`** — verify step 5 "สินค้าพร้อมรับ" active
+> 6. **(Optional) Incognito test /board** — verify Dashlane extension theory
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Wholesale-strangler finish — ลบ legacy flag-OFF paths**: `NEXT_PUBLIC_DELTA_FETCH` (board) + `NEXT_PUBLIC_DELTA_FETCH_LIST` (orders/calendar) ON ใน prod ตั้งแต่ 5/21-22 = ครบ 1 wk แล้ว. ตาม [[feedback_wholesale_strangler_finish]]: delete ALL fallback paths in 1 commit (blast radius linear). Scope: ลบ `if (process.env.NEXT_PUBLIC_DELTA_FETCH... === '1') { ... }` branch จาก 3 pages + ลบ `BoardData`/`OrdersData`/`CalendarData` legacy components + ลบ env vars ออกจาก Vercel + ลบ `loadAll`/`computeBoard`/`computeCalendar`/`computeOrdersList` server-side callers (if dead). Effort ~1-1.5 ชม.
+> 2. **B consolidate continue (optional)** — ตอนนี้ Step B ทำแค่ ลบ `<AutoSync />` จาก 3 pages. `useAutoSync` hook + `<AutoSync />` ยังใช้ที่ /analytics /cancelled /shipped. ถ้าอยาก consolidate ครบ: เพิ่ม `useDeltaSync` ให้ /cancelled /shipped (โหลด jobs+orders+cancelled+shipped) → ลบ `useAutoSync` ทั้งหมด. /analytics ใช้ 60s ISR — ไม่ต้อง delta. ทำพร้อม #1 ได้ (related cleanup)
+> 3. **AI Quoting Phase 0** (deferred 5 sessions) — spec/scaffold
+> 4. **`/check-quota` skill** — manual Apps Script + CF Worker quota check (value น้อยลงมาก หลัง §12 Step 6 — quota loss = acceptable, planned)
+> 5. **DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL
+> 6. **Hydration warnings /board** — รอ user incognito test
+>
+> ### Decisions / Lessons
+> - **setup.ts ≠ dead code**: ตอน scope plan setup.ts ดูเหมือนเป็นไฟล์ retire-able (อยู่ในกลุ่ม "post-§12 cleanup") แต่จริงๆ มี `generateServiceToken` (run ทุก 5 ปี ตอน rotate APPS_SCRIPT_TOKEN) + `setupSheets` (first-time bootstrap). ลบ = footgun สำหรับ future ops. **Rule of thumb**: ถ้า function รัน manually จาก Apps Script editor (ไม่ใช่ดูแลโดย dashboard) → ตรวจก่อนว่าเป็น admin tool หรือ truly-dead. Common admin tools: token mint, schema migrate, one-time data fix, manual scan/repair
+> - **helpers.ts plan was wrong — fully dead after upstream callers gone**: NEXT-SESSION เก่าระบุ "คง sheetToArray + findRowById" แต่ grep callers พบว่า callers อยู่ใน load.ts/templates.ts/write.ts ทั้งหมด (ลบไปแล้ว). archive.ts/audit.ts ใช้ raw `getValues()` ไม่พึ่ง helpers. **Always verify caller graph ก่อน trim** — plan ใน roadmap อาจเก่าหรือ assumption ผิด ([[feedback_audit_backlog_hypothesis]])
+> - **clasp push ≠ deploy** ([[feedback_diagnostic_gs_clasp_push]]): push อัพ source ไป Apps Script editor; deployment URL ผูกกับ "Manage deployments → Edit existing → New version". URL คงเดิม = LINE webhook + frontend ยังเรียกได้. **อย่ากด "New deployment"** = URL เปลี่ยน = ระบบพังเงียบ
+> - **`bumpUsage_` lived in quota.ts** — quota.ts ถูกลบ → api.ts calls `bumpUsage_()` กลายเป็น ReferenceError. ก่อนลบ module ใหญ่ ๆ grep cross-file usage ของ helpers internal เสมอ
+> - **Step B minimal vs wholesale**: user เลือก minimal ("ลบเฉพาะ 3 pages") = ลบแค่ `<AutoSync />` ใน flag-OFF branch ที่ effectively dead. ไม่ลบ branch ทั้งก้อน = leaves legacy path partially-working (no auto-refresh). มี wholesale opportunity ค้างใน #1 ของ "งานหลัก session หน้า"
+>
+> **Commits:** TBD — Step B in penprinting-dashboard repo · Step 6 lives in production-monitoring/ (not git-tracked, deployed via clasp)
+>
+> ---
+>
 > **Session 2026-05-27 — §12 Apps Script shrink (Step 1-5) + /track shipping-queue fix + board cleanup:** ✅ deployed
 >
 > ## งานที่ทำ

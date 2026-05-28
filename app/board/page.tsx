@@ -15,7 +15,6 @@ import type { Urgency } from '@/lib/calendar';
 import { Column } from './column';
 import { BoardClient } from './board-client';
 import { BoardToolbar } from './toolbar';
-import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { KPIBar } from '@/components/board/kpi-bar';
 import { FilterChips } from '@/components/board/filter-chips';
@@ -113,7 +112,6 @@ export default async function BoardPage({
 
   return (
     <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
       <UndoProvider>
       <PendingMutationsProvider>
       <BulkModeProvider>
@@ -224,8 +222,7 @@ async function BoardData({
  *  (sidebar, date row, search) streams to the client first.
  *
  *  On a Postgres error there is no client mount to retry, so the error
- *  surfaces as a panel; the user reloads. (The flag-OFF path's `<AutoSync>`
- *  would retry, but delta mode drops it — acceptable for an opt-in flag.) */
+ *  surfaces as a panel; the user reloads. */
 async function BoardDataDelta({ session }: { session: Session }) {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
