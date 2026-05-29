@@ -300,6 +300,24 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Hot-fix: drop `sync_meta` freshness gate from `lib/api-postgres.ts` (2026-05-28)
+
+**Bug:** /analytics threw `Postgres mirror stale: jobs last synced 1491 min ago` ~24 hours after the §12 Step 1-5 deploy ([`745d36f`](https://github.com/witsarutnook/penprinting-dashboard/commit/745d36f)). §12 retired the `sync-from-sheet` cron (the only writer of `sync_meta.last_sync_at`), but `lib/api-postgres.ts` still ran `checkStaleness()` in `loadAllFromPostgres` + `getAuditByTargetFromPostgres` and threw `PostgresStaleError` once the 30-min threshold tripped. Same anti-pattern the [2026-05-12 `loadOrderFromPostgres` refactor](#single-order-load-refactor-2026-05-12) had removed — just left in the other two functions.
+
+**Why gates passed but production broke:** pre-merge gates (vitest/lint/build/manual smoke) all ran while `last_sync_at` was still recent — the check passed. Deploy shipped. ~24 hours later the threshold crossed and production broke for the first time. Time-threshold checks escape test coverage because they're testing a wall-clock condition no fixture controls.
+
+**Fix:** deleted `checkStaleness()` + `STALENESS_LIMIT_MS` + 2 pre-gate call sites from [`lib/api-postgres.ts`](lib/api-postgres.ts). Renamed `PostgresStaleError` → `PostgresReadError` (the class now only fires for "env not configured" / "row not found", neither of which is staleness) + message prefix `Postgres read failed:`. Updated `/track` route comment to match.
+
+**Regression tests (+6, total 126):** new "no sync_meta query" invariant tests for `loadAllFromPostgres` + `getAuditByTargetFromPostgres`; reworded the existing `loadOrderFromPostgres` test to cite both the 2026-05-18 and 2026-05-28 regressions.
+
+**Lesson** (new memory [[feedback_retire_cron_grep_readers]]): when retiring a sync cron, grep readers of every column it wrote BEFORE merging. Time-threshold checks bomb hours after deploy when the staleness window trips — they always pass at deploy time. Prefer presence-checks (`row exists?`) over freshness-checks (`NOW() - x > T?`) against your own authoritative store.
+
+**Gates Node 22:** type-check ✅ · lint ✅ · vitest **126/126** · build ✅
+
+**Commit:** [`5b61973`](https://github.com/witsarutnook/penprinting-dashboard/commit/5b61973)
+
+---
+
 ### §12 Step 6 — Apps Script cleanup + `<AutoSync />` consolidate (2026-05-28)
 
 **Goal:** ปิด §12 ([migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) Step 6) — ลบ dead handlers + dead modules ใน Apps Script project หลัง §12 Step 1-5 ตัด dashboard→AS path. + Step B ปลีกย่อย: ลบ `<AutoSync />` JSX จาก 3 หน้าที่ delta-fetch live แล้ว (redundant).
