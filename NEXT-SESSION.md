@@ -2,6 +2,45 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-05-29 — SEO fix (og:image dropped on 7 pages, web + photobook) + Photobook social campaign deliverable:** ✅ both Vercel projects auto-deployed, 📄 campaign docs handed to team
+>
+> ## งานที่ทำ
+>
+> ### SEO bug fix — restore `og:image` + twitter card on 7 pages
+> - **Audit live** (curl + grep — NOT WebFetch ที่ markdown-convert ⇒ false negative ทิ้ง `<head>`): เจอ og:image หาย + twitter:card ดรอปเป็น "summary" บน 7 หน้า:
+>   - penprinting-web: `/`, `/contact`
+>   - photobook: `/sizes/square-5-5`, `/sizes/square-8`, `/sizes/rect-8x12`, `/sizes/rect-a3`, `/wedding-guestbook`
+>   - หน้าที่เหลือ 14 หน้า (services index + 5 service detail + blog + 5 blog detail + faq + about + portfolio + photobook /) ✅ ถูกหมด
+> - **Root cause** — Next.js merge metadata แบบ **shallow ที่ระดับ openGraph/twitter** (replace ไม่ใช่ deep merge). ทุกหน้าที่พัง redefine openGraph โดยไม่ใส่ images/twitter card → `defaultMetadata` fields ที่ inherit หาย. + photobook nested route (`/sizes/*`, `/wedding-guestbook`) มี gotcha เพิ่ม: file-based `app/opengraph-image.tsx` ที่ root **ไม่ propagate** ลงมา nested route
+> - **Fix** — เพิ่ม `images: [{url, width: 1200, height: 630, alt}]` + `type/locale/siteName` ใน openGraph, เพิ่ม `card: 'summary_large_image'` + `images` ใน twitter ทั้ง 4 ไฟล์. photobook ชี้ `SITE_CONFIG.ogImage` (`/opengraph-image` dynamic gen). ใส่ comment กำกับ shallow-merge gotcha กัน recur
+> - **Gates** — type-check ✅ ทั้ง 2 repo · live verify ทั้ง 7 หน้า og:image=1 + twitter:card=summary_large_image
+>
+> ### Photobook social campaign plan (deliverable)
+> - **"Held in Your Hands"** — แคมเปญ 12 สัปดาห์ (มิ.ย.–ส.ค. 2026), awareness goal, **organic-first** (ยังไม่ยิงแอด), peak Mother's Day 12 ส.ค. ใช้ skills `marketing:campaign-plan` + `marketing:draft-content` + `pdf`
+> - **Deliverables** (เก็บใน `penprintphotobook/marketing/` — untracked, user ขอเก็บ in-workspace):
+>   - `Penprint-Photobook-Campaign-Brief.pdf` (2 หน้า A4 white-minimal, สรุปสั้น ส่ง LINE/email)
+>   - `Penprint-Photobook-Campaign-Plan.html` (responsive, 9 ส่วน: brief ละเอียด + คอนเทนต์ 2 สัปดาห์แรกพร้อมแคปชั่นจริง 6 โพสต์ + สคริปต์ Reel 2 ตัว + Stories + how-to ทีม)
+> - Brand voice photobook applied: English-first, Quote→Story→Product→CTA, light emoji 🤍✨ only, no "ลด!! ด่วน!!"
+>
+> ## ⏳ Pending user actions
+> 1. **(Optional) Facebook Sharing Debugger** — refresh OG cache สำหรับลิงก์ทั้ง 7 หน้าที่ fix: https://developers.facebook.com/tools/debug/ — ไม่งั้น FB cache เก่าจะยังโชว์ no-preview จนกว่าจะ recrawl เอง
+> 2. **`penprintphotobook/marketing/` untracked** — ตัดสินใจว่าจะ git-track (commit เป็น marketing collateral) หรือ .gitignore (เก็บแค่ local). ผมรอ confirm — ตอนนี้ขึ้น `?? marketing/` ทุก `git status`
+> 3. **(ค้างจาก 2026-05-28)** — Vercel env vars cleanup (14 WRITE_*_TO_POSTGRES + PHASE2_OWNS_CORE_TABLES + READ_FROM_POSTGRES), Sentry alert rule (postgres-error=true >10/5min), /track #202605173 verify step 5 active, (optional) incognito hydration test /board
+>
+> ## 🎯 งานหลัก session หน้า (ตัวเลือก)
+> 1. **Refactor `pageMetadata()` helper** — สร้างใน `lib/seo.ts` ทั้ง 2 repo ที่ wrap defaultMetadata properly → กัน shallow-merge bug recur (ตอนนี้ point fix 4 ไฟล์ ×2 repos, refactor opportunity)
+> 2. **Photobook SEO content push** (priority ค้างจาก 2026-05-17) — blog/MDX content รับ buyer-intent keyword (photobook ราคา, ทำอัลบั้มแต่งงานที่ไหนดี, wedding album ทำเอง) + ดึงรีวิวจริง 15 อันจาก FB → render บนหน้า + ใส่ Review + aggregateRating markup กลับ
+> 3. **(ค้างจาก 2026-05-28)** — Wholesale-strangler finish dashboard flag-OFF paths (NEXT_PUBLIC_DELTA_FETCH + NEXT_PUBLIC_DELTA_FETCH_LIST) — ON ใน prod ครบ 1 wk แล้ว
+>
+> ### Decisions / Lessons
+> - **Next.js metadata merge is shallow** ([[feedback_nextjs_metadata_shallow_merge]]) — openGraph/twitter redefine = replace ทั้ง object → defaultMetadata fields ที่ไม่ได้ใส่ซ้ำหาย. file-based `opengraph-image.tsx` apply เฉพาะ root segment — ไม่ propagate ลงมา nested route. TS pass, build pass, page render ปกติ — bug เงียบที่ social share preview เท่านั้น (ไม่มี runtime error ให้เห็น)
+> - **Verify SEO ด้วย curl + grep ตรงๆ ไม่ใช่ WebFetch** — WebFetch แปลง HTML→markdown ทำให้ `<head>` หาย → false negative "ไม่มี meta tag ทั้งเว็บ". ครั้งนี้ถ้าเชื่อ WebFetch จะเข้าใจผิดว่าทุกหน้าพัง (จริงแค่ 7 จาก 21) — ใช้ `curl -s $URL | grep -oE '<meta[^>]*>'` ตรวจของจริง
+> - **`penprintphotobook/marketing/` = deliverables ไม่ใช่ scratch** — user explicitly อยากเก็บ in-workspace ไม่ใช่ Desktop. keep untracked แต่ keep — เลื่อนตัดสินใจ git-track/ignore รอบหน้า
+>
+> **Commits**: penprinting-web — `fix(seo): restore og:image + twitter card on / and /contact` · penprintphotobook — `fix(seo): restore og:image on /sizes/* and /wedding-guestbook`
+>
+> ---
+>
 > **Session 2026-05-28 — §12 Step 6 Apps Script cleanup + Step B `<AutoSync />` consolidate + hot-fix /analytics sync_meta gate:** ✅ deployed dashboard, ⏳ AS clasp pushed (รอ user deploy "Edit existing → New version")
 >
 > ## งานที่ทำ
