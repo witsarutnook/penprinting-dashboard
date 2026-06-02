@@ -3,14 +3,10 @@ import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
-import { loadAll, AppsScriptError } from '@/lib/api';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession, type Session } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { IconSearch } from '@/lib/icons';
-import { resolvePerPage, resolvePage } from '@/lib/page-size';
-import { computeOrdersList } from '@/lib/orders-list';
-import { OrdersBody } from './orders-body';
 import { OrdersListClient } from './orders-list-client';
 
 export const metadata: Metadata = {
@@ -34,16 +30,11 @@ const STATUS_FILTERS = [
   { key: 'cancelled', label: 'ยกเลิก' },
 ];
 
-interface ResolvedFilters {
+interface ChromeFilters {
   query: string;
   statusFilter: string;
   fromIso: string;
   toIso: string;
-  perPage: number;
-  /** 1-based page index requested via `?page=`. Final clamping against
-   *  `Math.ceil(filtered.length / perPage)` happens inside OrdersTable
-   *  once the filter pipeline has produced its visible row count. */
-  page: number;
 }
 
 export default async function OrdersListPage({
@@ -60,113 +51,38 @@ export default async function OrdersListPage({
     redirect('/board?dept=post');
   }
 
-  const filters: ResolvedFilters = {
+  // Chrome filters (FilterForm defaults + StatusPills active state) come from
+  // searchParams. Filtering itself happens client-side inside OrdersListClient
+  // via useSearchParams — single source of truth, no server round-trip needed.
+  const chrome: ChromeFilters = {
     query: (searchParams.q || '').trim().toLowerCase(),
     statusFilter: searchParams.status || '',
     fromIso: (searchParams.from || '').trim(),
     toIso: (searchParams.to || '').trim(),
-    perPage: resolvePerPage(searchParams.per),
-    page: resolvePage(searchParams.page),
   };
-
-  // Suspense key — re-renders body when filters change without holding the
-  // prior result on screen.
-  const dataKey = `${filters.query}|${filters.statusFilter}|${filters.fromIso}|${filters.toIso}|${filters.perPage}|${filters.page}`;
-
-  // Delta-fetch (NEXT_PUBLIC_DELTA_FETCH_LIST) — client-driven list: the
-  // server ships a bootstrap snapshot (incl. shipped/cancelled orderId sets),
-  // then the client delta-polls and re-runs `computeOrdersList` locally.
-  // Filters + pagination stay URL-driven. Flag OFF → the server-rendered
-  // `router.refresh()` path below, untouched.
-  if (process.env.NEXT_PUBLIC_DELTA_FETCH_LIST === '1') {
-    return (
-      <DashboardShell user={session.user} role={session.role}>
-        <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-          <div className="pl-4 pr-12 sm:pl-6 sm:pr-6 py-3 flex items-center gap-2">
-            <h1 className="text-xl font-bold text-stone-900">รายการใบสั่งงาน</h1>
-          </div>
-        </header>
-        <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto space-y-4">
-          <FilterForm filters={filters} />
-          <StatusPills filters={filters} />
-          <Suspense fallback={<OrdersSkeleton />}>
-            <OrdersDataDelta session={session} />
-          </Suspense>
-        </div>
-      </DashboardShell>
-    );
-  }
 
   return (
     <DashboardShell user={session.user} role={session.role}>
-      {/* Auditor M6 (2026-05-08): reserve pr-12 on mobile so the floating
-          MobileUserMenu (top-2 right-2 w-9) doesn't overlap the title on
-          narrow widths (iPhone SE 320px). Desktop has plenty of room +
-          a sidebar instead, so the reservation is mobile-only. */}
       <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
         <div className="pl-4 pr-12 sm:pl-6 sm:pr-6 py-3 flex items-center gap-2">
           <h1 className="text-xl font-bold text-stone-900">รายการใบสั่งงาน</h1>
         </div>
       </header>
-
       <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto space-y-4">
-        {/* Filter form — no data dependency, render in the first chunk */}
-        <FilterForm filters={filters} />
-        <StatusPills filters={filters} />
-
-        <Suspense key={dataKey} fallback={<OrdersSkeleton />}>
-          <OrdersData filters={filters} session={session} />
+        <FilterForm filters={chrome} />
+        <StatusPills filters={chrome} />
+        <Suspense fallback={<OrdersSkeleton />}>
+          <OrdersDataDelta session={session} />
         </Suspense>
       </div>
     </DashboardShell>
   );
 }
 
-/** Server-rendered data section (flag OFF). Awaits `loadAll()`, enriches via
- *  the shared `computeOrdersList`, and renders the shared `<OrdersBody>`. */
-async function OrdersData({
-  filters,
-  session,
-}: {
-  filters: ResolvedFilters;
-  session: Session;
-}) {
-  let snap;
-  let errorMessage: string | null = null;
-  try {
-    snap = await loadAll();
-  } catch (err) {
-    errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
-  }
-
-  const result = snap
-    ? computeOrdersList(
-        {
-          orders: snap.orders,
-          jobs: snap.jobs,
-          shippedOrderIds: snap.shipped.filter((s) => s.orderId != null).map((s) => Number(s.orderId)),
-          cancelledOrderIds: snap.cancelled.filter((c) => c.orderId != null).map((c) => Number(c.orderId)),
-        },
-        filters,
-      )
-    : { rows: [], totalCount: 0, orphans: [], duplicates: [] };
-
-  return (
-    <OrdersBody
-      result={result}
-      role={session.role}
-      perPage={filters.perPage}
-      page={filters.page}
-      hasActiveFilter={!!(filters.query || filters.statusFilter || filters.fromIso || filters.toIso)}
-      errorMessage={errorMessage}
-    />
-  );
-}
-
-/** Delta-fetch data section (NEXT_PUBLIC_DELTA_FETCH_LIST path). Awaits the
- *  bootstrap snapshot — `loadBoardDelta(null, { lists: true })` returns jobs +
- *  orders + the shipped/cancelled orderId sets — then hands it to the client
- *  `<OrdersListClient>`. */
+/** Bootstrap data fetcher — awaits the initial snapshot via
+ *  `loadBoardDelta(null, { lists: true })` (jobs + orders + shipped/cancelled
+ *  orderId sets) and hands it to the client `<OrdersListClient>`, which then
+ *  delta-polls and re-runs `computeOrdersList` locally. */
 async function OrdersDataDelta({ session }: { session: Session }) {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
@@ -201,7 +117,7 @@ async function OrdersDataDelta({ session }: { session: Session }) {
 
 /** Filter form — searchParams-driven defaults, no data dep. Renders in
  *  the first server chunk. */
-function FilterForm({ filters }: { filters: ResolvedFilters }) {
+function FilterForm({ filters }: { filters: ChromeFilters }) {
   const { query, statusFilter, fromIso, toIso } = filters;
   return (
     <form action="/orders" className="flex flex-wrap items-end gap-2">
@@ -250,7 +166,7 @@ function FilterForm({ filters }: { filters: ResolvedFilters }) {
   );
 }
 
-function StatusPills({ filters }: { filters: ResolvedFilters }) {
+function StatusPills({ filters }: { filters: ChromeFilters }) {
   const { query, statusFilter, fromIso, toIso } = filters;
   return (
     <div className="flex flex-wrap gap-2">

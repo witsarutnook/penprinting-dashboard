@@ -25,17 +25,14 @@ const DEPT_ENGLISH: Record<Dept, string> = {
 };
 
 /**
- * Client-side `/board` body — the delta-fetch counterpart of the server
- * `BoardData` component in page.tsx. Active only when `NEXT_PUBLIC_DELTA_FETCH`
- * is set (Delta-fetch P3).
+ * Client-side `/board` body. Holds jobs + orders in local state via
+ * `useDeltaSync`, which polls `/api/board/delta` and merges only changed
+ * rows — no per-tick `router.refresh()` / full board re-render. Filtering
+ * (`?dept=` `?u=` `?q=`) runs client-side off `useSearchParams`, so
+ * changing a filter re-buckets instantly with no server round-trip or
+ * skeleton flash.
  *
- * Holds jobs + orders in local state via `useDeltaSync`, which polls
- * `/api/board/delta` and merges only changed rows — no per-tick
- * `router.refresh()` / full board re-render. Filtering (`?dept=` `?u=` `?q=`)
- * runs client-side off `useSearchParams`, so changing a filter re-buckets
- * instantly with no server round-trip or skeleton flash.
- *
- * Closes audit findings:
+ * Audit closures:
  *  - PA-H2 — initial fetch is `loadBoardDelta(null)` (jobs + orders only),
  *            not `loadAll()`'s 5-table over-fetch.
  *  - PA-M2 — `mergeDelta` returns the same state ref on a no-op poll, so an

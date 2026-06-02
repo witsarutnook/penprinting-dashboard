@@ -9,14 +9,10 @@ import { useDeltaSync } from '@/lib/delta-sync';
 import { OrdersBody } from './orders-body';
 
 /**
- * Client-side `/orders` body — the delta-fetch counterpart of the server
- * `OrdersData` in page.tsx. Active only when `NEXT_PUBLIC_DELTA_FETCH_LIST`
- * is set.
- *
- * `useDeltaSync({ lists: true })` delta-polls jobs/orders and refreshes the
- * shipped/cancelled orderId sets. `computeOrdersList` (shared verbatim with
- * the server path) enriches + filters client-side, so changing a filter or
- * page re-runs locally off `useSearchParams` — no server round-trip, no
+ * Client-side `/orders` body. `useDeltaSync({ lists: true })` delta-polls
+ * jobs/orders and refreshes the shipped/cancelled orderId sets.
+ * `computeOrdersList` enriches + filters client-side, so changing a filter
+ * or page re-runs locally off `useSearchParams` — no server round-trip, no
  * per-tick `router.refresh()` full re-render.
  */
 export function OrdersListClient({

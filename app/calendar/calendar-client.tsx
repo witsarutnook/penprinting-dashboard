@@ -15,15 +15,12 @@ import { useDeltaSync } from '@/lib/delta-sync';
 import { CalendarGrid } from './grid';
 
 /**
- * Client-side `/calendar` body — the delta-fetch counterpart of the server
- * `CalendarData` in page.tsx. Active only when `NEXT_PUBLIC_DELTA_FETCH_LIST`
- * is set.
- *
- * `computeCalendar` reads only jobs + orders, so this reuses the board delta
- * endpoint (`/api/board/delta`) + `useDeltaSync` verbatim — no shipped /
- * cancelled needed. Month nav + filters stay URL-driven; changing them
- * re-runs `computeCalendar` client-side off `useSearchParams`, with no server
- * round-trip and no per-tick `router.refresh()` full re-render.
+ * Client-side `/calendar` body. `computeCalendar` reads only jobs + orders,
+ * so this reuses the board delta endpoint (`/api/board/delta`) +
+ * `useDeltaSync` verbatim — no shipped / cancelled needed. Month nav +
+ * filters stay URL-driven; changing them re-runs `computeCalendar`
+ * client-side off `useSearchParams`, with no server round-trip and no
+ * per-tick `router.refresh()` full re-render.
  */
 function parseMonth(input: string | null): { year: number; month: number } {
   if (input) {

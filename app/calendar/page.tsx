@@ -3,17 +3,8 @@ import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { loadAll, AppsScriptError } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
-import {
-  computeCalendar,
-  getBangkokToday,
-  type Dept,
-  type Urgency,
-  URGENCY_BADGE,
-  URGENCY_COLORS,
-} from '@/lib/calendar';
-import { CalendarGrid } from './grid';
+import { getBangkokToday } from '@/lib/calendar';
 import { CalendarClient } from './calendar-client';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { IconArrowLeft, IconArrowRight } from '@/lib/icons';
@@ -30,9 +21,9 @@ interface SearchParams {
   customer?: string;
 }
 
-interface CalFilters {
-  dept: Dept | '';
-  urgency: Urgency | '';
+interface ChromeFilters {
+  dept: string;
+  urgency: string;
   customer: string;
 }
 
@@ -62,9 +53,12 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
   }
 
   const { year, month } = parseMonth(searchParams.m);
-  const filters: CalFilters = {
-    dept: (searchParams.dept || '') as Dept | '',
-    urgency: (searchParams.urgency || '') as Urgency | '',
+  // Chrome filters (FilterBar defaults + nav-link preservation) come from
+  // searchParams. The calendar grid itself filters client-side inside
+  // CalendarClient via useSearchParams.
+  const chrome: ChromeFilters = {
+    dept: searchParams.dept || '',
+    urgency: searchParams.urgency || '',
     customer: searchParams.customer || '',
   };
 
@@ -72,13 +66,13 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
   // searchParams alone, so they render in the first chunk.
   const prev = (() => {
     const d = new Date(year, month - 1, 1);
-    return makeQuery(d.getFullYear(), d.getMonth(), filters);
+    return makeQuery(d.getFullYear(), d.getMonth(), chrome);
   })();
   const next = (() => {
     const d = new Date(year, month + 1, 1);
-    return makeQuery(d.getFullYear(), d.getMonth(), filters);
+    return makeQuery(d.getFullYear(), d.getMonth(), chrome);
   })();
-  const todayHref = makeQuery(undefined, undefined, filters);
+  const todayHref = makeQuery(undefined, undefined, chrome);
 
   const monthLabelFromInput = (() => {
     const fmt = new Intl.DateTimeFormat('th-TH', {
@@ -89,36 +83,6 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
     return fmt.format(new Date(year, month, 1));
   })();
 
-  const dataKey = `${year}-${month}|${filters.dept}|${filters.urgency}|${filters.customer}`;
-
-  // Delta-fetch (NEXT_PUBLIC_DELTA_FETCH_LIST) — client-driven calendar: the
-  // server ships a bootstrap snapshot, then the client delta-polls and
-  // re-runs computeCalendar locally. Month nav + filters stay URL-driven.
-  // Flag OFF → the server-rendered `router.refresh()` path below, untouched.
-  if (process.env.NEXT_PUBLIC_DELTA_FETCH_LIST === '1') {
-    return (
-      <DashboardShell user={session.user} role={session.role}>
-        <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
-          <div className="px-4 sm:px-6 py-3">
-            <h1 className="text-lg sm:text-xl font-bold text-stone-900">ปฏิทิน</h1>
-          </div>
-        </header>
-        <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto">
-          <NavBar
-            monthLabel={monthLabelFromInput}
-            prevHref={prev}
-            nextHref={next}
-            todayHref={todayHref}
-          />
-          <FilterBar current={filters} year={year} month={month} />
-          <Suspense fallback={<CalendarSkeleton />}>
-            <CalendarDataDelta />
-          </Suspense>
-        </div>
-      </DashboardShell>
-    );
-  }
-
   return (
     <DashboardShell user={session.user} role={session.role}>
       <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
@@ -126,7 +90,6 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
           <h1 className="text-lg sm:text-xl font-bold text-stone-900">ปฏิทิน</h1>
         </div>
       </header>
-
       <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto">
         <NavBar
           monthLabel={monthLabelFromInput}
@@ -134,57 +97,19 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
           nextHref={next}
           todayHref={todayHref}
         />
-        <FilterBar current={filters} year={year} month={month} />
-
-        <Suspense key={dataKey} fallback={<CalendarSkeleton />}>
-          <CalendarData year={year} month={month} filters={filters} />
+        <FilterBar current={chrome} year={year} month={month} />
+        <Suspense fallback={<CalendarSkeleton />}>
+          <CalendarDataDelta />
         </Suspense>
       </div>
     </DashboardShell>
   );
 }
 
-async function CalendarData({
-  year, month, filters,
-}: {
-  year: number;
-  month: number;
-  filters: CalFilters;
-}) {
-  let calendar;
-  let errorMessage: string | null = null;
-  try {
-    const data = await loadAll();
-    calendar = computeCalendar(data, year, month, filters);
-  } catch (err) {
-    errorMessage = err instanceof AppsScriptError
-      ? err.message
-      : err instanceof Error
-        ? err.message
-        : String(err);
-  }
-
-  if (errorMessage) return <ErrorPanel message={errorMessage} />;
-  if (!calendar) return null;
-
-  return (
-    <>
-      <Summary totals={calendar.totalsByUrgency} totalJobs={calendar.totalJobs} />
-      <div className="mt-4">
-        <CalendarGrid days={calendar.days} todayKey={calendar.todayKey} />
-      </div>
-      <p className="text-xs text-stone-400 mt-4 text-right">
-        cache 60s · server-rendered · Asia/Bangkok TZ
-      </p>
-    </>
-  );
-}
-
-/** Delta-fetch data section (NEXT_PUBLIC_DELTA_FETCH_LIST path). Awaits the
- *  bootstrap snapshot — `loadBoardDelta(null)` returns jobs + orders, which
- *  is everything `computeCalendar` reads — then hands it to the client
- *  `<CalendarClient>`. Lives behind a Suspense boundary so the page shell
- *  (header, month nav, filter bar) streams first. */
+/** Bootstrap data fetcher — awaits the initial snapshot via
+ *  `loadBoardDelta(null)` (jobs + orders, which is everything
+ *  `computeCalendar` reads) and hands it to the client `<CalendarClient>`,
+ *  which then delta-polls and re-runs `computeCalendar` locally. */
 async function CalendarDataDelta() {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
@@ -290,7 +215,7 @@ function FilterBar({
   year,
   month,
 }: {
-  current: { dept?: string; urgency?: string; customer?: string };
+  current: ChromeFilters;
   year: number;
   month: number;
 }) {
@@ -303,7 +228,7 @@ function FilterBar({
       <input type="hidden" name="m" value={formatMonth(year, month)} />
       <select
         name="dept"
-        defaultValue={current.dept || ''}
+        defaultValue={current.dept}
         className="px-2 py-1.5 border border-stone-200 rounded-md bg-white"
       >
         <option value="">— ทุกแผนก —</option>
@@ -313,7 +238,7 @@ function FilterBar({
       </select>
       <select
         name="urgency"
-        defaultValue={current.urgency || ''}
+        defaultValue={current.urgency}
         className="px-2 py-1.5 border border-stone-200 rounded-md bg-white"
       >
         <option value="">— ทุกความเร่งด่วน —</option>
@@ -324,7 +249,7 @@ function FilterBar({
       </select>
       <input
         name="customer"
-        defaultValue={current.customer || ''}
+        defaultValue={current.customer}
         placeholder="ค้นชื่อลูกค้า"
         className="px-3 py-1.5 border border-stone-200 rounded-md bg-white flex-grow min-w-[140px]"
       />
@@ -335,40 +260,6 @@ function FilterBar({
         กรอง
       </button>
     </form>
-  );
-}
-
-function Summary({
-  totals,
-  totalJobs,
-}: {
-  totals: Record<Urgency, number>;
-  totalJobs: number;
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-stone-200 p-3 mb-3 flex flex-wrap gap-3 items-center text-sm">
-      <span className="text-stone-500">งานในเดือนนี้:</span>
-      <span className="font-medium text-stone-900">{totalJobs} รายการ</span>
-      <Pill urgency="overdue" label="เลยกำหนด" count={totals.overdue} />
-      <Pill urgency="dday" label="วันนี้" count={totals.dday} />
-      <Pill urgency="urgent" label="ด่วน" count={totals.urgent} />
-      <Pill urgency="normal" label="ปกติ" count={totals.normal} />
-    </div>
-  );
-}
-
-function Pill({ urgency, label, count }: { urgency: Urgency; label: string; count: number }) {
-  if (count === 0) return null;
-  const badge = URGENCY_BADGE[urgency];
-  const dotColor = URGENCY_COLORS[urgency];
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
-      style={{ background: badge.bg, color: badge.fg }}
-    >
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />
-      {label} {count}
-    </span>
   );
 }
 
