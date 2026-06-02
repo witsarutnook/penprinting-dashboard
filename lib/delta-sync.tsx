@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Job, Order } from '@/lib/types';
+import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 import type { BoardDelta } from '@/lib/board-delta';
 import {
   POLL_ACTIVE_MS,
@@ -27,6 +27,12 @@ import {
  *
  * The poll cadence (adaptive backoff + 30-min hard-stop + skip guards) is
  * shared verbatim with `useAutoSync` via lib/poll-schedule.ts.
+ *
+ * ── Opts ──
+ * `{ lists: true }` — also tracks shipped/cancelled orderId sets (/orders).
+ * `{ fullLists: true }` — also tracks FULL shipped + cancelled rows + uses
+ *   the server's current-ID-set to drop rows hard-deleted by /restore
+ *   (/shipped + /cancelled). Supersedes `lists`.
  */
 
 export interface DeltaState {
@@ -36,18 +42,55 @@ export interface DeltaState {
    *  and /calendar (they don't request `?lists=1`); populated on /orders. */
   shippedOrderIds: number[];
   cancelledOrderIds: number[];
+  /** Full shipped / cancelled rows — populated only when fullLists is set.
+   *  Empty `[]` for other consumers so client code stays type-safe. */
+  shipped: Shipped[];
+  cancelled: Cancelled[];
 }
 
 /** True when `b` carries no change vs `a`. `b === undefined` → the delta
- *  didn't include list data (a /board or /calendar poll) → treat as no
- *  change so those callers stay byte-identical to the pre-lists behavior. */
-function sameOrderIds(a: number[], b: number[] | undefined): boolean {
+ *  didn't include that list → treat as no change so callers stay
+ *  byte-identical to the pre-extension behavior. */
+function sameIdList(a: number[], b: number[] | undefined): boolean {
   if (b === undefined) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+/** Apply a fullLists update: drop any current rows whose id is not in
+ *  `allowedIds` (server hard-deletes from /restore), then upsert `newRows`
+ *  (rows added since the cursor). Returns the SAME `current` reference when
+ *  nothing changed so an idle poll never re-renders.
+ *
+ *  Sort is id-DESC to match the server bootstrap order (`ORDER BY id DESC`)
+ *  so the client snapshot stays byte-stable. */
+function applyFullList<T extends { id: number | string }>(
+  current: T[],
+  allowedIds: number[],
+  newRows: T[],
+): T[] {
+  // Fast path: nothing added AND every current row survives the allow-list
+  // AND counts match (no deletes either) → same ref, no re-render.
+  if (newRows.length === 0 && current.length === allowedIds.length) {
+    const allowed = new Set(allowedIds);
+    let ok = true;
+    for (const r of current) {
+      if (!allowed.has(Number(r.id))) { ok = false; break; }
+    }
+    if (ok) return current;
+  }
+  // Slow path: rebuild.
+  const allowed = new Set(allowedIds);
+  const m = new Map<number, T>();
+  for (const r of current) {
+    const id = Number(r.id);
+    if (allowed.has(id)) m.set(id, r);
+  }
+  for (const r of newRows) m.set(Number(r.id), r);
+  return Array.from(m.values()).sort((a, b) => Number(b.id) - Number(a.id));
 }
 
 /**
@@ -64,11 +107,8 @@ function sameOrderIds(a: number[], b: number[] | undefined): boolean {
 export function mergeDelta(state: DeltaState, delta: BoardDelta): DeltaState {
   const noJobChanges = delta.jobs.length === 0 && delta.deletedJobIds.length === 0;
   const noOrderChanges = delta.orders.length === 0;
-  // shippedOrderIds / cancelledOrderIds arrive FULL when present (/orders);
-  // keep the existing ref when unchanged so an idle poll never re-renders.
-  const shippedSame = sameOrderIds(state.shippedOrderIds, delta.shippedOrderIds);
-  const cancelledSame = sameOrderIds(state.cancelledOrderIds, delta.cancelledOrderIds);
-  if (noJobChanges && noOrderChanges && shippedSame && cancelledSame) return state;
+  const shippedOrderIdsSame = sameIdList(state.shippedOrderIds, delta.shippedOrderIds);
+  const cancelledOrderIdsSame = sameIdList(state.cancelledOrderIds, delta.cancelledOrderIds);
 
   let jobs = state.jobs;
   if (!noJobChanges) {
@@ -85,12 +125,34 @@ export function mergeDelta(state: DeltaState, delta: BoardDelta): DeltaState {
     orders = Array.from(m.values()).sort((a, b) => Number(b.id) - Number(a.id));
   }
 
-  // `!` is sound: sameOrderIds returns false only when delta.* is defined.
+  // fullLists: rebuild shipped + cancelled when present; same-ref shortcut
+  // inside applyFullList covers the idle case.
+  const shipped = delta.shippedAllIds !== undefined
+    ? applyFullList(state.shipped, delta.shippedAllIds, delta.shipped ?? [])
+    : state.shipped;
+  const cancelled = delta.cancelledAllIds !== undefined
+    ? applyFullList(state.cancelled, delta.cancelledAllIds, delta.cancelled ?? [])
+    : state.cancelled;
+
+  if (
+    jobs === state.jobs
+    && orders === state.orders
+    && shippedOrderIdsSame
+    && cancelledOrderIdsSame
+    && shipped === state.shipped
+    && cancelled === state.cancelled
+  ) {
+    return state;
+  }
+
   return {
     jobs,
     orders,
-    shippedOrderIds: shippedSame ? state.shippedOrderIds : delta.shippedOrderIds!,
-    cancelledOrderIds: cancelledSame ? state.cancelledOrderIds : delta.cancelledOrderIds!,
+    // `!` is sound: sameIdList returns false only when delta.* is defined.
+    shippedOrderIds: shippedOrderIdsSame ? state.shippedOrderIds : delta.shippedOrderIds!,
+    cancelledOrderIds: cancelledOrderIdsSame ? state.cancelledOrderIds : delta.cancelledOrderIds!,
+    shipped,
+    cancelled,
   };
 }
 
@@ -101,6 +163,11 @@ export interface DeltaSync {
    *  created with `{ lists: true }` (/orders); otherwise empty `[]`. */
   shippedOrderIds: number[];
   cancelledOrderIds: number[];
+  /** Full shipped / cancelled rows — populated only when the hook was
+   *  created with `{ fullLists: true }` (/shipped + /cancelled); otherwise
+   *  empty `[]`. */
+  shipped: Shipped[];
+  cancelled: Cancelled[];
   /** Force an immediate delta poll. Resolves once the response has been
    *  merged into state. The optimistic-UI commit() path awaits this so
    *  phantom-card cleanup fires in the same render as the real row landing
@@ -120,32 +187,38 @@ export function useDeltaSync(
     serverTime: string;
     shippedOrderIds?: number[];
     cancelledOrderIds?: number[];
+    shipped?: Shipped[];
+    cancelled?: Cancelled[];
   },
-  opts: { lists?: boolean } = {},
+  opts: { lists?: boolean; fullLists?: boolean } = {},
 ): DeltaSync {
   const [state, setState] = useState<DeltaState>({
     jobs: initial.jobs,
     orders: initial.orders,
     shippedOrderIds: initial.shippedOrderIds ?? [],
     cancelledOrderIds: initial.cancelledOrderIds ?? [],
+    shipped: initial.shipped ?? [],
+    cancelled: initial.cancelled ?? [],
   });
   const cursorRef = useRef<string>(initial.serverTime);
   const lastActivityRef = useRef<number>(Date.now());
   const inFlightRef = useRef<Promise<void> | null>(null);
-  // `lists` is fixed for a mount — a ref keeps pollOnce's useCallback([])
-  // dep list empty while still threading the flag into the poll URL.
+  // `lists` / `fullLists` are fixed for a mount — refs keep pollOnce's
+  // useCallback([]) dep list empty while still threading the flags into the
+  // poll URL.
   const wantListsRef = useRef<boolean>(opts.lists ?? false);
+  const wantFullListsRef = useRef<boolean>(opts.fullLists ?? false);
 
   // One poll round-trip: fetch the delta since the cursor, merge it, advance
   // the cursor. Ref-stable so the timer effect below never re-subscribes.
   const pollOnce = useCallback(async (): Promise<void> => {
+    const qs = `since=${encodeURIComponent(cursorRef.current)}`
+      + (wantFullListsRef.current ? '&fullLists=1' : (wantListsRef.current ? '&lists=1' : ''));
     let res: Response;
     try {
-      res = await fetch(
-        `/api/board/delta?since=${encodeURIComponent(cursorRef.current)}`
-          + (wantListsRef.current ? '&lists=1' : ''),
-        { cache: 'no-store' },  // session cookie rides along same-origin
-      );
+      res = await fetch(`/api/board/delta?${qs}`, {
+        cache: 'no-store',  // session cookie rides along same-origin
+      });
     } catch {
       return;  // network blip — keep cursor, next tick retries
     }
@@ -289,6 +362,8 @@ export function useDeltaSync(
     orders: state.orders,
     shippedOrderIds: state.shippedOrderIds,
     cancelledOrderIds: state.cancelledOrderIds,
+    shipped: state.shipped,
+    cancelled: state.cancelled,
     pollNow,
   };
 }

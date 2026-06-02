@@ -20,6 +20,10 @@ export const maxDuration = 30;
  * `?lists=1` additionally returns `shippedOrderIds` / `cancelledOrderIds`
  * (the /orders list view derives its status badge from them).
  *
+ * `?fullLists=1` additionally returns full `shipped[]` / `cancelled[]` rows
+ * plus `shippedAllIds` / `cancelledAllIds` (used by /shipped + /cancelled
+ * to detect /restore hard-deletes). `fullLists` supersedes `lists`.
+ *
  * The client persists `serverTime` and passes it back as `since` on the
  * next call. See lib/board-delta.ts for cursor semantics.
  */
@@ -29,6 +33,7 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const wantLists = url.searchParams.get('lists') === '1';
+  const wantFullLists = url.searchParams.get('fullLists') === '1';
   const sinceParam = url.searchParams.get('since');
   let since: Date | null = null;
   if (sinceParam) {
@@ -40,7 +45,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const delta = await loadBoardDelta(since, { lists: wantLists });
+    const delta = await loadBoardDelta(since, { lists: wantLists, fullLists: wantFullLists });
     return NextResponse.json(delta);
   } catch (err) {
     const status = err instanceof BoardDeltaError ? 503 : 500;

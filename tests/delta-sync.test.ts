@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mergeDelta, type DeltaState } from '@/lib/delta-sync';
 import type { BoardDelta } from '@/lib/board-delta';
-import type { Job, Order } from '@/lib/types';
+import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
 /** Minimal Job factory — only the id matters for merge identity. */
 function j(id: number, name = `job-${id}`): Job {
@@ -14,9 +14,25 @@ function o(id: number, name = `order-${id}`): Order {
     assignDept: '', assignStaff: '', orderer: '', status: '',
   };
 }
-/** DeltaState factory — fills the shipped/cancelled list defaults. */
+/** Minimal Shipped factory. */
+function s(id: number, name = `shipped-${id}`): Shipped {
+  return { id, name, shippedDate: '', orderId: null };
+}
+/** Minimal Cancelled factory. */
+function c(id: number, name = `cancelled-${id}`): Cancelled {
+  return {
+    id, name, dept: '', staff: '', cancelledBy: '', cancelledAt: '',
+    reason: '', orderId: null,
+  };
+}
+/** DeltaState factory — fills all list defaults. */
 function st(partial: Partial<DeltaState>): DeltaState {
-  return { jobs: [], orders: [], shippedOrderIds: [], cancelledOrderIds: [], ...partial };
+  return {
+    jobs: [], orders: [],
+    shippedOrderIds: [], cancelledOrderIds: [],
+    shipped: [], cancelled: [],
+    ...partial,
+  };
 }
 function delta(partial: Partial<BoardDelta>): BoardDelta {
   return {
@@ -151,5 +167,98 @@ describe('mergeDelta — shipped/cancelled orderId lists (/orders delta)', () =>
     const state = st({ jobs: [j(1)], shippedOrderIds: [10], cancelledOrderIds: [30] });
     const result = mergeDelta(state, delta({}));
     expect(result).toBe(state);
+  });
+});
+
+describe('mergeDelta — full shipped/cancelled rows (/shipped + /cancelled delta)', () => {
+  it('appends a new shipped row on an incremental delta', () => {
+    const state = st({ shipped: [s(100)], cancelled: [] });
+    const result = mergeDelta(state, delta({
+      shipped: [s(101)],
+      shippedAllIds: [100, 101],
+      cancelled: [],
+      cancelledAllIds: [],
+    }));
+    expect(result).not.toBe(state);
+    expect(result.shipped.map((x) => x.id)).toEqual([101, 100]); // id-desc sort
+  });
+
+  it('drops a shipped row when allowedIds no longer contains it (restore)', () => {
+    // Admin /restore deletes the shipped row + reinserts the job → next delta
+    // shows the job in jobs[], and shippedAllIds omits the gone id.
+    const state = st({ shipped: [s(100), s(101)], cancelled: [] });
+    const result = mergeDelta(state, delta({
+      shipped: [],
+      shippedAllIds: [101],
+      cancelled: [],
+      cancelledAllIds: [],
+    }));
+    expect(result.shipped.map((x) => x.id)).toEqual([101]);
+  });
+
+  it('returns the SAME shipped ref when allowedIds matches state', () => {
+    // The hot path: idle poll, server returns full ID list but nothing
+    // changed. mergeDelta must not allocate a new array (would re-render
+    // the table even though nothing visible moved).
+    const state = st({ shipped: [s(100), s(101)], cancelled: [c(50)] });
+    const result = mergeDelta(state, delta({
+      shipped: [],
+      shippedAllIds: [100, 101],
+      cancelled: [],
+      cancelledAllIds: [50],
+    }));
+    expect(result.shipped).toBe(state.shipped);
+    expect(result.cancelled).toBe(state.cancelled);
+    expect(result).toBe(state); // entire state ref preserved
+  });
+
+  it('upserts a changed shipped row (same id replaces)', () => {
+    const state = st({ shipped: [s(100, 'old')], cancelled: [] });
+    const result = mergeDelta(state, delta({
+      shipped: [s(100, 'new')],
+      shippedAllIds: [100],
+      cancelled: [],
+      cancelledAllIds: [],
+    }));
+    expect(result.shipped[0].name).toBe('new');
+    expect(result.shipped).toHaveLength(1);
+  });
+
+  it('processes a cancelled-row restore the same way as shipped', () => {
+    const state = st({ cancelled: [c(80), c(90)] });
+    const result = mergeDelta(state, delta({
+      cancelled: [],
+      cancelledAllIds: [80],
+      shipped: [],
+      shippedAllIds: [],
+    }));
+    expect(result.cancelled.map((x) => x.id)).toEqual([80]);
+  });
+
+  it('leaves shipped/cancelled untouched when delta omits the fullLists fields', () => {
+    // /board /calendar /orders never request fullLists → delta has no
+    // shippedAllIds; a state holding the rows must keep them + stay ref-stable.
+    const state = st({
+      jobs: [j(1)],
+      shipped: [s(100)],
+      cancelled: [c(80)],
+    });
+    const result = mergeDelta(state, delta({}));
+    expect(result).toBe(state);
+  });
+
+  it('handles a combined fullLists delta — new shipped + restored cancelled', () => {
+    const state = st({
+      shipped: [s(100)],
+      cancelled: [c(80), c(81)],
+    });
+    const result = mergeDelta(state, delta({
+      shipped: [s(102)],
+      shippedAllIds: [100, 102],
+      cancelled: [],
+      cancelledAllIds: [80],
+    }));
+    expect(result.shipped.map((x) => x.id)).toEqual([102, 100]);
+    expect(result.cancelled.map((x) => x.id)).toEqual([80]);
   });
 });
