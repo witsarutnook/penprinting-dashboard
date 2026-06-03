@@ -2,6 +2,57 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-03 — Wholesale-strangler finish + B consolidate (useAutoSync retired, /cancelled+/shipped delta-driven):** ✅ Vercel auto-deployed (3 commits, -561 LOC net), ⏳ คุณนุ๊กลบ Vercel env vars ที่ค้าง
+>
+> ## งานที่ทำ
+>
+> ### #1 — Wholesale-strangler finish ([`db8091d`](https://github.com/witsarutnook/penprinting-dashboard/commit/db8091d), -445 LOC)
+> - ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST` flag-OFF branches จาก [`app/board/page.tsx`](app/board/page.tsx) + [`app/orders/page.tsx`](app/orders/page.tsx) + [`app/calendar/page.tsx`](app/calendar/page.tsx) (flag ON ใน prod >1 wk ตั้งแต่ 5/21-22, ตาม [[feedback_wholesale_strangler_finish]] — delete ทีเดียวจบ blast radius linear)
+> - ลบ dead server functions: `BoardData`/`OrdersData`/`CalendarData` + helper `DeptSectionHeader`/`Summary`/`Pill` ที่ใช้แค่ใน flag-OFF path
+> - 4 client files (board-client/calendar-client/orders-list-client/pending-mutations): drop docstring refs ถึง flag + "counterpart of XxxData" notes
+> - [`components/board/pending-mutations.tsx`](components/board/pending-mutations.tsx) — make `pollNow` required (only caller `board-client.tsx` always provides it) + drop legacy `router.refresh()` fallback + `useRouter`/`useTransition`/`queuedCleanups`/`wasPending`/transition-end effect (-89 LOC)
+>
+> ### #2A — Extend delta server-side for fullLists ([`0edd926`](https://github.com/witsarutnook/penprinting-dashboard/commit/0edd926))
+> - [`BoardDelta`](lib/board-delta.ts) + `loadBoardDelta` + `/api/board/delta`: + `{ fullLists: true }` mode → returns full `shipped[]` + `cancelled[]` rows + `shippedAllIds`/`cancelledAllIds` (current PK ID set for delete detection)
+> - Cursor `imported_at` (those tables have no `updated_at` — append-on-write + hard-delete-on-restore). Deletes caught via PK ID set, not cursor → no tombstone column needed.
+> - [`useDeltaSync`](lib/delta-sync.tsx) + `mergeDelta` extended. New `applyFullList` helper: fast-path returns SAME ref when nothing changed (idle poll never re-renders).
+> - **+11 tests** (137 total) — bootstrap fullLists / orderIds-skipped / incremental + imported_at cursor / mergeDelta append-new / restore-drop / same-ref-on-noop / combined-delta
+>
+> ### #2B — Convert /cancelled + /shipped + delete useAutoSync ([`fe2bec5`](https://github.com/witsarutnook/penprinting-dashboard/commit/fe2bec5))
+> - New [`app/cancelled/list-client.tsx`](app/cancelled/list-client.tsx) + [`app/shipped/list-client.tsx`](app/shipped/list-client.tsx) — client-side filter/year-month/query/CSV/pagination (URL-driven via `useSearchParams`, no server round-trip on filter change). RestoreButton inline (was in old `client.tsx`).
+> - `/cancelled/page.tsx` + `/shipped/page.tsx` เหลือเป็น auth+bootstrap shell. Old `client.tsx` ใน 2 folder ลบทิ้ง
+> - `/shipped` customer-by-orderId lookup ใช้ `orders` จาก delta payload เดียวกัน (fullLists returns jobs + orders + shipped + cancelled) — fresh ทุก poll
+> - `<AutoSync />` ออกจาก `/analytics` (60s ISR พอ — aggregate report, ไม่ต้อง real-time)
+> - [`lib/auto-sync.tsx`](lib/auto-sync.tsx) slim down เหลือแค่ `broadcastWrite` (10 mutation sites ยังใช้). ลบ `useAutoSync` + `AutoSync` + `useRouter`/refresh/backoff timer machinery (-150 LOC ใน auto-sync.tsx)
+> - [`lib/poll-schedule.ts`](lib/poll-schedule.ts) + `lib/delta-sync.tsx` docstrings drop refs ถึง gone hook
+>
+> ## ⏳ Pending user actions
+> 1. **Vercel env vars cleanup** — ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST` (no longer read, cleanup-only)
+> 2. **Smoke test post-deploy** — เปิด /board /orders /calendar /cancelled /shipped /analytics ตรวจว่าโหลด + auto-sync ทำงาน (mutation → other tab อัพเดต)
+> 3. **(ค้างจาก 5/29)** FB Sharing Debugger refresh OG cache 7 ลิงก์ (optional)
+> 4. **(ค้างจาก 5/29)** `penprintphotobook/marketing/` untracked — decide git-track/.gitignore
+> 5. **(ค้างจาก 5/28)** Vercel env vars cleanup — 14 × `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
+> 6. **(ค้างจาก 5/28)** Sentry alert rule — `postgres-error=true` > 10/5min
+> 7. **(ค้างจาก 5/28)** Test `/track #202605173` — verify step 5 active
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Refactor `pageMetadata()` helper** (ค้างจาก 5/29) — กัน SEO shallow-merge bug recur, web + photobook 2 repo
+> 2. **Photobook SEO content push** (ค้างจาก 5/17) — blog/MDX + reviews + Review/aggregateRating markup
+> 3. **`imported_at` index on shipped + cancelled** (optional perf) — ตอนนี้ incremental `WHERE imported_at > since` ทำ seq scan. ~5k rows = milliseconds (fine for now) แต่ถ้า shipped โต ค่อย add: `CREATE INDEX idx_shipped_imported ON shipped(imported_at)`. Migration ใน db-migrate route.
+> 4. **AI Quoting Phase 0** (deferred 6 sessions) — spec/scaffold
+> 5. **DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL fix
+> 6. **Hydration warnings /board** — รอ user incognito test (ค้างจาก 5/27)
+>
+> ### Decisions / Lessons
+> - **`imported_at` cursor for append-only tables** — shipped + cancelled don't have `updated_at` (rows immutable once written). `DEFAULT NOW()` on INSERT makes `imported_at` effectively a `created_at`. Cursor catches new INSERTs; PK ID set comparison catches DELETEs (no tombstone column needed). Same pattern reusable for any append + hard-delete table.
+> - **fullLists mode supersedes lists mode** — /orders uses cheap `{ lists: true }` (orderId set only); /shipped + /cancelled use `{ fullLists: true }` (full rows + PK ID set). Consumers don't overlap so `loadBoardDelta` does NOT derive `shippedOrderIds` in fullLists mode (incremental delta.shipped only has new rows, derived set would be wrong) — documented explicitly to prevent a future caller assuming both fields populated.
+> - **Promise.all evaluates array sync → mock queue order matters** — when extending board-delta tests, `Promise.all([sql1, sql2])` fires both queries before await; my first test pass queued main jobs/orders first which got consumed by the fullLists queries instead. Re-ordered tests to match actual call-firing order (fullLists block → main block in code → tombstones).
+> - **Strangler closeout pattern** — drop fallback paths in 1 commit (blast radius linear), then on the NEXT commit consolidate dependent abstractions ([feedback_wholesale_strangler_finish](file)). Applied here: commit 1 dropped the flag, commit 2 extended the new pattern, commit 3 consolidated the auto-sync abstraction. Each commit gates green independently.
+>
+> **Commits**: [`db8091d`](https://github.com/witsarutnook/penprinting-dashboard/commit/db8091d) + [`0edd926`](https://github.com/witsarutnook/penprinting-dashboard/commit/0edd926) + [`fe2bec5`](https://github.com/witsarutnook/penprinting-dashboard/commit/fe2bec5) (Vercel auto-deployed)
+>
+> ---
+>
 > **Session 2026-05-29 — SEO fix (og:image dropped on 7 pages, web + photobook) + Photobook social campaign deliverable:** ✅ both Vercel projects auto-deployed, 📄 campaign docs handed to team
 >
 > ## งานที่ทำ

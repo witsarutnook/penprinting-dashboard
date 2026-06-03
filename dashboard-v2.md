@@ -40,7 +40,9 @@
 | `lib/auth.ts` | HMAC cookie sign/verify (Web Crypto) |
 | `lib/board.ts` | STAFF map + `computeBoard` + filter logic |
 | `lib/forward.ts` | FW_TARGETS + RESTRICTED_TARGETS + `validateForwardTarget` |
-| `lib/auto-sync.tsx` | `useAutoSync` hook + `broadcastWrite` (cross-tab via BroadcastChannel) |
+| `lib/auto-sync.tsx` | `broadcastWrite` only (cross-tab via BroadcastChannel) — `useAutoSync` retired 2026-06-03 |
+| `lib/delta-sync.tsx` | `useDeltaSync` hook (delta-fetch poll + `mergeDelta` + `applyFullList`) — sole auto-sync mechanism |
+| `lib/board-delta.ts` | `loadBoardDelta` (server) — `lists`/`fullLists` modes for /orders + /shipped + /cancelled |
 | `lib/icons.tsx` | All outline SVG icons (no emoji — see PATTERNS §4.1) |
 | `lib/staff-icons.tsx` | Per-staff icon + color theming |
 | `lib/photobook.ts` | Photobook order schema + `orderFormFromRaw` reverser |
@@ -299,6 +301,37 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### Wholesale-strangler finish + B consolidate — useAutoSync retired (2026-06-03)
+
+**Goal:** ปิด NEXT-SESSION งานหลัก #1 + #2 — ลบ `NEXT_PUBLIC_DELTA_FETCH` flag-OFF paths (delta path live in prod >1 wk) AND consolidate auto-sync ให้เหลือ `useDeltaSync` ทางเดียว (โดยขยาย delta endpoint รองรับ `/cancelled` + `/shipped` แทน `useAutoSync`'s `router.refresh()`).
+
+**3 commits (-561 LOC net):**
+
+1. [`db8091d`](https://github.com/witsarutnook/penprinting-dashboard/commit/db8091d) — `refactor: drop NEXT_PUBLIC_DELTA_FETCH flag-OFF paths` (-445 LOC). ลบ flag branches + dead `BoardData`/`OrdersData`/`CalendarData` server functions จาก [`app/board/page.tsx`](app/board/page.tsx) + [`app/orders/page.tsx`](app/orders/page.tsx) + [`app/calendar/page.tsx`](app/calendar/page.tsx). 4 client files (board-client/calendar-client/orders-list-client/pending-mutations) drop docstring refs ถึง flag. `PendingMutationsProvider` รับ `pollNow` แบบ required ตอนนี้ (ลบ legacy `router.refresh()` fallback + `useRouter`/`useTransition`/`queuedCleanups`/`wasPending` machinery — all dead).
+2. [`0edd926`](https://github.com/witsarutnook/penprinting-dashboard/commit/0edd926) — `feat(delta): include full shipped/cancelled rows in fullLists mode` (+339/-44 LOC). Extend [`lib/board-delta.ts`](lib/board-delta.ts) + [`/api/board/delta`](app/api/board/delta/route.ts): + `{ fullLists: true }` opt → returns `shipped`+`cancelled` full rows + `shippedAllIds`/`cancelledAllIds` (current PK ID set for delete detection). Cursor: `imported_at` (those tables have no `updated_at` — append-on-write + hard-delete-on-restore). Extend [`useDeltaSync`](lib/delta-sync.tsx) + `mergeDelta` + new `applyFullList` helper (fast-path same-ref shortcut on no-change). **+11 tests** (137 total).
+3. [`fe2bec5`](https://github.com/witsarutnook/penprinting-dashboard/commit/fe2bec5) — `refactor(auto-sync): delete useAutoSync, /cancelled+/shipped now delta-driven` (+609/-725 LOC). New [`app/cancelled/list-client.tsx`](app/cancelled/list-client.tsx) + [`app/shipped/list-client.tsx`](app/shipped/list-client.tsx) — client-side filter/paginate/CSV/restore. Pages เป็น bootstrap shell. Old `client.tsx` ใน 2 folder ถูกลบ. `<AutoSync />` ออกจาก /analytics (60s ISR พอ). [`lib/auto-sync.tsx`](lib/auto-sync.tsx) slim down เหลือแค่ `broadcastWrite` (10 mutation sites ยังใช้). `useAutoSync` + `AutoSync` + `useRouter`/timer machinery — ทั้งหมดหายไป.
+
+**Bytes Impact (`next build`):**
+| Page | Before | After |
+|---|---|---|
+| /shipped | 3.42 kB | 2.94 kB |
+| /cancelled | 2.75 kB | similar |
+| /orders | 8.41 kB | 7.38 kB (filter logic merged into client) |
+| /board | 16.1 kB | unchanged (already delta-driven) |
+
+**Delta endpoint shape (new `fullLists` mode):**
+- Bootstrap (`since=null`): SELECT raw FROM shipped/cancelled ORDER BY id DESC (full table read, one-time per page mount).
+- Incremental: WHERE imported_at > since (new rows) + SELECT id (current PK set so client drops /restore'd rows). No tombstone column needed.
+- /orders stays on cheap `{ lists: true }` (orderId set only). /shipped + /cancelled use `{ fullLists: true }`.
+
+**Why imported_at (not updated_at):** shipped + cancelled rows are immutable once written — only INSERT (move-to-shipped, cancel) or DELETE (restore). `imported_at` set by `DEFAULT NOW()` on INSERT serves as created_at; deletes caught via the PK ID set comparison, not the cursor.
+
+**Pending user action:** ลบ Vercel env vars `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST` (no longer read by any code; cleanup-only, no functional impact).
+
+**Gates Node 22:** type-check ✅ · lint ✅ · vitest **137/137** · build ✅
+
+---
 
 ### Hot-fix: drop `sync_meta` freshness gate from `lib/api-postgres.ts` (2026-05-28)
 
