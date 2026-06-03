@@ -81,7 +81,9 @@ npm run build            # before push
 | [lib/staff-icons.tsx](lib/staff-icons.tsx) | Per-staff icon + color theming |
 | [lib/board.ts](lib/board.ts) | STAFF map + computeBoard + filter logic |
 | [lib/forward.ts](lib/forward.ts) | FW_TARGETS + RESTRICTED_TARGETS + validateForwardTarget |
-| [lib/auto-sync.tsx](lib/auto-sync.tsx) | useAutoSync hook + broadcastWrite |
+| [lib/auto-sync.tsx](lib/auto-sync.tsx) | `broadcastWrite` (cross-tab BroadcastChannel) — useAutoSync retired 2026-06-03 |
+| [lib/delta-sync.tsx](lib/delta-sync.tsx) | `useDeltaSync` + `mergeDelta` + `applyFullList` (sole auto-sync) |
+| [lib/board-delta.ts](lib/board-delta.ts) | `loadBoardDelta` server loader (lists / fullLists modes) |
 | [components/nav-config.ts](components/nav-config.ts) | Sidebar + bottom-nav source of truth |
 | [components/dashboard-shell.tsx](components/dashboard-shell.tsx) | Layout wrapper |
 

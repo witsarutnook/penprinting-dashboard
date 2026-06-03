@@ -137,6 +137,11 @@ export async function GET() {
     applied.push('CREATE TABLE shipped');
     await sql`CREATE INDEX IF NOT EXISTS idx_shipped_order ON shipped(order_id)`;
     applied.push('CREATE INDEX idx_shipped_order');
+    // Powers fullLists incremental polls from /shipped — without the index,
+    // `WHERE imported_at > since` falls back to a seq scan on every poll.
+    // Cheap (~ms) at current row counts but degrades as shipped grows.
+    await sql`CREATE INDEX IF NOT EXISTS idx_shipped_imported ON shipped(imported_at)`;
+    applied.push('CREATE INDEX idx_shipped_imported');
 
     // ─── cancelled ──────────────────────────────────────────────
     await sql`
@@ -156,6 +161,9 @@ export async function GET() {
     applied.push('CREATE TABLE cancelled');
     await sql`CREATE INDEX IF NOT EXISTS idx_cancelled_order ON cancelled(order_id)`;
     applied.push('CREATE INDEX idx_cancelled_order');
+    // Powers fullLists incremental polls from /cancelled — see idx_shipped_imported.
+    await sql`CREATE INDEX IF NOT EXISTS idx_cancelled_imported ON cancelled(imported_at)`;
+    applied.push('CREATE INDEX idx_cancelled_imported');
 
     // ─── templates ──────────────────────────────────────────────
     await sql`
