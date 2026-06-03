@@ -2,6 +2,64 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-03 (late) — Tech-update audit + Phase 0 safe patches ทั้ง 4 Vercel projects:** ✅ Vercel auto-deployed (4 commits — dashboard / web / calc / photobook), ⏳ Phase 1+ planning (Next 14→15 migration) deferred to dedicated session(s)
+>
+> ## งานที่ทำ
+>
+> ### Tech-update audit (all 4 Vercel projects)
+> - **Status pre-patch**: ทั้ง 4 projects ใช้ `next 14.2.35` + `react 18.3.1` + `tailwindcss 3.4.19` + `typescript 5.9.3` เหมือนกัน
+> - **Vulnerabilities**: dashboard มี 7 (3 mod, 4 high). 14 CVEs ใน Next 14.2.35 (DoS/XSS/cache-poisoning/SSRF/req-smuggling) ที่ patched ใน Next 15+/16 เท่านั้น — **14.2.35 = ปลายทาง track 14.2.x แล้ว** (ไม่มี version ใหม่กว่า)
+> - **Plan**: 4-phase migration. Phase 0 = safe patches (zero breaking, ทั้ง 4 projects). Phase 1-3 = pilot Next 14→15 ที่ calc → web → photobook. Phase 4 = dashboard (highest risk: 18+ `cookies()` sites + middleware + 27 API routes + 146 tests + recharts/html-to-image/qrcode peer-dep check).
+>
+> ### Phase 0 — safe patches deployed (4 commits, 4 projects)
+> - **calc** ([`52e0a4b`](https://github.com/witsarutnook/penprinting-calc/commit/52e0a4b)) — @sentry/nextjs 10.51→10.56, @types/node + @types/react patch, postcss 8.5.13→8.5.15
+> - **web** — same 4 packages (+ @next/third-parties ค้างไว้, ผูกกับ next track)
+> - **photobook** — 3 packages (ไม่มี sentry dep)
+> - **dashboard** — 6 packages (+ vitest 4.1.5→4.1.8 + @vitest/coverage-v8). Pre-commit gate Node 22 (per [[feedback_penprinting_dashboard_node22_commit]]): type-check ✅ · lint ✅ · 146/146 tests ✅ · production build ✅
+> - **CVEs closed**: postcss XSS (GHSA-qx2v-qp2m-jg93) direct dep ทั้ง 4 projects. ws + brace-expansion (transitive ใน dashboard) ยังค้าง — อยู่ใน chains ที่ unblock โดย major bump
+> - **Audit count drift**: calc 7→13 หลัง patches (NOT regression — sentry 10.56 ดึง opentelemetry instrumentation deps ใหม่ที่มี transitive vulns ใน `@babel/plugin-transform-modules-systemjs` + `fast-uri`; + `next-pwa→workbox-build→rollup-plugin-terser→serialize-javascript` chain เก่าที่ไม่เคยแสดง). ทั้งหมดเป็น build-time/dev noise — Phase 1 (Next 15) จะปิดส่วนใหญ่
+>
+> ### Sentry deprecation warnings (logged for Phase 1 follow-up)
+> ทั้ง 3 projects ที่ใช้ sentry (calc/web/dashboard) build warning เดียวกัน:
+> 1. `disableLogger` deprecated → ใช้ `webpack.treeshake.removeDebugLogging` แทน
+> 2. `sentry.server.config.ts` / `sentry.edge.config.ts` → ย้าย content เข้า `instrumentation.ts` `register()` function
+> 3. `sentry.client.config.ts` → rename เป็น `instrumentation-client.ts` (Turbopack จะไม่รู้จัก `sentry.client.config.ts`)
+>
+> ไม่ critical (warnings only) แต่ควรทำพร้อม Phase 1 (Next 15 ใช้ Turbopack dev mode default)
+>
+> ## ⏳ Pending user actions (ค้างจาก session ก่อนหน้านี้)
+> 1. **(ค้างจาก 6/03 morning)** รัน `/api/admin/db-migrate` หลัง Vercel deploy เสร็จ — apply 2 indexes (`idx_shipped_imported` + `idx_cancelled_imported`)
+> 2. **(ค้างจาก 6/03 morning)** รัน `/api/admin/fix-date-anomaly` — dry run ก่อน, แล้ว `?apply=1`
+> 3. **(ค้างจาก 6/03 morning)** Vercel env vars cleanup — ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST`
+> 4. **(ใหม่ 6/03 late)** Smoke test post-Phase-0-deploy: เปิด calc + web + photobook + dashboard (/board /orders /analytics) ดูว่าไม่มี Sentry error spike หลัง sentry 10.56
+> 5. **(ค้างจาก 5/29)** FB Sharing Debugger refresh OG cache 7 ลิงก์
+> 6. **(ค้างจาก 5/29)** `penprintphotobook/marketing/` untracked — decide git-track/.gitignore
+> 7. **(ค้างจาก 5/28)** Vercel env vars cleanup — 14 × `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
+> 8. **(ค้างจาก 5/28)** Sentry alert rule — `postgres-error=true` > 10/5min
+> 9. **(ค้างจาก 5/28)** Test `/track #202605173`
+>
+> ## 🎯 งานหลัก session หน้า (Phase 1 + accumulated backlog)
+> 1. **🆕 Phase 1 — calc Next 14→15 pilot** (~2-3 ชม., low risk validator)
+>    - `npx @next/codemod@canary upgrade latest --next-version 15.5.19`
+>    - React 19 codemod (ref-as-prop ฯลฯ)
+>    - Address Sentry instrumentation file deprecation พร้อมกัน (`instrumentation.ts` + `instrumentation-client.ts`)
+>    - Build + PWA offline test + deploy preview + smoke ทุก product type
+>    - Promote → prod → 1-week soak ก่อน Phase 2 (web)
+> 2. **Refactor `pageMetadata()` helper** (ค้างจาก 5/29) — กัน SEO shallow-merge bug recur, web + photobook 2 repo
+> 3. **Photobook SEO content push** (ค้างจาก 5/17)
+> 4. **AI Quoting Phase 0** (deferred 6 sessions)
+> 5. **Hydration warnings /board** (ค้างจาก 5/27)
+>
+> ### Decisions / Lessons (Phase 0)
+> - **`14.2.35` คือปลายทาง 14.2.x track** — ไม่มี backport patch ของ 14 CVEs ของ Next ที่ patched ใน 15+/16 → escalation path บังคับเป็น Next 15 migration ไม่ใช่ minor bump
+> - **Audit count drift หลัง sentry minor bump** ไม่ใช่ red flag เสมอ — opentelemetry instrumentation deps (`fast-uri`, `@babel/plugin-transform-modules-systemjs`) เป็น build-time/runtime dependency ของ telemetry, ไม่ใช่ user-input parser. อ่าน chain ก่อนตื่นเต้น
+> - **`<style>` of project patching** — เรียงทำตาม risk ต่ำ→สูง (calc → web → photobook → dashboard) แทน parallel — ทำให้ถ้า package@x.y.z มี surprise compat issue, เจอที่ project เล็กก่อน fix ก่อนกระทบ dashboard. คุ้มเวลา 5 นาทีเสียไป
+> - **Pre-commit hook needs Node 22 in same Bash call** — ตามที่ [[feedback_penprinting_dashboard_node22_commit]] เขียนไว้, vitest 4.1.8 + rolldown ก็ยังต้อง Node 22; `source ~/.nvm/nvm.sh && nvm use 22 >/dev/null 2>&1 && cd ... && git commit` pattern ใช้ได้สะอาด
+>
+> **Commits**: 4 commits ใน 4 separate repos — calc [`52e0a4b`](https://github.com/witsarutnook/penprinting-calc/commit/52e0a4b), web [`9605df9`](https://github.com/witsarutnook/penprinting-web/commit/9605df9), photobook [`0100154`](https://github.com/witsarutnook/penprintphotobook/commit/0100154), dashboard [`42f50fb`](https://github.com/witsarutnook/penprinting-dashboard/commit/42f50fb) — Vercel auto-deployed ทั้งหมด
+>
+> ---
+>
 > **Session 2026-06-03 — Wholesale-strangler finish + B consolidate (useAutoSync retired, /cancelled+/shipped delta-driven) + Dashboard cleanup C/D:** ✅ Vercel auto-deployed (6 commits, -550 LOC net), ⏳ คุณนุ๊กรัน 2 admin endpoints + ลบ env vars
 >
 > ## งานที่ทำ
