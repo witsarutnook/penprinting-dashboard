@@ -2,57 +2,22 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { displayDateTime } from '@/lib/jobs';
-import { AutoSync } from '@/lib/auto-sync';
-import { IconAlertCircle, IconSearch } from '@/lib/icons';
-import { DEPT_LABELS, type Dept } from '@/lib/board';
-import { distinctYears, filterByYearMonth, THAI_MONTHS_FULL } from '@/lib/list-helpers';
-import { PageSizeBar } from '@/components/page-size-bar';
-import { PaginationBar } from '@/components/pagination-bar';
-import { resolvePerPage, resolvePage, paginate, clampPage } from '@/lib/page-size';
-import { CancelledClient, RestoreButton } from './client';
+import { CancelledListClient } from './list-client';
 
 export const metadata: Metadata = {
   title: 'รายการยกเลิก',
 };
 
-interface SearchParams {
-  q?: string;
-  year?: string;
-  month?: string;
-  per?: string;
-  page?: string;
-}
-
-interface ResolvedFilters {
-  query: string;
-  year: number;
-  month: number;
-  perPage: number;
-  page: number;
-}
-
-export default async function CancelledPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function CancelledPage() {
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session || session.role !== 'admin') redirect('/board?dept=post');
 
-  const filters: ResolvedFilters = {
-    query: (searchParams.q || '').trim().toLowerCase(),
-    year: Number(searchParams.year) || 0,
-    month: Number(searchParams.month) || 0,
-    perPage: resolvePerPage(searchParams.per),
-    page: resolvePage(searchParams.page),
-  };
-
-  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}|${filters.page}`;
-
   return (
     <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
       <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
         <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
           <h1 className="text-xl font-bold text-stone-900">รายการยกเลิก</h1>
@@ -62,158 +27,43 @@ export default async function CancelledPage({ searchParams }: { searchParams: Se
         </div>
       </header>
       <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
-        <Suspense key={dataKey} fallback={<CancelledSkeleton />}>
-          <CancelledData filters={filters} />
+        <Suspense fallback={<CancelledSkeleton />}>
+          <CancelledData />
         </Suspense>
       </div>
     </DashboardShell>
   );
 }
 
-async function CancelledData({ filters }: { filters: ResolvedFilters }) {
-  let cancelled;
+/** Bootstrap data fetcher — awaits the initial snapshot via
+ *  `loadBoardDelta(null, { fullLists: true })` (full cancelled rows) and
+ *  hands it to the client `<CancelledListClient>`, which then delta-polls
+ *  and re-runs filter/paginate locally. */
+async function CancelledData() {
+  let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
   try {
-    const data = await loadAll();
-    cancelled = [...data.cancelled].sort((a, b) => Number(b.id) - Number(a.id));
+    initial = await loadBoardDelta(null, { fullLists: true });
   } catch (err) {
-    errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    errorMessage = err instanceof Error ? err.message : String(err);
   }
 
-  const allCancelled = cancelled || [];
-  const years = distinctYears(allCancelled, (c) => c.cancelledAt);
-  const filtered = filterByYearMonth(allCancelled, (c) => c.cancelledAt, filters.year, filters.month).filter((c) => {
-    if (!filters.query) return true;
-    const haystack = `${c.name} ${c.id} ${c.cancelledBy} ${c.reason}`.toLowerCase();
-    return haystack.includes(filters.query);
-  });
+  if (!initial) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+        <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
+        <p className="text-sm text-amber-800 mt-2 font-mono">
+          {errorMessage || 'โหลดรายการยกเลิกไม่สำเร็จ'}
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <>
-      <form action="/cancelled" className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-72">
-          <IconSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-          <input
-            type="search"
-            name="q"
-            defaultValue={filters.query}
-            placeholder="ค้นชื่องาน / ผู้ยกเลิก / เหตุผล..."
-            className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-          />
-        </div>
-        <select
-          name="year"
-          defaultValue={filters.year || ''}
-          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
-        >
-          <option value="">ทุกปี</option>
-          {years.map((y) => (
-            <option key={y} value={y}>
-              {y + 543}
-            </option>
-          ))}
-        </select>
-        <select
-          name="month"
-          defaultValue={filters.month || ''}
-          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent"
-        >
-          <option value="">ทุกเดือน</option>
-          {THAI_MONTHS_FULL.map((m, i) => (
-            <option key={m} value={i + 1}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <button
-          type="submit"
-          className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-        >
-          กรอง
-        </button>
-        {(filters.query || filters.year || filters.month) && (
-          <a href="/cancelled" className="text-xs text-stone-500 hover:text-stone-700 underline">
-            ล้างตัวกรอง
-          </a>
-        )}
-      </form>
-
-      <div className="text-xs text-stone-500 tabular-nums">
-        {filtered.length}/{allCancelled.length} รายการ
-      </div>
-
-      <CancelledClient rows={filtered} />
-
-      {errorMessage ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-          <p className="text-sm text-amber-800 font-mono">{errorMessage}</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
-          <div className="flex justify-center mb-2 text-stone-300">
-            <IconAlertCircle size={36} />
-          </div>
-          <p className="text-sm text-stone-500">
-            {filters.query || filters.year || filters.month ? 'ไม่พบรายการที่ตรงตามตัวกรอง' : 'ไม่มีรายการยกเลิก'}
-          </p>
-        </div>
-      ) : (
-        (() => {
-          const safePage = clampPage(filters.page, filtered.length, filters.perPage);
-          const visible = paginate(filtered, safePage, filters.perPage);
-          return (
-            <>
-              <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={visible.length} />
-              <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
-                <table className="w-full text-sm min-w-[860px]">
-                  <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium w-14">#</th>
-                      <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
-                      <th className="text-left px-3 py-2 font-medium">แผนก</th>
-                      <th className="text-left px-3 py-2 font-medium">ยกเลิกโดย</th>
-                      <th className="text-right px-3 py-2 font-medium">วันที่ยกเลิก</th>
-                      <th className="text-left px-3 py-2 font-medium">เหตุผล</th>
-                      <th className="text-right px-3 py-2 font-medium w-24">การจัดการ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {visible.map((c) => (
-                      <tr key={c.id} className="hover:bg-red-50/30">
-                        <td className="px-3 py-2 tabular-nums text-stone-500">#{c.id}</td>
-                        <td className="px-3 py-2 font-medium text-red-700 line-through decoration-red-300">
-                          {c.name}
-                        </td>
-                        <td className="px-3 py-2 text-stone-600">
-                          {DEPT_LABELS[c.dept as Dept] || c.dept || '—'}
-                        </td>
-                        <td className="px-3 py-2 text-stone-600">{c.cancelledBy || '—'}</td>
-                        <td className="px-3 py-2 text-right text-stone-500 tabular-nums whitespace-nowrap">
-                          {displayDateTime(c.cancelledAt)}
-                        </td>
-                        <td className="px-3 py-2 text-stone-600 max-w-[18rem] truncate" title={c.reason}>
-                          {c.reason || '—'}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <RestoreButton
-                            id={c.id}
-                            name={c.name}
-                            dept={c.dept}
-                            staff={c.staff}
-                            orderId={c.orderId}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <PaginationBar total={filtered.length} perPage={filters.perPage} page={safePage} className="pt-2" />
-            </>
-          );
-        })()
-      )}
-    </>
+    <CancelledListClient
+      initialCancelled={initial.cancelled ?? []}
+      initialServerTime={initial.serverTime}
+    />
   );
 }
 

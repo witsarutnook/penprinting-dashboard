@@ -1,15 +1,14 @@
 /**
  * Shared adaptive-backoff polling primitives.
  *
- * Extracted from auto-sync.tsx so both the legacy `useAutoSync`
- * (router.refresh polling) and the delta-fetch `useDeltaSync` can reuse the
- * exact same backoff schedule + skip guards without one importing the
- * other's React/`next/navigation` dependencies (keeps `mergeDelta` unit
- * tests free of a Next.js runtime).
+ * Consumed by `useDeltaSync` (lib/delta-sync.tsx) for backoff schedule +
+ * skip guards. Kept in its own pure module — no React, no next/* imports —
+ * so `mergeDelta` unit tests stay free of a Next.js runtime. (Historical:
+ * a former `useAutoSync` hook in auto-sync.tsx also consumed this, dropped
+ * 2026-06 when /shipped + /cancelled migrated to delta-fetch.)
  *
- * Pure module — no React, no next/* imports. `refreshGuard` touches
- * `document` but only when called (inside browser effects), never at
- * module-eval time.
+ * `refreshGuard` touches `document` but only when called (inside browser
+ * effects), never at module-eval time.
  */
 
 // Backoff schedule — when a user is actively interacting (mouse / keyboard /

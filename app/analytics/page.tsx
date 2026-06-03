@@ -12,7 +12,6 @@ import {
   DeptWorkloadChart,
 } from './charts-lazy';
 import { MonthlyReportView } from './monthly-report';
-import { AutoSync } from '@/lib/auto-sync';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { redirect } from 'next/navigation';
 import { getBangkokToday } from '@/lib/calendar';
@@ -74,7 +73,8 @@ export default async function AnalyticsPage({
 
   return (
     <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
+      {/* /analytics caches at 60s ISR — fresh aggregate report on each
+       *  revalidation tick is enough; no need for the auto-sync poll. */}
       <header className="border-b border-stone-100 bg-white">
         <div className="px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-xl font-bold text-stone-900">รายงาน</h1>

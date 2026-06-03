@@ -2,67 +2,30 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import Link from 'next/link';
+import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { displayDate } from '@/lib/jobs';
-import { AutoSync } from '@/lib/auto-sync';
-import { IconTruck, IconSearch, IconFolder } from '@/lib/icons';
-import { distinctYears, filterByYearMonth, dateMonthLabel, THAI_MONTHS_FULL } from '@/lib/list-helpers';
-import { PageSizeBar } from '@/components/page-size-bar';
-import { PaginationBar } from '@/components/pagination-bar';
-import { resolvePerPage, resolvePage, paginate, clampPage } from '@/lib/page-size';
-import Link from 'next/link';
-import { ShippedClient } from './client';
+import { IconFolder } from '@/lib/icons';
+import { ShippedListClient } from './list-client';
 
 export const metadata: Metadata = {
   title: 'จัดส่งแล้ว',
 };
 
-interface SearchParams {
-  q?: string;
-  year?: string;
-  month?: string;
-  per?: string;
-  page?: string;
-}
-
-interface ResolvedFilters {
-  query: string;
-  year: number;
-  month: number;
-  perPage: number;
-  page: number;
-}
-
-export default async function ShippedPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function ShippedPage() {
   const cookieStore = cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/shipped');
 
-  const filters: ResolvedFilters = {
-    query: (searchParams.q || '').trim().toLowerCase(),
-    year: Number(searchParams.year) || 0,
-    month: Number(searchParams.month) || 0,
-    perPage: resolvePerPage(searchParams.per),
-    page: resolvePage(searchParams.page),
-  };
-
-  const dataKey = `${filters.query}|${filters.year}|${filters.month}|${filters.perPage}|${filters.page}`;
-
   return (
     <DashboardShell user={session.user} role={session.role}>
-      <AutoSync />
       <header className="border-b border-stone-100 bg-white sticky top-0 z-20">
         <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
           <h1 className="text-xl font-bold text-stone-900">จัดส่งแล้ว</h1>
         </div>
       </header>
       <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
-        {/* Filter form is rendered inside the Suspense because the year
-         *  dropdown depends on the dataset to know which years exist. The
-         *  rest of the page chrome (header, sidebar, archive button) ships
-         *  in the first chunk so the user never sees a blank page. */}
         <div className="flex flex-wrap items-center gap-2">
           <Link
             href="/archive"
@@ -72,159 +35,49 @@ export default async function ShippedPage({ searchParams }: { searchParams: Sear
             ค้นหาในประวัติ
           </Link>
         </div>
-
-        <Suspense key={dataKey} fallback={<ShippedSkeleton />}>
-          <ShippedData filters={filters} />
+        <Suspense fallback={<ShippedSkeleton />}>
+          <ShippedData />
         </Suspense>
       </div>
     </DashboardShell>
   );
 }
 
-async function ShippedData({ filters }: { filters: ResolvedFilters }) {
-  let snap;
+/** Bootstrap data fetcher — awaits the initial snapshot via
+ *  `loadBoardDelta(null, { fullLists: true })` (full shipped rows + orders
+ *  for customer lookup) and hands it to the client `<ShippedListClient>`. */
+async function ShippedData() {
+  let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
   try {
-    snap = await loadAll();
+    initial = await loadBoardDelta(null, { fullLists: true });
   } catch (err) {
-    errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    errorMessage = err instanceof Error ? err.message : String(err);
   }
 
-  const allShipped = snap ? [...snap.shipped].sort((a, b) => Number(b.id) - Number(a.id)) : [];
-  // Resolve customer by orderId — orders[] doubles as the lookup index
-  const customerByOrderId = new Map<number, string>();
-  if (snap) {
-    for (const o of snap.orders) {
-      if (o.customer && o.customer !== '-') customerByOrderId.set(Number(o.id), o.customer);
-    }
+  if (!initial) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+        <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
+        <p className="text-sm text-amber-800 mt-2 font-mono">
+          {errorMessage || 'โหลดรายการจัดส่งไม่สำเร็จ'}
+        </p>
+      </div>
+    );
   }
-
-  const enriched = allShipped.map((s) => ({
-    ...s,
-    customer: s.orderId ? customerByOrderId.get(Number(s.orderId)) || '' : '',
-    monthLabel: dateMonthLabel(s.shippedDate),
-  }));
-
-  const years = distinctYears(allShipped, (s) => s.shippedDate);
-  const filtered = filterByYearMonth(enriched, (s) => s.shippedDate, filters.year, filters.month).filter((s) => {
-    if (!filters.query) return true;
-    const haystack = `${s.name} ${s.id} ${s.orderId || ''} ${s.customer}`.toLowerCase();
-    return haystack.includes(filters.query);
-  });
 
   return (
-    <>
-      <form action="/shipped" className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-72">
-          <IconSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-          <input
-            type="search"
-            name="q"
-            defaultValue={filters.query}
-            placeholder="ค้นชื่องาน / ลูกค้า / id..."
-            className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-          />
-        </div>
-        <select
-          name="year"
-          defaultValue={filters.year || ''}
-          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white tabular-nums focus:outline-none focus:border-accent"
-        >
-          <option value="">ทุกปี</option>
-          {years.map((y) => (
-            <option key={y} value={y}>
-              {y + 543}
-            </option>
-          ))}
-        </select>
-        <select
-          name="month"
-          defaultValue={filters.month || ''}
-          className="px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent"
-        >
-          <option value="">ทุกเดือน</option>
-          {THAI_MONTHS_FULL.map((m, i) => (
-            <option key={m} value={i + 1}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <button
-          type="submit"
-          className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-medium hover:bg-accent-dark"
-        >
-          กรอง
-        </button>
-        {(filters.query || filters.year || filters.month) && (
-          <a href="/shipped" className="text-xs text-stone-500 hover:text-stone-700 underline">
-            ล้างตัวกรอง
-          </a>
-        )}
-      </form>
-
-      <div className="text-xs text-stone-500 tabular-nums">
-        {filtered.length}/{allShipped.length} รายการ
-      </div>
-
-      <ShippedClient rows={filtered} />
-
-      {errorMessage ? (
-        <ErrorBox message={errorMessage} />
-      ) : filtered.length === 0 ? (
-        <EmptyState filtered={!!(filters.query || filters.year || filters.month)} />
-      ) : (
-        (() => {
-          const safePage = clampPage(filters.page, filtered.length, filters.perPage);
-          const visible = paginate(filtered, safePage, filters.perPage);
-          return (
-            <>
-              <PageSizeBar total={filtered.length} perPage={filters.perPage} shown={visible.length} />
-              <div className="bg-white rounded-2xl border border-stone-200 overflow-x-auto">
-                <table className="w-full text-sm min-w-[760px]">
-                  <thead className="bg-stone-50 text-xs text-stone-500 uppercase">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium w-14">#</th>
-                      <th className="text-left px-3 py-2 font-medium">ชื่องาน</th>
-                      <th className="text-left px-3 py-2 font-medium">ลูกค้า</th>
-                      <th className="text-right px-3 py-2 font-medium whitespace-nowrap">วันที่จัดส่ง</th>
-                      <th className="text-left px-3 py-2 font-medium whitespace-nowrap">เดือน</th>
-                      <th className="text-left px-3 py-2 font-medium">สถานะ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {visible.map((s) => (
-                      <tr key={s.id} className="hover:bg-emerald-50/30">
-                        <td className="px-3 py-2 tabular-nums text-stone-500">#{s.id}</td>
-                        <td className="px-3 py-2 font-medium text-stone-900">{s.name}</td>
-                        <td className="px-3 py-2 text-stone-600">{s.customer || '—'}</td>
-                        <td className="px-3 py-2 text-right text-stone-700 tabular-nums whitespace-nowrap">
-                          {displayDate(s.shippedDate)}
-                        </td>
-                        <td className="px-3 py-2 text-stone-500 whitespace-nowrap">{s.monthLabel}</td>
-                        <td className="px-3 py-2">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            จัดส่งแล้ว
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <PaginationBar total={filtered.length} perPage={filters.perPage} page={safePage} className="pt-2" />
-            </>
-          );
-        })()
-      )}
-    </>
+    <ShippedListClient
+      initialOrders={initial.orders}
+      initialShipped={initial.shipped ?? []}
+      initialServerTime={initial.serverTime}
+    />
   );
 }
 
 function ShippedSkeleton() {
   return (
     <div className="space-y-3" aria-hidden="true">
-      {/* Filter form skeleton */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="h-9 w-72 bg-stone-100 rounded-xl animate-pulse" />
         <div className="h-9 w-24 bg-stone-100 rounded-xl animate-pulse" />
@@ -250,28 +103,6 @@ function ShippedSkeleton() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function ErrorBox({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-      <h2 className="text-amber-900 font-semibold">โหลดไม่สำเร็จ</h2>
-      <p className="text-sm text-amber-800 mt-2 font-mono">{message}</p>
-    </div>
-  );
-}
-
-function EmptyState({ filtered }: { filtered: boolean }) {
-  return (
-    <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-10 text-center">
-      <div className="flex justify-center mb-2 text-stone-300">
-        <IconTruck size={36} />
-      </div>
-      <p className="text-sm text-stone-500">
-        {filtered ? 'ไม่พบงานที่ตรงตามตัวกรอง' : 'ยังไม่มีงานที่จัดส่งแล้ว'}
-      </p>
     </div>
   );
 }

@@ -25,8 +25,8 @@ import {
  * the cursor, so an idle board left open all day costs near-zero Postgres
  * transfer instead of a full snapshot every 15-120s.
  *
- * The poll cadence (adaptive backoff + 30-min hard-stop + skip guards) is
- * shared verbatim with `useAutoSync` via lib/poll-schedule.ts.
+ * The poll cadence (adaptive backoff + 30-min hard-stop + skip guards)
+ * lives in lib/poll-schedule.ts.
  *
  * ── Opts ──
  * `{ lists: true }` — also tracks shipped/cancelled orderId sets (/orders).
