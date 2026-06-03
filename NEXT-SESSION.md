@@ -2,7 +2,7 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
-> **Session 2026-06-03 — Wholesale-strangler finish + B consolidate (useAutoSync retired, /cancelled+/shipped delta-driven):** ✅ Vercel auto-deployed (3 commits, -561 LOC net), ⏳ คุณนุ๊กลบ Vercel env vars ที่ค้าง
+> **Session 2026-06-03 — Wholesale-strangler finish + B consolidate (useAutoSync retired, /cancelled+/shipped delta-driven) + Dashboard cleanup C/D:** ✅ Vercel auto-deployed (6 commits, -550 LOC net), ⏳ คุณนุ๊กรัน 2 admin endpoints + ลบ env vars
 >
 > ## งานที่ทำ
 >
@@ -26,22 +26,32 @@
 > - [`lib/auto-sync.tsx`](lib/auto-sync.tsx) slim down เหลือแค่ `broadcastWrite` (10 mutation sites ยังใช้). ลบ `useAutoSync` + `AutoSync` + `useRouter`/refresh/backoff timer machinery (-150 LOC ใน auto-sync.tsx)
 > - [`lib/poll-schedule.ts`](lib/poll-schedule.ts) + `lib/delta-sync.tsx` docstrings drop refs ถึง gone hook
 >
+> ### C — `imported_at` index on shipped + cancelled ([`b44394b`](https://github.com/witsarutnook/penprinting-dashboard/commit/b44394b))
+> - เพิ่ม `idx_shipped_imported` + `idx_cancelled_imported` ใน [`app/api/admin/db-migrate/route.ts`](app/api/admin/db-migrate/route.ts) — powers `WHERE imported_at > since` incremental polls (เคย seq-scan ทุก backoff tick, fine ตอนนี้ ~5k rows แต่ degrades linearly ตอน shipped โต). Idempotent (`CREATE INDEX IF NOT EXISTS`).
+> - Fix stale [`CLAUDE.md`](CLAUDE.md) source-of-truth table — split `lib/auto-sync.tsx` entry ออกเป็น 3 (auto-sync / delta-sync / board-delta) สะท้อนว่า `useAutoSync` หายไปแล้ว
+>
+> ### D — fix-date-anomaly admin endpoint ([`608f145`](https://github.com/witsarutnook/penprinting-dashboard/commit/608f145))
+> - ปิด AUDIT-BACKLOG `[accepted]` `DATA-dateIn-double-encoded` (3 orders ค้างจาก 5/16): 202605046 / 202605047 / 202605049 ที่ `raw.dateIn` + `raw.dateDue` เก็บเป็น JSON-encoded ISO (legacy residue ก่อน Apps Script `objectToRow` Date guard ลง 5/8)
+> - ใหม่: [`/api/admin/fix-date-anomaly`](app/api/admin/fix-date-anomaly/route.ts) — GET dry-run / `?apply=1` apply. `normalizeDate` unwraps JSON → ISO → Bangkok DD/MM/YYYY; idempotent (re-run = no-op). อัพเดททั้ง raw JSONB + denormalized top-level columns `date_in`/`date_due`
+> - +9 unit tests (146 total) — bug pattern + DMY passthrough + TZ rollover + null/undefined safety + unrecognised input preserve
+>
 > ## ⏳ Pending user actions
-> 1. **Vercel env vars cleanup** — ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST` (no longer read, cleanup-only)
-> 2. **Smoke test post-deploy** — เปิด /board /orders /calendar /cancelled /shipped /analytics ตรวจว่าโหลด + auto-sync ทำงาน (mutation → other tab อัพเดต)
-> 3. **(ค้างจาก 5/29)** FB Sharing Debugger refresh OG cache 7 ลิงก์ (optional)
-> 4. **(ค้างจาก 5/29)** `penprintphotobook/marketing/` untracked — decide git-track/.gitignore
-> 5. **(ค้างจาก 5/28)** Vercel env vars cleanup — 14 × `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
-> 6. **(ค้างจาก 5/28)** Sentry alert rule — `postgres-error=true` > 10/5min
-> 7. **(ค้างจาก 5/28)** Test `/track #202605173` — verify step 5 active
+> 1. **🆕 รัน `/api/admin/db-migrate`** (after Vercel deploy เสร็จ) — apply 2 new indexes (`idx_shipped_imported` + `idx_cancelled_imported`). คาดหวัง response: `applied` array มี 2 ชื่อนี้ใหม่. ถ้าเคยรัน migrate มาก่อนและตอนนี้ run ใหม่ตอน DB index มีอยู่แล้ว — `CREATE INDEX IF NOT EXISTS` skip silently
+> 2. **🆕 รัน `/api/admin/fix-date-anomaly`** — dry run ก่อน (ดู report 3 orders), แล้ว `?apply=1` ถ้า diff ดูถูก. ส่ง response `applied[]` กลับมาแชร์ได้
+> 3. **Vercel env vars cleanup** — ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST` (no longer read, cleanup-only)
+> 4. **Smoke test post-deploy** — เปิด /board /orders /calendar /cancelled /shipped /analytics ตรวจว่าโหลด + auto-sync ทำงาน (mutation → other tab อัพเดต)
+> 5. **(ค้างจาก 5/29)** FB Sharing Debugger refresh OG cache 7 ลิงก์ (optional)
+> 6. **(ค้างจาก 5/29)** `penprintphotobook/marketing/` untracked — decide git-track/.gitignore
+> 7. **(ค้างจาก 5/28)** Vercel env vars cleanup — 14 × `WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
+> 8. **(ค้างจาก 5/28)** Sentry alert rule — `postgres-error=true` > 10/5min
+> 9. **(ค้างจาก 5/28)** Test `/track #202605173` — verify step 5 active
 >
 > ## 🎯 งานหลัก session หน้า
 > 1. **Refactor `pageMetadata()` helper** (ค้างจาก 5/29) — กัน SEO shallow-merge bug recur, web + photobook 2 repo
 > 2. **Photobook SEO content push** (ค้างจาก 5/17) — blog/MDX + reviews + Review/aggregateRating markup
-> 3. **`imported_at` index on shipped + cancelled** (optional perf) — ตอนนี้ incremental `WHERE imported_at > since` ทำ seq scan. ~5k rows = milliseconds (fine for now) แต่ถ้า shipped โต ค่อย add: `CREATE INDEX idx_shipped_imported ON shipped(imported_at)`. Migration ใน db-migrate route.
-> 4. **AI Quoting Phase 0** (deferred 6 sessions) — spec/scaffold
-> 5. **DATE_ANOMALY 3 orders** (202605046/047/049) — optional Postgres SQL fix
-> 6. **Hydration warnings /board** — รอ user incognito test (ค้างจาก 5/27)
+> 3. **AI Quoting Phase 0** (deferred 6 sessions) — spec/scaffold
+> 4. **Hydration warnings /board** — รอ user incognito test (ค้างจาก 5/27)
+> 5. **Audit follow-up** — ถ้า fix-date-anomaly user apply สำเร็จ ขีดฆ่า `DATA-dateIn-double-encoded` ใน AUDIT-BACKLOG (ตอนนี้ status `[accepted]` — เปลี่ยนเป็น `[x] resolved` พร้อม commit hash + session ref)
 >
 > ### Decisions / Lessons
 > - **`imported_at` cursor for append-only tables** — shipped + cancelled don't have `updated_at` (rows immutable once written). `DEFAULT NOW()` on INSERT makes `imported_at` effectively a `created_at`. Cursor catches new INSERTs; PK ID set comparison catches DELETEs (no tombstone column needed). Same pattern reusable for any append + hard-delete table.
@@ -49,7 +59,7 @@
 > - **Promise.all evaluates array sync → mock queue order matters** — when extending board-delta tests, `Promise.all([sql1, sql2])` fires both queries before await; my first test pass queued main jobs/orders first which got consumed by the fullLists queries instead. Re-ordered tests to match actual call-firing order (fullLists block → main block in code → tombstones).
 > - **Strangler closeout pattern** — drop fallback paths in 1 commit (blast radius linear), then on the NEXT commit consolidate dependent abstractions ([feedback_wholesale_strangler_finish](file)). Applied here: commit 1 dropped the flag, commit 2 extended the new pattern, commit 3 consolidated the auto-sync abstraction. Each commit gates green independently.
 >
-> **Commits**: [`db8091d`](https://github.com/witsarutnook/penprinting-dashboard/commit/db8091d) + [`0edd926`](https://github.com/witsarutnook/penprinting-dashboard/commit/0edd926) + [`fe2bec5`](https://github.com/witsarutnook/penprinting-dashboard/commit/fe2bec5) (Vercel auto-deployed)
+> **Commits**: [`db8091d`](https://github.com/witsarutnook/penprinting-dashboard/commit/db8091d) (wholesale-strangler) + [`0edd926`](https://github.com/witsarutnook/penprinting-dashboard/commit/0edd926) (delta fullLists) + [`fe2bec5`](https://github.com/witsarutnook/penprinting-dashboard/commit/fe2bec5) (useAutoSync retire) + [`6247a96`](https://github.com/witsarutnook/penprinting-dashboard/commit/6247a96) (docs) + [`b44394b`](https://github.com/witsarutnook/penprinting-dashboard/commit/b44394b) (imported_at indexes) + [`608f145`](https://github.com/witsarutnook/penprinting-dashboard/commit/608f145) (fix-date-anomaly endpoint) — Vercel auto-deployed
 >
 > ---
 >
