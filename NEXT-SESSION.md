@@ -2,6 +2,71 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-04 — Phase 1 calc Next 14→15 + React 18→19 pilot:** ✅ Vercel deploy 3 ครั้ง (next-pwa fork swap + Next 15/React 19 + Sentry instrumentation refactor), ✅ คุณนุ๊กเทส prod ผ่าน, 🟡 **1-week soak start 2026-06-04 → 2026-06-11** ก่อน Phase 2 (web)
+>
+> ## งานที่ทำ
+>
+> ### #1 — next-pwa fork swap ([`13d4151`](https://github.com/witsarutnook/penprinting-calc/commit/13d4151))
+> เจอ blocker silent: `next-pwa@5.6.0` (shadowwalker) unmaintained ตั้งแต่ 2023, peerDep `next>=9.0.0` แต่ webpack 5 changes ใน Next 15 จะ build แตก ผ่านไม่ได้แม้ peerDep แค่ผ่าน. Swap → `@ducanh2912/next-pwa@10.2.9` (maintained fork, peerDep `next>=14.0.0`, drop-in compatible).
+> - Import: `require('next-pwa')(...)` → `require('@ducanh2912/next-pwa').default(...)`
+> - Config: `runtimeCaching` ย้ายจาก top-level → `workboxOptions.runtimeCaching`
+> - `skipWaiting` omit (default true)
+> - Build verified on Next 14 ก่อน bump (isolate failure mode)
+>
+> ### #2 — Next 14→15 + React 18→19 ([`e44ba10`](https://github.com/witsarutnook/penprinting-calc/commit/e44ba10))
+> - next 14.2.35 → 15.5.19, react 18.3.1 → 19.2.7, types/react 18.3.30 → 19.2.16, eslint-config-next 14.2.35 → 15.5.19
+> - **Zero code changes** — calc มี surface area สะอาดมาก: ไม่มี `cookies()`/`headers()`/`draftMode()` (async API codemod = no-op), ไม่มี `forwardRef`/`useRef()` (React 19 ref-as-prop codemod = no-op), ไม่มี `fetch()`/API routes (Next 15 default-uncached = no-op), metadata + viewport แยก export อยู่แล้ว
+> - **Manual bump** (ไม่รัน @next/codemod tool) — control เพิ่ม, non-interactive, ไม่มี surprise prompt
+> - Bundle: 183 → 202 kB First Load (+10% React 19 baseline, acceptable)
+> - Audit: 12 → 10 vulnerabilities (Next 15 ปิด 14 CVEs จาก Next 14.2.35)
+>
+> ### #3 — Sentry instrumentation refactor ([`efe62ef`](https://github.com/witsarutnook/penprinting-calc/commit/efe62ef))
+> ปิด 4 build warnings + ปิดกับ Turbopack future-proof:
+> 1. **Delete** `sentry.{server,client,edge}.config.ts` (3 ไฟล์)
+> 2. **Create** `instrumentation.ts` (root) — `register()` gate ด้วย `NEXT_RUNTIME === 'nodejs' | 'edge'` + export `onRequestError = Sentry.captureRequestError`
+> 3. **Create** `instrumentation-client.ts` (root) — ย้าย ignoreErrors + denyUrls verbatim + export `onRouterTransitionStart = Sentry.captureRouterTransitionStart` (Next 15 App Router nav tracing)
+> 4. **Create** `app/global-error.tsx` — `'use client'` + `useEffect(captureException)` + Thai fallback UI
+> 5. **next.config.js**: `disableLogger: true` → `webpack: { treeshake: { removeDebugLogging: true } }`
+> - Bundle: 202 → 213 kB (+11 kB cost of global-error + client transition tracking, acceptable)
+> - **Build output ตอนนี้: ศูนย์ warnings** (เคยมี 4: disableLogger + 3 sentry-files deprecation)
+>
+> ## ⏳ Pending user actions (ค้างต่อจาก session ก่อนหน้าๆ)
+> **🆕 ใหม่จาก 6/04:**
+> 1. **Soak window calc** — เฝ้า Sentry + ใช้งาน calc.penprinting.co ไม่ต่ำกว่า 1 wk (จนถึง **2026-06-11**) ก่อน Phase 2 (web). ดู: ไม่มี error spike, PWA SW ทำงานถูก, ลูกค้าไม่บ่น
+>
+> **ค้างจาก 6/03:**
+> 2. รัน `/api/admin/db-migrate` (apply 2 indexes `idx_shipped_imported` + `idx_cancelled_imported`)
+> 3. รัน `/api/admin/fix-date-anomaly` (dry run → `?apply=1` แก้ 3 orders 202605046/047/049)
+> 4. Vercel env vars cleanup — ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST`
+>
+> **ค้างนาน:**
+> 5. (5/29) FB Sharing Debugger refresh OG cache 7 ลิงก์
+> 6. (5/29) `penprintphotobook/marketing/` untracked — decide
+> 7. (5/28) ลบ env vars 14×`WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
+> 8. (5/28) Sentry alert rule `postgres-error>10/5min`
+> 9. (5/28) Test `/track #202605173`
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **🆕 Phase 2 — web Next 14→15 pilot** (after soak 6/11) — apply same 3-step pattern:
+>    - next-pwa fork swap (ถ้า web ใช้ next-pwa — เช็คก่อน, ไม่งั้นข้าม)
+>    - Next 14→15 + React 18→19 (web น่าจะ richer surface — มี portfolio pages, services pages, may need `params` async API)
+>    - Sentry instrumentation refactor (web มี sentry.client.config.ts richer — preserve ignoreErrors/denyUrls verbatim)
+> 2. **Refactor `pageMetadata()` helper** (ค้างจาก 5/29) — กัน SEO shallow-merge bug recur, web + photobook 2 repo
+> 3. **Photobook SEO content push** (ค้างจาก 5/17)
+> 4. **AI Quoting Phase 0** (deferred 6 sessions)
+> 5. **Hydration warnings /board** (ค้างจาก 5/27)
+>
+> ### Decisions / Lessons (Phase 1 calc)
+> - **next-pwa@5 is dead** — บันทึก [[feedback_next_pwa_fork_for_next15]]. Apply same swap to photobook + dashboard ก่อน Next 15 bump
+> - **Sentry instrumentation pattern locked in** — บันทึก [[feedback_sentry_instrumentation_next15]]. 5-step recipe ใช้ได้ทั้ง web + photobook + dashboard (ปรับ richness ของ ignoreErrors/denyUrls ตาม project)
+> - **Order matters: PWA fork → Next bump → Sentry refactor** — แต่ละ commit คือ deploy แยก, isolate failure mode. Combined commit จะหา root cause ยากกว่ามาก
+> - **Manual bump > codemod tool สำหรับ pilot ขนาดเล็ก** — calc มี surface area สะอาดทำให้ manual ปลอดภัย + control เพิ่ม. Dashboard Phase 4 อาจต้องใช้ codemod tool เพราะ async API (cookies/headers) ใช้หลายที่
+> - **Bundle growth Next 14 → 15 + React 19 + Sentry instrumentation = ~+30 kB (183 → 213)** — baseline ของ pilot. Web/photobook คาดว่าใกล้ๆ ratio นี้
+>
+> **Commits**: 3 commits ใน penprinting-calc — [`13d4151`](https://github.com/witsarutnook/penprinting-calc/commit/13d4151) + [`e44ba10`](https://github.com/witsarutnook/penprinting-calc/commit/e44ba10) + [`efe62ef`](https://github.com/witsarutnook/penprinting-calc/commit/efe62ef). Vercel auto-deploy 3 ครั้ง. คุณนุ๊กเทส prod ผ่าน.
+>
+> ---
+>
 > **Session 2026-06-03 (late) — Tech-update audit + Phase 0 safe patches ทั้ง 4 Vercel projects:** ✅ Vercel auto-deployed (4 commits — dashboard / web / calc / photobook), ⏳ Phase 1+ planning (Next 14→15 migration) deferred to dedicated session(s)
 >
 > ## งานที่ทำ
