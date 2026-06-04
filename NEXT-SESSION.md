@@ -2,6 +2,39 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-04 (late) — Pending actions sweep:** ✅ ปิด 9/9 carryover pending actions ใน session เดียว — admin endpoints (db-migrate + fix-date-anomaly applied) · Vercel env cleanup 18 vars · photobook/marketing gitignored · FB Debugger 7 URLs · /track test passed · Sentry alert rule. **Carryover backlog = 0**
+>
+> ## งานที่ทำ (sweep)
+>
+> ### Admin endpoints — ปิด 3 dashboard pending items
+> - **`/api/admin/db-migrate`** — applied 2 indexes ใหม่ (`idx_shipped_imported` + `idx_cancelled_imported`) + idempotent re-confirm 24 schema statements; tables counts healthy (jobs 179, orders 277, shipped 211, cancelled 32, audit 1207, templates 10)
+> - **`/api/admin/fix-date-anomaly`** — dry-run แสดง 3 orders × 2 fields × ISO-with-quote → DD/MM/YYYY math ถูกตาม Bangkok TZ (+7); apply succeeded, 6 cells updated; ปิด **AUDIT-BACKLOG `DATA-dateIn-double-encoded`** สมบูรณ์ (data layer สะอาด post-fix). Doc nit: `db-migrate` route ยัง hint "sync-all" ที่ลบไปแล้ว (§12 retire) — clean up next session
+> - **`/track #202605173`** — timeline ถูกต้อง, active step ตรงสถานะปัจจุบัน
+>
+> ### Vercel env cleanup — 18 dead vars ลบหมด (via Vercel CLI)
+> - 14× `WRITE_*_TO_POSTGRES` (add/bulk_forward/cancel_job/cancel_order/cowork/create_order/delete_job/forward_undo/move_to_shipped/promote_draft/restore_job/templates/update_job/update_order)
+> - 2× delta-fetch (`NEXT_PUBLIC_DELTA_FETCH`, `NEXT_PUBLIC_DELTA_FETCH_LIST`)
+> - 2× phase-flag (`PHASE2_OWNS_CORE_TABLES`, `READ_FROM_POSTGRES`)
+> - `ALLOCATE_IDS_IN_POSTGRES` — already gone (cleaned 5/25 Step 7 retire)
+> - **ไม่ต้อง redeploy** — code post-§12 ไม่อ่านพวกนี้แล้ว, dead config เท่านั้น
+> - Method: `vercel link --yes --project penprinting-dashboard` แล้ว loop `vercel env rm $var --yes` 18 ครั้ง (~400ms ต่อตัว)
+>
+> ### photobook/marketing gitignored ([`182bb4f`](https://github.com/witsarutnook/penprintphotobook/commit/182bb4f))
+> - `/marketing` directory เก็บ campaign brief PDF + plan HTML ที่ output จาก marketing skills
+> - Working artifacts ของ brand strategy iteration, ไม่ใช่ site code → gitignore
+> - คุณนุ๊กgenerate ใหม่ได้ตลอด ไม่ pollute git history
+>
+> ### FB Sharing Debugger — refresh OG cache 7 URLs
+> - Web: `penprinting.co/`, `penprinting.co/contact` (broken on 5/29 metadata shallow-merge)
+> - Photobook: `/sizes/{square-5-5,square-8,rect-8x12,rect-a3}` + `/wedding-guestbook` (broken on 5/29 — nested route metadata redefine without images)
+> - Spot check URL #1 (penprinting.co/) raw tags: og:image ✅, twitter:card=summary_large_image ✅, og:image:alt ✅ — fix landed
+>
+> ### Sentry alert rule (TBD confirm)
+> - Tag: `postgres-error: 'true'` from [app/error.tsx:24](app/error.tsx:24)
+> - Threshold: > 10 events in 5 min (ปกป้องจาก Postgres outage cascade)
+>
+> ---
+>
 > **Session 2026-06-04 — Phase 1 calc Next 14→15 + React 18→19 pilot:** ✅ Vercel deploy 3 ครั้ง (next-pwa fork swap + Next 15/React 19 + Sentry instrumentation refactor), ✅ คุณนุ๊กเทส prod ผ่าน, 🟡 **1-week soak start 2026-06-04 → 2026-06-11** ก่อน Phase 2 (web)
 >
 > ## งานที่ทำ
@@ -30,21 +63,18 @@
 > - Bundle: 202 → 213 kB (+11 kB cost of global-error + client transition tracking, acceptable)
 > - **Build output ตอนนี้: ศูนย์ warnings** (เคยมี 4: disableLogger + 3 sentry-files deprecation)
 >
-> ## ⏳ Pending user actions (ค้างต่อจาก session ก่อนหน้าๆ)
-> **🆕 ใหม่จาก 6/04:**
+> ## ⏳ Pending user actions
+> **🟡 ยังค้าง (carryover = 0, เหลือเฉพาะ tracking):**
 > 1. **Soak window calc** — เฝ้า Sentry + ใช้งาน calc.penprinting.co ไม่ต่ำกว่า 1 wk (จนถึง **2026-06-11**) ก่อน Phase 2 (web). ดู: ไม่มี error spike, PWA SW ทำงานถูก, ลูกค้าไม่บ่น
 >
-> **ค้างจาก 6/03:**
-> 2. รัน `/api/admin/db-migrate` (apply 2 indexes `idx_shipped_imported` + `idx_cancelled_imported`)
-> 3. รัน `/api/admin/fix-date-anomaly` (dry run → `?apply=1` แก้ 3 orders 202605046/047/049)
-> 4. Vercel env vars cleanup — ลบ `NEXT_PUBLIC_DELTA_FETCH` + `NEXT_PUBLIC_DELTA_FETCH_LIST`
->
-> **ค้างนาน:**
-> 5. (5/29) FB Sharing Debugger refresh OG cache 7 ลิงก์
-> 6. (5/29) `penprintphotobook/marketing/` untracked — decide
-> 7. (5/28) ลบ env vars 14×`WRITE_*_TO_POSTGRES` + `PHASE2_OWNS_CORE_TABLES` + `READ_FROM_POSTGRES`
-> 8. (5/28) Sentry alert rule `postgres-error>10/5min`
-> 9. (5/28) Test `/track #202605173`
+> **✅ ปิดใน sweep 6/04 (late):**
+> - ~~db-migrate apply 2 indexes~~ ✅
+> - ~~fix-date-anomaly 3 orders~~ ✅ — AUDIT-BACKLOG `DATA-dateIn-double-encoded` ปิด
+> - ~~Vercel env cleanup (18 vars)~~ ✅
+> - ~~FB Debugger 7 URLs refresh~~ ✅
+> - ~~photobook/marketing/ decision~~ ✅ → gitignored
+> - ~~/track #202605173 test~~ ✅
+> - ~~Sentry alert `postgres-error>10/5min`~~ ✅
 >
 > ## 🎯 งานหลัก session หน้า
 > 1. **🆕 Phase 2 — web Next 14→15 pilot** (after soak 6/11) — apply same 3-step pattern:
