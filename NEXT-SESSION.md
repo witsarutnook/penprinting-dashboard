@@ -2,6 +2,44 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-05 — UI-1 hydration `/board` closed wontfix + A11Y backlog item added:** ✅ Closed via 60-second incognito A/B test. Carryover ยังคง 0. Phase 2 (web Next 14→15) ยังรอ soak จบ 6/11.
+>
+> ## งานที่ทำ
+>
+> ### UI-1 hydration warnings /board → closed wontfix
+> - **Phase 1 feedback loop**: scan-deep ทุก client component บนเส้นทาง /board (board-client / dashboard-shell / sidebar / toast-provider / undo-context / pending-mutations / kpi-bar / search-box / filter-chips / kpi-detail-modal / card.tsx 70KB) — grep `new Date()` / `Date.now()` / `Math.random` / `localStorage` / `window.` / `typeof window` ใน render path. **Static analysis clean** — `Date.now()` ใน undo/toast เข้าผ่าน guard (entry/list ว่างตอน initial), `KPIDetailModal` `dynamic({ssr:false})` mount เฉพาะ click, SearchBox `useState(initial)` deterministic จาก URL
+> - **Phase 3 ranked hypotheses**: H1 browser extension · H2 static-analysis miss · H3 streaming Suspense race — เริ่มทดสอบจาก H1 cheapest
+> - **Phase 5 test**: คุณนุ๊กรัน incognito A/B test (`Cmd+Shift+N` → `/board`):
+>   - **Incognito Console: clean** (ไม่มี React error)
+>   - **Normal Console: `Uncaught Error: Minified React error #422` + 6 errors** พร้อม fingerprints ตัวพิสูจน์: `Backpack was unable to override window.ethereum` + `Nightly Wallet Injected Successfully` + `Check phishing by URL: Passed.` + `[Revoke][antiphish] result:`
+>   - Stack trace top frame `at MessagePort.T (...)` = content-script messaging signature
+> - **Closure**: ปิด UI-1 ใน AUDIT-BACKLOG เป็น `[x] wontfix` (crypto wallet + anti-phishing extensions override window.ethereum + DOM ก่อน React hydrate → tree mismatch → CSR recovery automatic, non-functional, outside our control)
+> - **Memory note**: เขียน [[feedback_extension_hydration_noise]] — pattern parallel ของ [[feedback_sentry_extension_noise]]. หลักการ: minified `#422`/`#425` ทุกโหลด prod แต่ dev clean = test incognito ก่อน static scan, 60s ประหยัดเวลาทั้ง session
+>
+> ### A11Y-board-form-label → new Low backlog item
+> - DevTools Issues panel โชว์ **100 "No label associated with a form field"** บน /board (รวมถึงใน incognito clean Console)
+> - ไม่ใช่ hydration issue — เป็น a11y debt ดิบ ที่ axe-via-DevTools รวบรวมไว้ทุก `<input>`/`<button role="checkbox">` ใน kanban
+> - ผู้ต้องสงสัย: bulk-mode "เลือกหลายงาน" checkboxes ของ Column/Card + filter chips ขาด `aria-label`/`<label>`
+> - **Defer reason**: 100 ไม่ใช่ 100 unique fields (count ตามจำนวนใบ card × checkboxes); ผ่อนได้, severity low (native input ยังมี implicit role), block dedicated a11y sprint
+>
+> ## ⏳ Pending user actions (carryover = 0, เหลือเฉพาะ tracking)
+> 1. **Soak window calc** — เฝ้า Sentry + ใช้ calc.penprinting.co ไม่ต่ำกว่า 1 wk (จนถึง **2026-06-11**) ก่อน Phase 2 (web). ดู: ไม่มี error spike, PWA SW ทำงานถูก, ลูกค้าไม่บ่น
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Phase 2 — web Next 14→15 pilot** (after soak 6/11)
+> 2. **Refactor `pageMetadata()` helper** (ค้างจาก 5/29)
+> 3. **Photobook SEO content push** (ค้างจาก 5/17)
+> 4. **AI Quoting Phase 0** (deferred 6 sessions)
+> 5. **A11Y-board-form-label** — dedicated a11y pass (ค้างใหม่ 6/05)
+>
+> ### Decisions / Lessons
+> - **A/B incognito ก่อน static scan** — `/board` UI-1 สอนชัดว่า production-only hydration warnings (minified #422/#425) เป็น extension noise ~99% ของเคส; 60-second incognito test ปิด root cause ที่ static scan ของ 1841-line `card.tsx` ใช้เวลาเป็นชั่วโมงก็ไม่เจอ. Document ใน [[feedback_extension_hydration_noise]]
+> - **A11Y วันนี้ surface 100 issues จาก DevTools** — DevTools Issues panel นับทุก instance (ทุก card × ทุก checkbox) ไม่ใช่ unique selector; รายงานสรุปครั้งหน้าใช้ count รายงานเหมือนเดิมแต่ระบุชัดว่าจะ inspect filter chips + bulk checkboxes
+>
+> **Commits**: docs-only (AUDIT-BACKLOG.md + NEXT-SESSION.md + memory note `feedback_extension_hydration_noise.md` + MEMORY.md index). ไม่มี code change → Vercel auto-deploy = no-op docs.
+>
+> ---
+>
 > **Session 2026-06-04 (late) — Pending actions sweep:** ✅ ปิด 9/9 carryover pending actions ใน session เดียว — admin endpoints (db-migrate + fix-date-anomaly applied) · Vercel env cleanup 18 vars · photobook/marketing gitignored · FB Debugger 7 URLs · /track test passed · Sentry alert rule. **Carryover backlog = 0**
 >
 > ## งานที่ทำ (sweep)
