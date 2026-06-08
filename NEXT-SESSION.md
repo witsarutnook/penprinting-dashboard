@@ -2,6 +2,48 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-08 — Infra maintenance sweep (Neon + DNS + TTL audit):** ✅ No code change. Neon usage healthy (ใช้ 1.7% compute / 0.4% storage / 4.3% transfer บน Launch plan 30 GB). Neon history retention 6h → **1d** (กัน data accident แบบ DATE_ANOMALY). DNS TTL `app.penprinting.co` **300 → 3600** (cleanup ของค้างจาก Phase 3.6 cutover 5/09). TTL ทั้งหมดใน dashboard app-layer scan แล้ว — ไม่ต้องแตะ (15s loadAll + 60s analytics ISR + adaptive polling 15/30/120s tune ไว้แล้ว). Carryover ยังคง 0.
+>
+> ## งานที่ทำ
+>
+> ### Neon database — usage audit + retention bump
+> - **Usage (8 days into Jun)**: 5.01 CU-hrs / 0.04 GB storage / 1.3 GB transfer — projected/เดือน = 19 CU-hrs (6% of 300 included) / 50 MB storage / 4.9 GB transfer (16% of 30 GB included). Network transfer ลดลง 4× เทียบกับเคย measured 5.6 GB/8d ก่อนใส่ `unstable_cache` loadAll (May 18)
+> - **History retention 6h → 1d** ที่ Neon console → Settings → History window slider. ไม่กิน quota เพิ่ม (storage 40 MB / 10 GB included) — ได้ point-in-time restore window กว้างขึ้น 4× กัน data accident แบบ DATE_ANOMALY (detect ภายในชั่วโมง, recover ได้
+> - Decision: อยู่ Launch plan ($19/mo) ต่อ — headroom 84-99% ทุก metric, รองรับ traffic 5-10× ได้ก่อนชน overage
+>
+> ### DNS TTL `app.penprinting.co` 300 → 3600
+> - HostAtom DNS panel: row `app` CNAME `cname.vercel-dns.com` TTL 300 (5 min) → **3600** (1h)
+> - **เหตุผล**: ของค้างจาก Phase 3.6 cutover (5/09) — ตอนนั้นลด TTL 300 เพื่อ propagate เร็ว+rollback เร็ว, ผ่านมา 1 เดือนเสถียรแล้ว ไม่มีแผนเปลี่ยน CNAME อีก
+> - **ผลลัพธ์**: consistent กับ `calc` + `dashboard` (3600 ทั้งคู่), ลด DNS query 12× ของ resolvers ทั่วโลก
+> - Memory: [[feedback_dns_ttl_post_cutover_cleanup]] — pattern สำหรับ DNS migration ครั้งหน้า
+>
+> ### App-layer TTL audit (no change)
+> สแกน TTL ทุก layer ของ dashboard (poll-schedule.ts / api.ts loadAll cache / analytics ISR / cookies / rate-limit / undo / service token) — confirm ว่า tune ไว้แล้วทุกตัว:
+> - `loadAll` unstable_cache **15s** + tag-invalidated (lib/api.ts:71) — tune 5/18 เพื่อ collapse N tabs × M staff queries ลง 1 query / window
+> - `/analytics` ISR **60s** — acceptable lag สำหรับ KPI
+> - Adaptive polling **15s / 30s / 120s / stop@30min** (lib/poll-schedule.ts) — tune 5/19 (PA-H1)
+> - Session cookie **30 days**, login rate-limit **5/5min**, track rate-limit **1h window**, service token **5y**, undo **10s** — ปกติทั้งหมด
+> - ไม่มีเหตุผล cost ที่ต้องลด — quota เหลือเฟือ
+>
+> ## ⏳ Pending user actions (carryover = 0, เหลือเฉพาะ tracking)
+> 1. **Soak window calc** — เฝ้า Sentry + ใช้ calc.penprinting.co จนถึง **2026-06-11** (เหลือ 3 วัน) ก่อน Phase 2 (web). ดู: ไม่มี error spike, PWA SW ทำงานถูก, ลูกค้าไม่บ่น
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Phase 2 — web Next 14→15 pilot** (after soak 6/11 — เหลือ 3 วัน)
+> 2. **Refactor `pageMetadata()` helper** (ค้างจาก 5/29 — feedback_nextjs_metadata_shallow_merge root cause)
+> 3. **Photobook SEO content push** (ค้างจาก 5/17 — งานนานสุดในคิว)
+> 4. **AI Quoting Phase 0** (deferred 6 sessions)
+> 5. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
+> 6. **Doc nit** — `/api/admin/db-migrate` route ยังมี hint "sync-all" ที่ §12 ลบไปแล้ว (carryover จาก 6/04 late sweep)
+>
+> ### Decisions / Lessons
+> - **Post-cutover DNS TTL revert** — เป็น chore ที่หายไปจากทุก deploy-checklist; เห็นตอน user เปิด DNS panel โดยบังเอิญ (ไม่ใช่ proactive check). Save เป็น memory [[feedback_dns_ttl_post_cutover_cleanup]] เพื่อให้ surface ทุกครั้งที่ทำ DNS migration. Pattern แบบเดียวกับ [[feedback_omise_secret_roll_vm_sync]] (rolling action ที่มีหลาย consumer + post-action cleanup ที่ลืม)
+> - **Neon Launch plan + autoscale 0.25-8 CU** = perfect fit สำหรับ Penprinting scale — usage ตอนนี้ 6%/0.4%/16% ของ quota = รองรับ growth ได้ปลายปีไม่ต้อง upgrade. ถ้า traffic spike วันใด → autoscale handle เอง ไม่ต้องตื่นมาแก้
+>
+> **Commits**: ไม่มี — docs-only update (NEXT-SESSION.md + memory note `feedback_dns_ttl_post_cutover_cleanup.md` + MEMORY.md index). Infra changes ทั้งหมดทำที่ console (Neon + HostAtom).
+>
+> ---
+>
 > **Session 2026-06-05 — UI-1 hydration `/board` closed wontfix + A11Y backlog item added:** ✅ Closed via 60-second incognito A/B test. Carryover ยังคง 0. Phase 2 (web Next 14→15) ยังรอ soak จบ 6/11.
 >
 > ## งานที่ทำ
