@@ -2,6 +2,30 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-10 — `pageMetadata()` helper refactor (web + photobook):** ✅ ปิด tech debt ค้างจาก 5/29 ([[feedback_nextjs_metadata_shallow_merge]]). เพิ่ม helper `pageMetadata({ title, description, url, ogImage?, ogImageAlt?, keywords?, article? })` ใน `lib/seo.ts` ทั้ง 2 repos — fill `og.type/locale/siteName/images` + `twitter.card` explicit ทุกครั้ง กัน Next.js shallow-merge drop nested fields ซ้ำอีก. Migrate 11 callsites (web 9 + photobook 2). `/wedding-guestbook` consolidate 3 titles → 1 (decision: YAGNI บน per-platform overrides). `/blog/[slug]` ได้ `article` option (og.type=article + publishedTime + authors). Post-deploy curl verify **11/11 URLs PASS** (og:image + twitter:card + og:site_name + og:type) + spot-check canonical/og:url absolute + article:published_time + alternateLocale en_US ครบ.
+>
+> ## งานที่ทำ (2026-06-10)
+> - **penprinting-web `f2ef043`** — helper + migrate 9 pages (10 files, +122/-159)
+> - **penprintphotobook `80ae29a`** — helper (+alternateLocale en_US, siteName จาก `SITE_CONFIG.name`) + migrate 2 pages (3 files, +77/-64)
+> - Spec + plan (superpowers flow): `docs/superpowers/specs/2026-06-10-pagemetadata-helper-design.md` + `docs/superpowers/plans/2026-06-10-pagemetadata-helper.md` (workspace root — ไม่ git-tracked)
+> - Gotcha ที่เจอ: ลบ `FULL_URL` const ใน wedding-guestbook แล้ว breadcrumb JSON-LD ใน body ยังอ้าง → type-check จับได้ → inline `${SITE_CONFIG.url}/wedding-guestbook` แทน. Lesson: const ที่ metadata block ใช้ อาจถูก JSON-LD body ใช้ด้วย — grep ก่อนลบ
+> - Photobook size slugs จริงคือ kebab-case (`square-8`, `rect-a3`) ไม่ใช่ snake_case ใน products.ts id ที่เก่า (plan เดาผิดเป็น `square_8_hard`) — build output คือ source of truth
+>
+> ## ⏳ Pending user actions (จาก 2026-06-10)
+> 1. **FB Sharing Debugger refresh 11 URLs** — https://developers.facebook.com/tools/debug/ → paste → Debug → "Scrape Again" ทีละ URL (9 web + wedding-guestbook + sizes/square-8 — sizes อื่นไม่เคย share ข้าม FB ก็ scrape ตามสะดวก) เหมือน sweep 6/04
+> 2. **LINE preview spot-check** — paste `https://penprinting.co/contact` + `https://penprintphotobook.penprinting.co/wedding-guestbook` ใน LINE (Keep/Notes) ดู og:image card ขึ้น
+> 3. **Soak window calc** — เฝ้า Sentry + ใช้ calc.penprinting.co จนถึง **2026-06-11** (พรุ่งนี้ — วันสุดท้าย) ก่อน Phase 2 (web Next 14→15)
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Phase 2 — web Next 14→15 pilot** (soak จบ 6/11 — พร้อมเริ่มได้เลย)
+> 2. **Photobook SEO content push** (ค้างจาก 5/17 — งานนานสุดในคิว)
+> 3. **AI Quoting Phase 0** (deferred 7 sessions)
+> 4. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
+> 5. **Doc nit** — `/api/admin/db-migrate` route ยังมี hint "sync-all" ที่ §12 ลบไปแล้ว (carryover จาก 6/04)
+> ~~Refactor pageMetadata() helper~~ ✅ ปิดวันนี้
+>
+> ---
+>
 > **Session 2026-06-08 — Infra maintenance sweep (Neon + DNS + TTL audit):** ✅ No code change. Neon usage healthy (ใช้ 1.7% compute / 0.4% storage / 4.3% transfer บน Launch plan 30 GB). Neon history retention 6h → **1d** (กัน data accident แบบ DATE_ANOMALY). DNS TTL `app.penprinting.co` **300 → 3600** (cleanup ของค้างจาก Phase 3.6 cutover 5/09). TTL ทั้งหมดใน dashboard app-layer scan แล้ว — ไม่ต้องแตะ (15s loadAll + 60s analytics ISR + adaptive polling 15/30/120s tune ไว้แล้ว). Carryover ยังคง 0.
 >
 > ## งานที่ทำ
