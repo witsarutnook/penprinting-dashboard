@@ -12,8 +12,8 @@
 > - Photobook size slugs จริงคือ kebab-case (`square-8`, `rect-a3`) ไม่ใช่ snake_case ใน products.ts id ที่เก่า (plan เดาผิดเป็น `square_8_hard`) — build output คือ source of truth
 >
 > ## ⏳ Pending user actions (จาก 2026-06-10)
-> 1. **FB Sharing Debugger refresh 11 URLs** — https://developers.facebook.com/tools/debug/ → paste → Debug → "Scrape Again" ทีละ URL (9 web + wedding-guestbook + sizes/square-8 — sizes อื่นไม่เคย share ข้าม FB ก็ scrape ตามสะดวก) เหมือน sweep 6/04
-> 2. **LINE preview spot-check** — paste `https://penprinting.co/contact` + `https://penprintphotobook.penprinting.co/wedding-guestbook` ใน LINE (Keep/Notes) ดู og:image card ขึ้น
+> 1. ~~**FB Sharing Debugger refresh 11 URLs**~~ ✅ คุณนุ๊กทำครบ 6/10 — เจอ 2 warnings ปกติ: `fb:app_id` missing (ข้ามได้ — ใช้แค่ FB Insights) + `og:image not yet available` (async processing รอบแรก → Scrape Again ซ้ำแล้วรูปขึ้น; เรามี og:image:width/height ครบอยู่แล้ว)
+> 2. ~~**LINE preview spot-check**~~ ✅ ทำครบ 6/10
 > 3. **Soak window calc** — เฝ้า Sentry + ใช้ calc.penprinting.co จนถึง **2026-06-11** (พรุ่งนี้ — วันสุดท้าย) ก่อน Phase 2 (web Next 14→15)
 >
 > ## 🎯 งานหลัก session หน้า
