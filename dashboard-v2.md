@@ -302,6 +302,17 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Duplicate-order warning — only still-open orders + clearer copy (2026-06-11)
+
+**Goal:** ปิด user report "คนใช้ งง" dialog พบใบสั่งงานคล้ายกัน — staff โดนเตือนตอนสั่ง repeat order ให้ลูกค้าเดิมทั้งที่ใบเก่าส่งไปแล้ว + ปุ่ม "ยกเลิก"/"สร้างต่อ" อ่านกำกวม
+
+**2 commits:**
+
+1. [`8b132f8`](https://github.com/witsarutnook/penprinting-dashboard/commit/8b132f8) — `findDuplicateOrdersInPostgres` match เฉพาะใบที่ยังเปิดจริง: active job (`jobs` row ที่ `phase2_deleted_at IS NULL`) หรือ draft รอ promote — เช็คผ่าน jobs table เพราะ `orders.status` ไม่ได้อัพเดตเป็น 'shipped' เสมอ (state นั้น derive จากตาราง shipped ดู `orders-list.ts:68`). Copy ใหม่ใน `DuplicateView`: header "งานนี้อาจมีใบสั่งงานอยู่แล้ว" + body ระบุ "ใบเดิมจะไม่ถูกแก้ไข" + ปุ่ม "กลับไปแก้ฟอร์ม" / "ยืนยัน สร้างใบใหม่"
+2. [`e0b1ae4`](https://github.com/witsarutnook/penprinting-dashboard/commit/e0b1ae4) — audit follow-up (penprinting-auditor): **H1** force-confirm เดิมเรียก `submit(true)` mode default → ผู้ใช้ "พิมพ์+สั่ง" ได้ใบสั่งแต่หน้าพิมพ์ไม่เปิด + กดพิมพ์ซ้ำชน 409 กับใบตัวเอง → เก็บ `mode` ใน `DuplicateInfo` + `openPrintPlaceholder()` helper เปิด popup ใน confirm click handler (popup-blocker safe). **M1** pure orphan (partial createOrder failure — order มีแต่ job INSERT ล้ม) หลุดจากเตือน → retry mint ใบซ้ำเงียบ → เพิ่ม NOT EXISTS (jobs+shipped+cancelled) branch. + L1 LOWER(status) / L3 stale comment / L4 overflow-y-auto. เหลือ L2/L5/L6 ใน AUDIT-BACKLOG
+
+Tests 146→147 · เงื่อนไข dedupe ใหม่: เตือนกลับมาเมื่อ restore job จาก cancelled (intended) · ใบ multi-job ที่บาง job ส่งแล้วยังเตือน (ใบยังเปิด)
+
 ### Wholesale-strangler finish + B consolidate — useAutoSync retired (2026-06-03)
 
 **Goal:** ปิด NEXT-SESSION งานหลัก #1 + #2 — ลบ `NEXT_PUBLIC_DELTA_FETCH` flag-OFF paths (delta path live in prod >1 wk) AND consolidate auto-sync ให้เหลือ `useDeltaSync` ทางเดียว (โดยขยาย delta endpoint รองรับ `/cancelled` + `/shipped` แทน `useAutoSync`'s `router.refresh()`).

@@ -2,6 +2,10 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-11 (บ่าย) — Duplicate-order warning fix + audit:** ✅ จาก user report "คนใช้ งง" dialog พบใบสั่งงานคล้ายกัน. **2 commits**: [`8b132f8`](https://github.com/witsarutnook/penprinting-dashboard/commit/8b132f8) dedupe match เฉพาะใบเปิดจริง (active job `phase2_deleted_at IS NULL` หรือ draft — เช็คผ่าน jobs table เพราะ orders.status ไม่ reliable สำหรับ 'shipped') + copy ใหม่ทั้ง dialog · [`e0b1ae4`](https://github.com/witsarutnook/penprinting-dashboard/commit/e0b1ae4) audit follow-up ปิด H1 (force-confirm ทิ้ง mode 'print') + M1 (pure orphan หลุดเตือน → retry mint ใบซ้ำ) + L1/L3/L4. Audit เปิดใหม่ 3 Low ลง AUDIT-BACKLOG (L2 stale heal-cron docstrings · L5 status badge ใน dialog · L6 update no-dedupe). Tests 146→147. **Lesson**: dialog confirm ที่ resubmit ต้อง carry submit-mode เดิมเสมอ — ดู pattern เดียวกันถ้าเพิ่ม confirm step ใหม่ใน flow ที่มีหลาย mode.
+>
+> ---
+>
 > **Session 2026-06-11 — Phase 2: web Next 14→15 + React 18→19:** ✅ Soak calc ครบกำหนดวันนี้พอดี (ไม่มี issue) → รัน Phase 2 ตาม pattern Phase 1 calc. **penprinting-web 2 commits**: `a29b38f` deps bump (next 15.5.19 + react 19.2.7 + types + eslint-config + `@next/third-parties` 15.5.19 ที่ peer-dep ล็อค next ^14) + async `params` 2 dynamic routes (blog/[slug] + services/[slug] — await params ใน generateMetadata + page) · `d5e86ff` Sentry instrumentation migration (sentry.*.config.ts ×3 → instrumentation.ts + instrumentation-client.ts + global-error.tsx + disableLogger → webpack.treeshake — ปิด 4 build warnings เกลี้ยง). Web ง่ายกว่า calc: ไม่มี PWA / API routes / fetch / forwardRef. Gates ผ่านทุก commit (type-check/lint/build 22/22 pages). First Load JS shared 173→184 kB (+11 kB instrumentation — เท่า calc).
 >
 > ## Post-deploy verify (2026-06-11)
