@@ -12,7 +12,7 @@
 > - `penprinting-web/CLAUDE.md` update stack → Next 15.5 + React 19 + Sentry instrumentation pattern
 >
 > ## ⏳ Pending user actions (จาก 2026-06-11)
-> 1. **Soak window web** — เฝ้า Sentry (project penprinting-web) + เปิดเว็บใช้งานจริงถึง **2026-06-18** (~1 สัปดาห์ เหมือน calc) ก่อน Phase 3. ดู: error spike, หน้า blog/services render ปกติ, ลูกค้าไม่รายงานปัญหา
+> 1. **Soak window web** — เฝ้า Sentry (project penprinting-web) + เปิดเว็บใช้งานจริงถึง **2026-06-18** (~1 สัปดาห์ เหมือน calc) ก่อน Phase 3. ดู: error spike, หน้า blog/services render ปกติ, ลูกค้าไม่รายงานปัญหา. ✅ ตั้ง scheduled task `web-next15-soak-end-check` แล้ว (fire 6/18 09:00 — auto health check 11 URLs + og meta + ชง Phase 3; รันเมื่อแอป Claude เปิดอยู่)
 > 2. **GA4 real-time spot-check** — เปิด GA4 ดูว่า event ยังเข้าหลัง bump @next/third-parties (GTM script inject แล้ว แต่ event จริงควรเช็คตา 1 ครั้ง)
 >
 > ## 🎯 งานหลัก session หน้า
