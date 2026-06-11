@@ -2,6 +2,29 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-11 — Phase 2: web Next 14→15 + React 18→19:** ✅ Soak calc ครบกำหนดวันนี้พอดี (ไม่มี issue) → รัน Phase 2 ตาม pattern Phase 1 calc. **penprinting-web 2 commits**: `a29b38f` deps bump (next 15.5.19 + react 19.2.7 + types + eslint-config + `@next/third-parties` 15.5.19 ที่ peer-dep ล็อค next ^14) + async `params` 2 dynamic routes (blog/[slug] + services/[slug] — await params ใน generateMetadata + page) · `d5e86ff` Sentry instrumentation migration (sentry.*.config.ts ×3 → instrumentation.ts + instrumentation-client.ts + global-error.tsx + disableLogger → webpack.treeshake — ปิด 4 build warnings เกลี้ยง). Web ง่ายกว่า calc: ไม่มี PWA / API routes / fetch / forwardRef. Gates ผ่านทุก commit (type-check/lint/build 22/22 pages). First Load JS shared 173→184 kB (+11 kB instrumentation — เท่า calc).
+>
+> ## Post-deploy verify (2026-06-11)
+> - **11/11 URLs HTTP 200** (รวม sitemap + robots) · chunk hash live ตรง local build (`4bd1b696-58f28820171d1a7c`)
+> - **og meta ครบ**: `/` (og:image + site_name + locale th_TH + twitter:card) · blog post (og:type=article + article:published_time — พิสูจน์ async params ทำงาน) · services/packaging (og:image ถูกหน้า)
+> - **Redirects 308 ปกติ**: /track + /production-monitoring → dashboard.penprinting.co
+> - **GTM `GTM-WXFN5TXC` ยัง inject** หลัง bump @next/third-parties
+> - `penprinting-web/CLAUDE.md` update stack → Next 15.5 + React 19 + Sentry instrumentation pattern
+>
+> ## ⏳ Pending user actions (จาก 2026-06-11)
+> 1. **Soak window web** — เฝ้า Sentry (project penprinting-web) + เปิดเว็บใช้งานจริงถึง **2026-06-18** (~1 สัปดาห์ เหมือน calc) ก่อน Phase 3. ดู: error spike, หน้า blog/services render ปกติ, ลูกค้าไม่รายงานปัญหา
+> 2. **GA4 real-time spot-check** — เปิด GA4 ดูว่า event ยังเข้าหลัง bump @next/third-parties (GTM script inject แล้ว แต่ event จริงควรเช็คตา 1 ครั้ง)
+>
+> ## 🎯 งานหลัก session หน้า
+> 1. **Phase 3 — photobook Next 14→15** (รอ soak web จบ 6/18 — pattern เดิม 2 commits)
+> 2. **Photobook SEO content push** (ค้างจาก 5/17 — ทำได้เลยไม่ต้องรอ soak)
+> 3. **AI Quoting Phase 0** (deferred 8 sessions)
+> 4. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
+> 5. **Doc nit** — `/api/admin/db-migrate` route ยังมี hint "sync-all" ที่ §12 ลบไปแล้ว (carryover จาก 6/04)
+> ~~Phase 2 web Next 14→15~~ ✅ ปิดวันนี้
+>
+> ---
+>
 > **Session 2026-06-10 — `pageMetadata()` helper refactor (web + photobook):** ✅ ปิด tech debt ค้างจาก 5/29 ([[feedback_nextjs_metadata_shallow_merge]]). เพิ่ม helper `pageMetadata({ title, description, url, ogImage?, ogImageAlt?, keywords?, article? })` ใน `lib/seo.ts` ทั้ง 2 repos — fill `og.type/locale/siteName/images` + `twitter.card` explicit ทุกครั้ง กัน Next.js shallow-merge drop nested fields ซ้ำอีก. Migrate 11 callsites (web 9 + photobook 2). `/wedding-guestbook` consolidate 3 titles → 1 (decision: YAGNI บน per-platform overrides). `/blog/[slug]` ได้ `article` option (og.type=article + publishedTime + authors). Post-deploy curl verify **11/11 URLs PASS** (og:image + twitter:card + og:site_name + og:type) + spot-check canonical/og:url absolute + article:published_time + alternateLocale en_US ครบ.
 >
 > ## งานที่ทำ (2026-06-10)
