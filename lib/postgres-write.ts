@@ -392,7 +392,12 @@ export interface DuplicateOrderHit {
  *
  *  "Shipped" is checked via jobs (no non-tombstoned row left) instead of
  *  orders.status because status isn't reliably updated to 'shipped' — that
- *  state is derived from the shipped table. Returns up to 5 candidates. */
+ *  state is derived from the shipped table.
+ *
+ *  Pure orphans (no row in jobs/shipped/cancelled at all — e.g. partial
+ *  createOrder failure where the job INSERT threw) still count as open:
+ *  a retry after that failure must keep warning instead of silently
+ *  minting a second order (audit M1). Returns up to 5 candidates. */
 export async function findDuplicateOrdersInPostgres(
   name: string,
   customer: string,
@@ -406,13 +411,18 @@ export async function findDuplicateOrdersInPostgres(
     FROM orders o
     WHERE LOWER(o.name) = ${n}
       AND LOWER(o.customer) = ${c}
-      AND COALESCE(o.status, '') != 'cancelled'
+      AND LOWER(COALESCE(o.status, '')) != 'cancelled'
       AND (
-        COALESCE(o.status, '') = 'draft'
+        LOWER(COALESCE(o.status, '')) = 'draft'
         OR EXISTS (
           SELECT 1 FROM jobs j
           WHERE j.order_id = o.id
             AND j.phase2_deleted_at IS NULL
+        )
+        OR (
+          NOT EXISTS (SELECT 1 FROM jobs j2 WHERE j2.order_id = o.id)
+          AND NOT EXISTS (SELECT 1 FROM shipped s WHERE s.order_id = o.id)
+          AND NOT EXISTS (SELECT 1 FROM cancelled c2 WHERE c2.order_id = o.id)
         )
       )
     ORDER BY o.id DESC

@@ -501,7 +501,7 @@ describe('findDuplicateOrdersInPostgres', () => {
     expect(select!.text).toMatch(/status.*!=.*'cancelled'/i);
   });
 
-  it('only matches still-open orders — active job (non-tombstoned) or draft', async () => {
+  it('only matches still-open orders — active job (non-tombstoned), draft, or pure orphan', async () => {
     // Shipped/finished orders must NOT trigger the duplicate warning:
     // repeat orders from the same customer are routine (2026-06-11 fix).
     // "Shipped" is derived from jobs (all rows tombstoned/moved), NOT from
@@ -514,6 +514,11 @@ describe('findDuplicateOrdersInPostgres', () => {
     expect(select!.text, 'must gate on an active job in jobs table').toContain('EXISTS');
     expect(select!.text, 'active job = not tombstoned').toContain('phase2_deleted_at IS NULL');
     expect(select!.text, 'drafts (no job yet) still count as open').toMatch(/status.*=.*'draft'/i);
+    // Pure orphan (partial createOrder failure: order row but no job anywhere)
+    // must keep warning — otherwise a retry silently mints a duplicate (M1).
+    expect(select!.text, 'orphans still count as open').toContain('NOT EXISTS');
+    expect(select!.text).toContain('FROM shipped');
+    expect(select!.text).toContain('FROM cancelled');
   });
 });
 

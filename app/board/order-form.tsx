@@ -97,6 +97,9 @@ interface SuccessInfo {
 
 interface DuplicateInfo {
   duplicates: Array<{ id: number; name: string; customer: string; dateIn: string }>;
+  /** Submit mode ที่ชน 409 — force-confirm ต้อง resubmit ด้วย mode เดิม
+   *  ไม่งั้น "พิมพ์+สั่ง" จะได้ใบสั่งแต่หน้าพิมพ์ไม่เปิด (audit H1 2026-06-11) */
+  mode: 'submit' | 'draft' | 'print' | 'submitAndPromote';
 }
 
 type TabKey = 'main' | 'post' | 'assign';
@@ -335,17 +338,9 @@ export function OrderForm({
    *    the print page inside the PWA, matches the order-list "พิมพ์ใบสั่งงาน"
    *    Link behaviour. User goes back via the in-app back gesture.
    */
-  function handleSubmitAndPrint() {
-    if (isStandalonePWA()) {
-      // PWA: same-window navigation; submit() handles router.push to print.
-      void submit(false, 'print', null);
-      return;
-    }
+  function openPrintPlaceholder(): Window | null {
     const pw = window.open('about:blank', '_blank');
-    if (!pw) {
-      setError('Browser ปิด popup — โปรดอนุญาต popup สำหรับเว็บนี้');
-      return;
-    }
+    if (!pw) return null;
     try {
       pw.document.write(
         '<html><head><title>กำลังเตรียมเอกสาร...</title></head>' +
@@ -353,6 +348,20 @@ export function OrderForm({
         '⏳ กำลังเตรียมเอกสาร...</body></html>'
       );
     } catch { /* about:blank cross-origin protections vary — non-fatal */ }
+    return pw;
+  }
+
+  function handleSubmitAndPrint() {
+    if (isStandalonePWA()) {
+      // PWA: same-window navigation; submit() handles router.push to print.
+      void submit(false, 'print', null);
+      return;
+    }
+    const pw = openPrintPlaceholder();
+    if (!pw) {
+      setError('Browser ปิด popup — โปรดอนุญาต popup สำหรับเว็บนี้');
+      return;
+    }
     void submit(false, 'print', pw);
   }
 
@@ -398,9 +407,10 @@ export function OrderForm({
       const willChain = mode === 'submitAndPromote' && res.ok && (respJson?.orderId || initial?.id);
       if (!willChain) setBusy(false);
       if (res.status === 409 && respJson?.error === 'duplicate') {
-        setDuplicate({ duplicates: respJson.duplicates || [] });
+        // Keep mode so force-confirm resubmits the same way — the print
+        // placeholder is re-opened inside the confirm click handler.
+        setDuplicate({ duplicates: respJson.duplicates || [], mode });
         // Close the placeholder popup — user has to confirm duplicate first.
-        // Re-clicking "พิมพ์+สั่ง" after force-confirm reopens it correctly.
         if (printWindow && !printWindow.closed) printWindow.close();
         return;
       }
@@ -672,7 +682,15 @@ export function OrderForm({
       {success ? (
         <SuccessView success={success} onClose={onClose} onCreateAnother={() => setSuccess(null)} isEdit={isEdit} />
       ) : duplicate ? (
-        <DuplicateView duplicates={duplicate.duplicates} onCancel={() => setDuplicate(null)} onForce={() => { setDuplicate(null); submit(true); }} />
+        <DuplicateView duplicates={duplicate.duplicates} onCancel={() => setDuplicate(null)} onForce={() => {
+          const dupMode = duplicate.mode;
+          setDuplicate(null);
+          // "พิมพ์+สั่ง" path: เปิด placeholder ใน click handler นี้ (popup-blocker
+          // safe) เพราะ popup เดิมถูกปิดตอนเจอ 409 — ถ้าโดน block ก็ยัง submit ต่อ
+          // (submit() มี window.open fallback ของตัวเอง)
+          const pw = dupMode === 'print' && !isStandalonePWA() ? openPrintPlaceholder() : null;
+          void submit(true, dupMode, pw);
+        }} />
       ) : (
         <div className={`flex flex-col ${inline ? '' : 'max-h-[92vh]'}`}>
           {/* Header */}
@@ -1548,7 +1566,7 @@ function DuplicateView({
         <IconAlertTriangle size={18} className="text-amber-700" />
         <h2 className="text-base font-bold text-amber-700">งานนี้อาจมีใบสั่งงานอยู่แล้ว</h2>
       </header>
-      <div className="p-5 space-y-3">
+      <div className="p-5 space-y-3 overflow-y-auto">
         <p className="text-sm text-stone-700">
           มีใบสั่งงานชื่อและลูกค้าเดียวกันที่ยังทำอยู่ในระบบ — ถ้าตั้งใจสั่งซ้ำ
           กดยืนยันสร้างใบใหม่ได้เลย ใบเดิมจะไม่ถูกแก้ไข
