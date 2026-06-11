@@ -179,9 +179,9 @@ interface CreateOrderArgs {
 async function createOrder(args: CreateOrderArgs): Promise<NextResponse> {
   const { orderPayloadBase, jobPayloadBase, isDraft, force, pin, orderType, session } = args;
 
-  // ── Dedupe via Postgres mirror (Phase 1) ────────────────────────
-  // Mirror is fresh within ~10 min (cron) + reflects this very session's
-  // Phase 2 writes immediately, so it's the right place to check.
+  // ── Dedupe scan — Postgres (sole source of truth post §12) ──────
+  // Only still-open orders count (active job / draft) — shipped or
+  // cancelled ones don't warn; repeat orders are routine.
   if (!isDraft && !force) {
     try {
       const dups = await findDuplicateOrdersInPostgres(
@@ -193,14 +193,14 @@ async function createOrder(args: CreateOrderArgs): Promise<NextResponse> {
           {
             error: 'duplicate',
             duplicates: dups,
-            message: `พบใบสั่งงานคล้ายกัน ${dups.length} รายการ — ส่ง force=true เพื่อสร้างต่อ`,
+            message: `พบใบสั่งงานที่ยังทำอยู่ ${dups.length} รายการ — ส่ง force=true เพื่อยืนยันสร้างใบใหม่`,
           },
           { status: 409 },
         );
       }
     } catch (err) {
       // Dedupe failure is non-fatal — surface a warning but proceed.
-      // Postgres mirror outage shouldn't block order creation; worst case
+      // Postgres outage shouldn't block order creation; worst case
       // duplicate orders accumulate that admin can clean up via data-audit.
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[phase2-createOrder] dedupe scan failed: ${msg}`);

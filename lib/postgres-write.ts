@@ -385,9 +385,14 @@ export interface DuplicateOrderHit {
   dateIn: string;
 }
 
-/** Look up active (non-cancelled) orders with matching name+customer.
- *  Mirrors WP Apps Script `createOrder` dedupe scan but reads from
- *  Postgres mirror (fast). Returns up to 5 candidates for the modal. */
+/** Look up still-open orders with matching name+customer — only orders that
+ *  are actually in progress (active job on the board, or a draft awaiting
+ *  promote). Shipped/finished orders must NOT count: repeat orders from the
+ *  same customer are routine and warning on them confuses staff (2026-06-11).
+ *
+ *  "Shipped" is checked via jobs (no non-tombstoned row left) instead of
+ *  orders.status because status isn't reliably updated to 'shipped' — that
+ *  state is derived from the shipped table. Returns up to 5 candidates. */
 export async function findDuplicateOrdersInPostgres(
   name: string,
   customer: string,
@@ -397,12 +402,20 @@ export async function findDuplicateOrdersInPostgres(
   const c = String(customer || '').trim().toLowerCase();
   if (!n || !c) return [];
   const r = await sql<DuplicateOrderHit>`
-    SELECT id, name, customer, COALESCE(date_in, '') AS "dateIn"
-    FROM orders
-    WHERE LOWER(name) = ${n}
-      AND LOWER(customer) = ${c}
-      AND COALESCE(status, '') != 'cancelled'
-    ORDER BY id DESC
+    SELECT o.id, o.name, o.customer, COALESCE(o.date_in, '') AS "dateIn"
+    FROM orders o
+    WHERE LOWER(o.name) = ${n}
+      AND LOWER(o.customer) = ${c}
+      AND COALESCE(o.status, '') != 'cancelled'
+      AND (
+        COALESCE(o.status, '') = 'draft'
+        OR EXISTS (
+          SELECT 1 FROM jobs j
+          WHERE j.order_id = o.id
+            AND j.phase2_deleted_at IS NULL
+        )
+      )
+    ORDER BY o.id DESC
     LIMIT 5
   `;
   return r.rows;

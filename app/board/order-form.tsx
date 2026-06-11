@@ -1546,11 +1546,12 @@ function DuplicateView({
     <div className="flex flex-col max-h-[90vh]">
       <header className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
         <IconAlertTriangle size={18} className="text-amber-700" />
-        <h2 className="text-base font-bold text-amber-700">พบใบสั่งงานคล้ายกัน</h2>
+        <h2 className="text-base font-bold text-amber-700">งานนี้อาจมีใบสั่งงานอยู่แล้ว</h2>
       </header>
       <div className="p-5 space-y-3">
         <p className="text-sm text-stone-700">
-          มีใบสั่งงานชื่อและลูกค้าเดียวกันที่ยังไม่ปิด — ยืนยันว่าจะสร้างใบใหม่อีกใบไหม?
+          มีใบสั่งงานชื่อและลูกค้าเดียวกันที่ยังทำอยู่ในระบบ — ถ้าตั้งใจสั่งซ้ำ
+          กดยืนยันสร้างใบใหม่ได้เลย ใบเดิมจะไม่ถูกแก้ไข
         </p>
         <ul className="rounded-lg border border-amber-200 bg-amber-50/50 divide-y divide-amber-100 text-sm">
           {duplicates.map((d) => (
@@ -1568,11 +1569,11 @@ function DuplicateView({
         <div className="flex gap-2 pt-1">
           <button type="button" onClick={onCancel}
             className="flex-1 px-3 py-2 rounded-lg bg-stone-100 text-stone-700 text-sm font-medium hover:bg-stone-200">
-            ยกเลิก
+            กลับไปแก้ฟอร์ม
           </button>
           <button type="button" onClick={onForce}
             className="flex-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700">
-            สร้างต่อ
+            ยืนยัน สร้างใบใหม่
           </button>
         </div>
       </div>

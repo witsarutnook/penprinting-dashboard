@@ -500,6 +500,21 @@ describe('findDuplicateOrdersInPostgres', () => {
     // Excludes cancelled
     expect(select!.text).toMatch(/status.*!=.*'cancelled'/i);
   });
+
+  it('only matches still-open orders — active job (non-tombstoned) or draft', async () => {
+    // Shipped/finished orders must NOT trigger the duplicate warning:
+    // repeat orders from the same customer are routine (2026-06-11 fix).
+    // "Shipped" is derived from jobs (all rows tombstoned/moved), NOT from
+    // orders.status, which isn't reliably updated to 'shipped'.
+    queueResult({ rows: [] });
+    await findDuplicateOrdersInPostgres('Brochure', 'CustA');
+
+    const select = findCallContaining('FROM orders');
+    expect(select).toBeDefined();
+    expect(select!.text, 'must gate on an active job in jobs table').toContain('EXISTS');
+    expect(select!.text, 'active job = not tombstoned').toContain('phase2_deleted_at IS NULL');
+    expect(select!.text, 'drafts (no job yet) still count as open').toMatch(/status.*=.*'draft'/i);
+  });
 });
 
 describe('moveToShippedInPostgres', () => {
