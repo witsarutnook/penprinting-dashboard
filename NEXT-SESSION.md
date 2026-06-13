@@ -2,6 +2,17 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-13 — Photobook SEO content push (เสร็จทั้ง reviews + blog):** ✅ ปิดงานค้างจาก 5/17. **repo `penprintphotobook` — 11 commits, 17 หน้า static (+3 จาก 14).** ใช้ superpowers flow เต็ม (brainstorm → spec → plan → subagent-driven 14 tasks ผ่าน 2-stage review ทุก task + final holistic review). **Part 1 Reviews:** `lib/reviews.ts` = 8 รีวิวจริงดึงจาก FB ผ่าน Chrome MCP (คุณนุ๊กคัด, anonymize "Khun X — ปี", 6 featured) → landing 6 + หน้า `/reviews` ใหม่ (โชว์ 8) + `reviewsPageSchema()` **Product-level** aggregateRating (percent scale 96/100, ratingCount 15 — ไม่ผูก LocalBusiness เพราะ Google ignore self-serving, ไม่ fake ดาวรายรีวิวเพราะ FB ไม่มีดาว). **Part 2 Blog:** port MDX pattern จาก penprinting-web (+5 deps) → `lib/blog.ts` + `components/blog/*` (restyle ขาวมินิมอล) + `/blog` + `/blog/[slug]` + 3 โพสต์ไทย (photobook ราคา / ทำอัลบั้มแต่งงานที่ไหนดี / wedding album ทำเอง) + Journal nav. **Post-deploy verify: 13/13 URLs 200, og:type=article + cover ถูก + article:published_time, aggregateRating 96/15, BlogPosting+Breadcrumb, sitemap 11 locs.** **Lesson**: port จาก sibling repo ที่ upgrade framework แล้ว — อย่า copy signature (web เป็น Next 15 `Promise<params>`, photobook ยัง 14 sync `params`); ฝัง comment Phase 3 migration ใน `[slug]/page.tsx` แล้ว. Spec/plan: `docs/superpowers/{specs,plans}/2026-06-12-photobook-seo-content*` (workspace root, ไม่ git-track).
+>
+> ## ⏳ Pending user actions (photobook 2026-06-13)
+> 1. **Rich Results Test** — เปิด [search.google.com/test/rich-results](https://search.google.com/test/rich-results) ตรวจ `penprintphotobook.penprinting.co/reviews` (Product+Review/aggregateRating) + 1 blog post (BlogPosting→Article + Breadcrumb) — ควรไม่มี error
+> 2. **Lighthouse mobile** — spot-check 1 หน้า blog (DevTools → Lighthouse) — LCP รูป cover ไม่ควรเกิน ~2.5s
+> 3. **GSC** — โพสต์ใหม่ + /reviews index ช้า (IndexNow ยิงเองตอน push แล้ว) — เช็ค Search Console coverage อีกครั้งใน 1-2 สัปดาห์
+> 4. **(reminder) Phase 3 photobook Next 14→15** — เมื่อทำ ต้อง await async params ใน `app/blog/[slug]` + `app/sizes/[slug]` (มี comment เตือน) + เช็ค `next-mdx-remote@6` กับ Next 15 RSC
+>
+> ⚠️ **Soak window web ยังถึง 6/18** (Phase 2 web Next 15) — Phase 3 photobook รอ soak จบก่อน
+>
+> ---
 > **Session 2026-06-11 (บ่าย) — Duplicate-order warning fix + audit:** ✅ จาก user report "คนใช้ งง" dialog พบใบสั่งงานคล้ายกัน. **2 commits**: [`8b132f8`](https://github.com/witsarutnook/penprinting-dashboard/commit/8b132f8) dedupe match เฉพาะใบเปิดจริง (active job `phase2_deleted_at IS NULL` หรือ draft — เช็คผ่าน jobs table เพราะ orders.status ไม่ reliable สำหรับ 'shipped') + copy ใหม่ทั้ง dialog · [`e0b1ae4`](https://github.com/witsarutnook/penprinting-dashboard/commit/e0b1ae4) audit follow-up ปิด H1 (force-confirm ทิ้ง mode 'print') + M1 (pure orphan หลุดเตือน → retry mint ใบซ้ำ) + L1/L3/L4. Audit เปิดใหม่ 3 Low ลง AUDIT-BACKLOG (L2 stale heal-cron docstrings · L5 status badge ใน dialog · L6 update no-dedupe). Tests 146→147. **Lesson**: dialog confirm ที่ resubmit ต้อง carry submit-mode เดิมเสมอ — ดู pattern เดียวกันถ้าเพิ่ม confirm step ใหม่ใน flow ที่มีหลาย mode.
 >
 > ---
@@ -20,12 +31,11 @@
 > 2. **GA4 real-time spot-check** — เปิด GA4 ดูว่า event ยังเข้าหลัง bump @next/third-parties (GTM script inject แล้ว แต่ event จริงควรเช็คตา 1 ครั้ง)
 >
 > ## 🎯 งานหลัก session หน้า
-> 1. **Phase 3 — photobook Next 14→15** (รอ soak web จบ 6/18 — pattern เดิม 2 commits)
-> 2. **Photobook SEO content push** (ค้างจาก 5/17 — ทำได้เลยไม่ต้องรอ soak)
-> 3. **AI Quoting Phase 0** (deferred 8 sessions)
-> 4. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
-> 5. **Doc nit** — `/api/admin/db-migrate` route ยังมี hint "sync-all" ที่ §12 ลบไปแล้ว (carryover จาก 6/04)
-> ~~Phase 2 web Next 14→15~~ ✅ ปิดวันนี้
+> 1. **Phase 3 — photobook Next 14→15** (รอ soak web จบ 6/18 — pattern เดิม + await params ใน blog/[slug] + sizes/[slug] + เช็ค next-mdx-remote@6)
+> 2. **AI Quoting Phase 0** (deferred 9 sessions)
+> 3. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
+> 4. **Doc nit** — `/api/admin/db-migrate` route ยังมี hint "sync-all" ที่ §12 ลบไปแล้ว (carryover จาก 6/04)
+> ~~Phase 2 web Next 14→15~~ ✅ · ~~Photobook SEO content push~~ ✅ ปิด 6/13 (reviews + blog)
 >
 > ---
 >
