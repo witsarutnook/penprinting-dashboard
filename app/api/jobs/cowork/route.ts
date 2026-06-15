@@ -10,18 +10,11 @@ export const maxDuration = 30;
  * `setCowork`. Co-work is a workflow attachment (designer asks another for
  * help, multi-station job), not data edit, so it stays open like reassign.
  *
- * Apps Script overwrites the `cowork` column of the job row — pass empty
- * array (or null) to clear all collaborators.
- *
- * Phase 2 — when WRITE_COWORK_TO_POSTGRES=1, Postgres is authoritative
- * and the inline Apps Script Sheet sync is dropped. /board reads from
- * Postgres so the new cowork chip lands instantly (~300ms perceived vs
- * ~1.8s with inline sync). The heal cron `/api/cron/sync-to-sheet`
- * pushes phase2_dirty_at rows to Sheet within 5 min via setJobRow.
- * The from-Sheet cron skips dirty rows so Phase 2 state survives until
- * Sheet catches up. Trade: admin Sheet UI sees up to 5 min stale cowork
- * — acceptable because no external system (LINE webhook, morning report)
- * reads cowork from Sheet.
+ * Post-§12: Postgres is the sole source of truth. The write goes directly
+ * to Postgres (via setCoworkInPostgres) and is authoritative immediately.
+ * No Apps Script call, no Sheet sync, no heal cron. /board reads from
+ * Postgres so the cowork chip lands instantly. phase2_dirty_at is set on
+ * the row but is a legacy no-op marker pending removal.
  *
  * Request body: { id, cowork: Array<{ dept, staff }> }
  */
@@ -95,11 +88,10 @@ async function setCowork(id: number, cleaned: string[], role: string, user: stri
     );
   }
 
-  // Postgres write succeeded — the row carries phase2_dirty_at NOT NULL,
-  // so the heal cron will push it to Sheet via setJobRow within 5 min.
-  // No inline Apps Script call here — that's where the perceived ~1.5s
-  // latency was coming from. Card on /board re-renders from Postgres
-  // (Phase 1 read mirror) which already sees the new cowork.
+  // Postgres write succeeded — authoritative, no downstream sync.
+  // phase2_dirty_at is set on the row but is a legacy no-op marker
+  // (§12 retired the heal cron). Card on /board re-renders from Postgres
+  // and sees the new cowork immediately.
   await appendAuditToPostgres({
     action: 'setCowork',
     role,

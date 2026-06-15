@@ -96,7 +96,7 @@ interface SuccessInfo {
 }
 
 interface DuplicateInfo {
-  duplicates: Array<{ id: number; name: string; customer: string; dateIn: string }>;
+  duplicates: Array<{ id: number; name: string; customer: string; dateIn: string; kind?: 'draft' | 'active' | 'orphan' }>;
   /** Submit mode ที่ชน 409 — force-confirm ต้อง resubmit ด้วย mode เดิม
    *  ไม่งั้น "พิมพ์+สั่ง" จะได้ใบสั่งแต่หน้าพิมพ์ไม่เปิด (audit H1 2026-06-11) */
   mode: 'submit' | 'draft' | 'print' | 'submitAndPromote';
@@ -1554,10 +1554,16 @@ function SuccessView({
   );
 }
 
+const DUP_KIND_BADGE: Record<'draft' | 'active' | 'orphan', { label: string; cls: string }> = {
+  active: { label: 'เปิดอยู่', cls: 'bg-amber-100 text-amber-800' },
+  draft:  { label: 'ร่างค้าง', cls: 'bg-stone-200 text-stone-600' },
+  orphan: { label: 'ไม่มีงานในบอร์ด', cls: 'bg-stone-200 text-stone-600' },
+};
+
 function DuplicateView({
   duplicates, onCancel, onForce,
 }: {
-  duplicates: Array<{ id: number; name: string; customer: string; dateIn: string }>;
+  duplicates: Array<{ id: number; name: string; customer: string; dateIn: string; kind?: 'draft' | 'active' | 'orphan' }>;
   onCancel: () => void; onForce: () => void;
 }) {
   return (
@@ -1572,17 +1578,25 @@ function DuplicateView({
           กดยืนยันสร้างใบใหม่ได้เลย ใบเดิมจะไม่ถูกแก้ไข
         </p>
         <ul className="rounded-lg border border-amber-200 bg-amber-50/50 divide-y divide-amber-100 text-sm">
-          {duplicates.map((d) => (
+          {duplicates.map((d) => {
+            const badge = d.kind ? DUP_KIND_BADGE[d.kind] : null;
+            return (
             <li key={d.id} className="px-3 py-2">
-              <div className="font-medium text-stone-900">
-                #{d.id} <span className="text-stone-500">— {d.name}</span>
+              <div className="font-medium text-stone-900 flex items-center gap-2">
+                <span>#{d.id} <span className="text-stone-500">— {d.name}</span></span>
+                {badge && (
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.cls}`}>
+                    {badge.label}
+                  </span>
+                )}
               </div>
               <div className="text-xs text-stone-500 mt-0.5">
                 ลูกค้า: {d.customer}
                 {d.dateIn && <span className="ml-2 tabular-nums">รับ {d.dateIn}</span>}
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
         <div className="flex gap-2 pt-1">
           <button type="button" onClick={onCancel}

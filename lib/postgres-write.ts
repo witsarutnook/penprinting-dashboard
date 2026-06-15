@@ -2,21 +2,28 @@ import 'server-only';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
 
 /**
- * Phase 2 — Postgres-as-source-of-truth write handlers. Postgres writes
- * first (authoritative); the heal cron (lib/sync-to-sheet.ts) propagates
- * each change to Sheet so the admin Sheet UI keeps working.
+ * §12 (2026-05-27) — Postgres is the SOLE source of truth. These handlers
+ * write directly to Postgres and return. There is NO Sheet sync, NO heal
+ * cron, NO feature-flag env vars (lib/sync-to-sheet.ts, lib/feature-flags.ts,
+ * and all /api/cron/sync-* routes were deleted in §12).
  *
- * Per-action rollout — controlled by lib/feature-flags.ts. Each action
- * has its own env var (e.g. WRITE_TEMPLATES_TO_POSTGRES=1) so we can
- * migrate one row type at a time and roll back instantly if anything
- * breaks. Default-off until verified per action.
+ * ID allocation (§7, 2026-05-25) — the `id` / `orderId` / `jobId` values
+ * received by these handlers are minted from the Postgres `counters` table,
+ * NOT from Apps Script getNextId / getNextOrderId (both retired in §7).
  *
- * Failure mode contract:
- *  - Postgres write fails → propagate error to caller (user sees toast).
- *  - Apps Script Sheet sync fails → log to Sentry but DO NOT propagate.
- *    Sheet stays drifted; cron sync direction is reversed (Postgres →
- *    Sheet) for migrated tables, so drift heals on the next cron run
- *    once Apps Script is reachable again.
+ * Legacy columns still present in the schema:
+ *  - `phase2_dirty_at` — was the "needs push to Sheet" marker consumed by
+ *    the retired heal cron. Post-§12 nothing reads it operationally; it is
+ *    still WRITTEN in ~26 places (including every handler below) and the
+ *    markRowClean / markRowDirty helpers remain. All dead, pending removal
+ *    in a separate task — do not rely on this column for any logic.
+ *  - `phase2_deleted_at` — LIVE soft-delete tombstone. /board and other
+ *    reads filter `phase2_deleted_at IS NULL` so setting it hides the row
+ *    instantly. Post-§12 nothing hard-deletes tombstoned rows; soft-delete
+ *    is now permanent.
+ *
+ * Failure mode: Postgres write fails → propagate error to caller (user
+ * sees a toast). No downstream sync to worry about.
  */
 
 class PostgresWriteError extends Error {
@@ -92,9 +99,8 @@ export interface AddTemplateResult {
 }
 
 /** Insert a new template into Postgres with a Date.now() id (matches the
- *  Apps Script convention so legacy ids and new ids share the same shape).
- *  Caller is responsible for the best-effort Apps Script Sheet sync after
- *  this returns — see api.ts post() flow. */
+ *  id shape used throughout the schema). Write is authoritative — no
+ *  downstream sync after this returns. */
 export async function addTemplateToPostgres(input: AddTemplateInput): Promise<AddTemplateResult> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('addTemplate', 'POSTGRES_URL env var missing');
@@ -155,8 +161,9 @@ export interface SetCoworkInput {
   cowork: unknown;  // typically string[] of staff names; null/empty clears
 }
 
-/** Phase 2 — atomic UPDATE of jobs.cowork + mark dirty so the heal cron
- *  knows to push the new state to Sheet.
+/** Atomic UPDATE of jobs.cowork + raw columns. Postgres is authoritative;
+ *  no downstream sync. phase2_dirty_at is set but is a legacy no-op
+ *  marker pending removal (§12 retired the heal cron that consumed it).
  *
  *  Implementation note: read raw, merge in JS, write full row. Earlier
  *  attempt used jsonb_set inline but the dashboard cards read from
@@ -174,8 +181,8 @@ export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: 
     throw new PostgresWriteError('setCowork', 'Invalid job id');
   }
 
-  // Read current raw snapshot (from a cron or earlier write). If the row
-  // doesn't exist in Postgres yet the route falls through to legacy.
+  // Read current raw snapshot. If the row doesn't exist in Postgres,
+  // return found:false so the caller can surface a 409 to the client.
   const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint LIMIT 1`;
   if (cur.rows.length === 0) {
     return { ok: true, found: false };
@@ -210,19 +217,18 @@ export interface UpdateJobInput {
   cowork?: unknown;
 }
 
-/** Phase 2 — atomic UPDATE of a job's editable fields + mark dirty. The
- *  caller (route) is responsible for input validation; this function
- *  trusts the payload but defends against missing rows by returning
- *  `found:false` so the route can fall through to the legacy Apps Script
- *  path (matches the setCoworkInPostgres contract).
+/** Atomic UPDATE of a job's editable fields. Postgres is authoritative;
+ *  no downstream sync. The caller (route) is responsible for input
+ *  validation; this function trusts the payload but defends against
+ *  missing rows by returning `found:false` (matches the setCoworkInPostgres
+ *  contract — caller surfaces a 409 to the client).
  *
  *  The merge strategy preserves any raw fields not in `UpdateJobInput`
- *  (e.g. `notes`, `assignedAt`, future schema extensions) so a Phase 2
- *  edit can't accidentally erase data the v2 form doesn't surface yet.
+ *  (e.g. `notes`, `assignedAt`, future schema extensions) so an edit
+ *  can't accidentally erase data the v2 form doesn't surface yet.
  *
- *  After this returns, the row carries `phase2_dirty_at = NOW()`. The
- *  heal cron (`/api/cron/sync-to-sheet`, every 5 min) will push the new
- *  state to Sheet via `setJobRow` and clear the dirty marker on success. */
+ *  phase2_dirty_at is set but is a legacy no-op marker pending removal
+ *  (§12 retired the heal cron that consumed it). */
 export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('updateJob', 'POSTGRES_URL env var missing');
@@ -279,9 +285,8 @@ export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: 
 }
 
 export interface AddJobInput {
-  /** Pre-allocated id (typically from Apps Script getNextId). Required —
-   *  Phase 2 deliberately keeps id allocation in Apps Script so the Sheet
-   *  nextId counter stays accurate and ids stay sequential for admin UI. */
+  /** Pre-allocated id from the Postgres `counters` table (§7 retired
+   *  Apps Script getNextId). Required — caller must mint and pass it. */
   id: number;
   name: string;
   date?: string | null;
@@ -293,17 +298,13 @@ export interface AddJobInput {
   orderId?: string | number | null;
 }
 
-/** Phase 2 — atomic INSERT into jobs + mark dirty. The caller (route) is
- *  responsible for input validation and pre-allocating `id` via Apps Script
- *  getNextId so Sheet's nextId counter stays in sync.
+/** Atomic INSERT into jobs. Postgres is authoritative; no downstream sync.
+ *  The caller (route) is responsible for input validation and pre-allocating
+ *  `id` from the Postgres `counters` table (§7 retired Apps Script getNextId).
  *
- *  Skips the legacy Apps Script `addJob` round-trip (which appends to Sheet
- *  + bumps nextId AGAIN, causing id gaps). The heal cron pushes the new
- *  row to Sheet via `setJobRow` within 5 min, which doesn't touch nextId.
- *  Net result: cleaner sequential ids + ~600ms saved per add.
- *
- *  New jobs start with cowork=null (the form doesn't surface cowork on add)
- *  and phase2_dirty_at=NOW() so the heal cron sees them. */
+ *  New jobs start with cowork=null (the form doesn't surface cowork on add).
+ *  phase2_dirty_at=NOW() is set but is a legacy no-op marker pending removal
+ *  (§12 retired the heal cron that consumed it). */
 export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; id: number }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('addJob', 'POSTGRES_URL env var missing');
@@ -350,8 +351,9 @@ export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; 
 // ─── createOrder (Phase 2 — atomic 2-table) ──────────────────────
 
 export interface CreateOrderInput {
-  /** Pre-allocated orderId from Apps Script `getNextOrderId` — keeps the
-   *  per-month YYYYMM+seq pattern that Sheet UI / morning report expect. */
+  /** Pre-allocated orderId from the Postgres `counters` table (§7 retired
+   *  Apps Script getNextOrderId) — keeps the per-month YYYYMM+seq pattern
+   *  that the morning report expects. */
   orderId: number;
   order: {
     name: string;
@@ -366,7 +368,8 @@ export interface CreateOrderInput {
     details?: Record<string, unknown> | null;
     rawData?: Record<string, unknown> | null;
   };
-  /** Pre-allocated jobId via Apps Script `getNextId`. Null for draft mode. */
+  /** Pre-allocated jobId from the Postgres `counters` table (§7 retired
+   *  Apps Script getNextId). Null for draft mode (no initial job). */
   jobId?: number | null;
   job?: {
     name: string;
@@ -383,6 +386,12 @@ export interface DuplicateOrderHit {
   name: string;
   customer: string;
   dateIn: string;
+  /** Why this match is still "open" — drives the dialog badge so staff can
+   *  tell a forgotten draft from a live production order (audit L5):
+   *   - 'draft'  : order saved as draft, never promoted
+   *   - 'active' : has a live job on the board (phase2_deleted_at IS NULL)
+   *   - 'orphan' : no job/shipped/cancelled row (partial createOrder failure) */
+  kind: 'draft' | 'active' | 'orphan';
 }
 
 /** Look up still-open orders with matching name+customer — only orders that
@@ -407,7 +416,14 @@ export async function findDuplicateOrdersInPostgres(
   const c = String(customer || '').trim().toLowerCase();
   if (!n || !c) return [];
   const r = await sql<DuplicateOrderHit>`
-    SELECT o.id, o.name, o.customer, COALESCE(o.date_in, '') AS "dateIn"
+    SELECT o.id, o.name, o.customer, COALESCE(o.date_in, '') AS "dateIn",
+      CASE
+        WHEN LOWER(COALESCE(o.status, '')) = 'draft' THEN 'draft'
+        WHEN EXISTS (
+          SELECT 1 FROM jobs j WHERE j.order_id = o.id AND j.phase2_deleted_at IS NULL
+        ) THEN 'active'
+        ELSE 'orphan'
+      END AS kind
     FROM orders o
     WHERE LOWER(o.name) = ${n}
       AND LOWER(o.customer) = ${c}
@@ -431,9 +447,10 @@ export async function findDuplicateOrdersInPostgres(
   return r.rows;
 }
 
-/** Phase 2 — atomic-ish INSERT of order (always) + job (optional non-draft).
- *  Both rows carry phase2_dirty_at = NOW() so the heal cron pushes them to
- *  Sheet via setOrderRow + setJobRow within 5 min.
+/** Atomic-ish INSERT of order (always) + job (optional, omitted for drafts).
+ *  Postgres is authoritative; no downstream sync. Both rows carry
+ *  phase2_dirty_at = NOW() — a legacy no-op marker pending removal (§12
+ *  retired the heal cron that consumed it).
  *
  *  ON CONFLICT (id) DO NOTHING — idempotent retries. Worst-case partial
  *  failure (order succeeded, job INSERT threw): caller surfaces error +
@@ -673,13 +690,15 @@ export interface MoveToShippedInput {
   orderId?: number | string | null;
 }
 
-/** Phase 2 — atomic-ish move of jobs row → shipped:
- *  1. INSERT row into shipped (phase2_dirty_at=NOW())
- *  2. Mark jobs.phase2_deleted_at=NOW() (tombstone — heal cron will delete
- *     the Sheet row + hard-delete the Postgres row once that's done)
- *  /board reads filter `phase2_deleted_at IS NULL` so the job hides instantly.
- *  Returns { ok, found } where found=false means the job wasn't in Postgres
- *  (caller falls through to legacy Apps Script). */
+/** Atomic-ish move of a jobs row → shipped. Postgres is authoritative;
+ *  no downstream sync.
+ *  1. INSERT row into shipped (phase2_dirty_at=NOW() — legacy no-op marker,
+ *     pending removal)
+ *  2. Mark jobs.phase2_deleted_at=NOW() (soft-delete tombstone — permanent
+ *     post-§12; nothing hard-deletes tombstoned rows)
+ *  /board reads filter `phase2_deleted_at IS NULL` so the card hides instantly.
+ *  Returns { ok, found:false } when the job isn't in Postgres — caller
+ *  surfaces a 409 to the client. */
 export async function moveToShippedInPostgres(input: MoveToShippedInput): Promise<{
   ok: true;
   found: boolean;
@@ -692,9 +711,8 @@ export async function moveToShippedInPostgres(input: MoveToShippedInput): Promis
     throw new PostgresWriteError('moveToShipped', 'Invalid job id');
   }
 
-  // Need to verify the job exists in Postgres before tombstoning. Returning
-  // found:false lets the route fall back to legacy Apps Script (matches the
-  // setCowork/updateJob row-missing fallback contract).
+  // Verify the job exists before tombstoning. found:false → caller surfaces
+  // a 409 (matches the setCowork/updateJob row-missing contract).
   const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1`;
   if (cur.rows.length === 0) {
     return { ok: true, found: false };
@@ -805,12 +823,12 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
 
 // ─── deleteJob (Phase 2 — tombstone) ─────────────────────────────
 
-/** Phase 2 — soft-delete a job via the tombstone column. The heal cron's
- *  healJobsTombstone pushes deleteJobByIdRow to Sheet, then hard-DELETEs
- *  the Postgres row. /board reads filter `phase2_deleted_at IS NULL` so the
- *  card disappears instantly. Returns `found:false` (route falls through to
- *  legacy Apps Script) when the row isn't in the Postgres mirror yet —
- *  matches the moveToShipped/cancelJob row-missing contract. */
+/** Soft-delete a job via the tombstone column. Postgres is authoritative;
+ *  no downstream sync. /board reads filter `phase2_deleted_at IS NULL` so
+ *  the card disappears instantly. Post-§12 the tombstone is permanent —
+ *  nothing hard-deletes tombstoned rows. Returns `found:false` when the
+ *  row isn't in Postgres — caller surfaces a 409 (matches the
+ *  moveToShipped/cancelJob row-missing contract). */
 export async function deleteJobInPostgres(id: number | string): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('deleteJob', 'POSTGRES_URL env var missing');
@@ -845,18 +863,14 @@ export interface RestoreJobInput {
   dateIn?: string | null;
 }
 
-/** Phase 2 — restore a cancelled job: upsert the jobs row + delete the
- *  cancelled row in Postgres.
+/** Restore a cancelled job: upsert the jobs row + delete the cancelled row
+ *  in Postgres. Postgres is authoritative; no downstream sync.
  *
- *  The route also calls Apps Script `restoreJob` (which atomically deletes
- *  the cancelled row + appends the jobs row on the Sheet, and writes the
- *  audit entry) — so the restored jobs row is intentionally NOT marked
- *  `phase2_dirty_at`: the Sheet is already in sync, no heal needed.
- *
- *  The ON CONFLICT branch clears `phase2_deleted_at` AND `phase2_dirty_at`:
- *  if the prior cancel's jobs tombstone hasn't been heal-pruned yet, the
- *  upsert would otherwise leave the restored job hidden from /board (which
- *  filters `phase2_deleted_at IS NULL`). */
+ *  The restored jobs row is NOT marked phase2_dirty_at — the column is a
+ *  legacy no-op pending removal (§12). The ON CONFLICT branch deliberately
+ *  clears BOTH phase2_deleted_at AND phase2_dirty_at: if the prior cancel's
+ *  tombstone is still present, the upsert would otherwise leave the restored
+ *  job hidden from /board (which filters `phase2_deleted_at IS NULL`). */
 export async function restoreJobInPostgres(input: RestoreJobInput): Promise<{ ok: true }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('restoreJob', 'POSTGRES_URL env var missing');
@@ -905,7 +919,8 @@ export async function restoreJobInPostgres(input: RestoreJobInput): Promise<{ ok
 // ─── promoteDraft (atomic draft→sent + addJob) ────────────────────
 
 export interface PromoteDraftInput {
-  /** Pre-allocated job id from Apps Script getNextId. */
+  /** Pre-allocated job id from the Postgres `counters` table (§7 retired
+   *  Apps Script getNextId). */
   jobId: number;
   orderId: number;
   job: {
@@ -978,7 +993,7 @@ export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<
   `;
   await assertNoIdCollision('promoteDraft', 'jobs', jobInsert, jobIdNum, { name: jName, orderId: orderIdNum });
 
-  // Flip order status draft→sent + mark dirty.
+  // Flip order status draft→sent. phase2_dirty_at is a legacy no-op marker.
   const newOrderRaw = { ...oldOrderRaw, status: 'sent' };
   const newOrderRawJson = JSON.stringify(newOrderRaw);
   await sql`
@@ -1245,11 +1260,10 @@ function generateAuditSummary(input: AuditInput): string {
   }
 }
 
-/** Insert an audit_log entry tagged source='postgres' so the from-Sheet
- *  cron's `DELETE WHERE source='sheet'` doesn't wipe it. Used by Phase 2
- *  routes that bypass Apps Script (where the legacy doPost-side appendAudit
- *  fires automatically). Never throws — audit failure must not break the
- *  user's mutation, mirroring the Apps Script try/catch pattern.
+/** Insert an audit_log entry tagged source='postgres'. Used by all routes
+ *  post-§12 (Apps Script is no longer called for mutations, so the legacy
+ *  doPost-side appendAudit no longer fires). Never throws — audit failure
+ *  must not break the user's mutation.
  *
  *  Logs the actual error to Vercel logs + Sentry so silent failures don't
  *  hide a genuine schema/permission issue (the 2026-05-11 bug). */
@@ -1283,9 +1297,9 @@ export async function appendAuditToPostgres(input: AuditInput): Promise<void> {
 
 export type DirtyTable = 'jobs' | 'orders' | 'shipped' | 'cancelled';
 
-/** Clear phase2_dirty_at after Apps Script Sheet sync confirms. Sheet now
- *  matches Postgres for this row, so the next from-Sheet cron can treat
- *  it normally (overwrite if Sheet drifts). */
+/** Legacy helper — clears phase2_dirty_at. This marker was consumed by the
+ *  retired heal cron (deleted in §12). The column and this helper are now
+ *  unused and pending removal in a separate task. */
 export async function markRowClean(table: DirtyTable, id: number | string): Promise<void> {
   if (!isPostgresConfigured()) return;
   const idNum = Number(id);
@@ -1299,9 +1313,9 @@ export async function markRowClean(table: DirtyTable, id: number | string): Prom
   );
 }
 
-/** Re-mark a row as dirty (e.g. heal cron retry after transient Sheet
- *  failure). Idempotent — sets timestamp to NOW() regardless of prior
- *  value. */
+/** Legacy helper — sets phase2_dirty_at = NOW(). This marker was consumed
+ *  by the retired heal cron (deleted in §12). The column and this helper are
+ *  now unused and pending removal in a separate task. Idempotent. */
 export async function markRowDirty(table: DirtyTable, id: number | string): Promise<void> {
   if (!isPostgresConfigured()) return;
   const idNum = Number(id);

@@ -374,7 +374,7 @@ export async function GET() {
       ok: true,
       applied,
       counts,
-      hint: 'Schema ready. Next: hit /api/admin/sync-all to import all tables in one shot',
+      hint: 'Schema + indexes ready (idempotent rerun-safe). Postgres is authoritative post-§12 — no Sheet import step; data already lives here.',
     });
   } catch (err) {
     return NextResponse.json(
