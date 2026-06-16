@@ -11,12 +11,13 @@ import { sql, isPostgresConfigured } from '@/lib/postgres';
  * received by these handlers are minted from the Postgres `counters` table,
  * NOT from Apps Script getNextId / getNextOrderId (both retired in §7).
  *
- * Legacy columns still present in the schema:
- *  - `phase2_dirty_at` — was the "needs push to Sheet" marker consumed by
- *    the retired heal cron. Post-§12 nothing reads it operationally; it is
- *    still WRITTEN in ~26 places (including every handler below) and the
- *    markRowClean / markRowDirty helpers remain. All dead, pending removal
- *    in a separate task — do not rely on this column for any logic.
+ * Schema note (§12 Step 2F, 2026-06-16 — phase2_dirty_at removed): the
+ * `phase2_dirty_at` "needs push to Sheet" marker (consumed by the retired
+ * heal cron) had no operational reader post-§12 and was dropped from
+ * jobs/orders/shipped/cancelled together with its partial index and the
+ * markRowClean / markRowDirty helpers. Writers no longer touch it.
+ *
+ * Legacy column still present in the schema:
  *  - `phase2_deleted_at` — LIVE soft-delete tombstone. /board and other
  *    reads filter `phase2_deleted_at IS NULL` so setting it hides the row
  *    instantly. Post-§12 nothing hard-deletes tombstoned rows; soft-delete
@@ -162,8 +163,7 @@ export interface SetCoworkInput {
 }
 
 /** Atomic UPDATE of jobs.cowork + raw columns. Postgres is authoritative;
- *  no downstream sync. phase2_dirty_at is set but is a legacy no-op
- *  marker pending removal (§12 retired the heal cron that consumed it).
+ *  no downstream sync.
  *
  *  Implementation note: read raw, merge in JS, write full row. Earlier
  *  attempt used jsonb_set inline but the dashboard cards read from
@@ -196,8 +196,7 @@ export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: 
   await sql`
     UPDATE jobs
     SET cowork = ${coworkJson}::jsonb,
-        raw = ${newRawJson}::jsonb,
-        phase2_dirty_at = NOW()
+        raw = ${newRawJson}::jsonb
     WHERE id = ${idNum}::bigint
   `;
   return { ok: true, found: true };
@@ -225,10 +224,7 @@ export interface UpdateJobInput {
  *
  *  The merge strategy preserves any raw fields not in `UpdateJobInput`
  *  (e.g. `notes`, `assignedAt`, future schema extensions) so an edit
- *  can't accidentally erase data the v2 form doesn't surface yet.
- *
- *  phase2_dirty_at is set but is a legacy no-op marker pending removal
- *  (§12 retired the heal cron that consumed it). */
+ *  can't accidentally erase data the v2 form doesn't surface yet. */
 export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('updateJob', 'POSTGRES_URL env var missing');
@@ -277,8 +273,7 @@ export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: 
       dept = ${dept},
       status = ${status},
       cowork = ${coworkJson}::jsonb,
-      raw = ${newRawJson}::jsonb,
-      phase2_dirty_at = NOW()
+      raw = ${newRawJson}::jsonb
     WHERE id = ${idNum}::bigint
   `;
   return { ok: true, found: true };
@@ -302,9 +297,7 @@ export interface AddJobInput {
  *  The caller (route) is responsible for input validation and pre-allocating
  *  `id` from the Postgres `counters` table (§7 retired Apps Script getNextId).
  *
- *  New jobs start with cowork=null (the form doesn't surface cowork on add).
- *  phase2_dirty_at=NOW() is set but is a legacy no-op marker pending removal
- *  (§12 retired the heal cron that consumed it). */
+ *  New jobs start with cowork=null (the form doesn't surface cowork on add). */
 export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; id: number }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('addJob', 'POSTGRES_URL env var missing');
@@ -340,10 +333,10 @@ export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; 
 
   await sql`
     INSERT INTO jobs
-      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
     VALUES
       (${idNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
-       ${staff}, ${dept}, ${status}, ${null}::jsonb, ${rawJson}::jsonb, NOW())
+       ${staff}, ${dept}, ${status}, ${null}::jsonb, ${rawJson}::jsonb)
   `;
   return { ok: true, id: idNum };
 }
@@ -448,9 +441,7 @@ export async function findDuplicateOrdersInPostgres(
 }
 
 /** Atomic-ish INSERT of order (always) + job (optional, omitted for drafts).
- *  Postgres is authoritative; no downstream sync. Both rows carry
- *  phase2_dirty_at = NOW() — a legacy no-op marker pending removal (§12
- *  retired the heal cron that consumed it).
+ *  Postgres is authoritative; no downstream sync.
  *
  *  ON CONFLICT (id) DO NOTHING — idempotent retries. Worst-case partial
  *  failure (order succeeded, job INSERT threw): caller surfaces error +
@@ -504,12 +495,11 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
   const orderInsert = await sql<{ id: number }>`
     INSERT INTO orders
       (id, name, customer, date_in, date_due, price, assign_dept, assign_staff,
-       orderer, status, details, raw_data, raw, phase2_dirty_at)
+       orderer, status, details, raw_data, raw)
     VALUES
       (${orderIdNum}::bigint, ${name}, ${customer}, ${dateIn}, ${dateDue},
        ${price}, ${assignDept}, ${assignStaff}, ${orderer}, ${status},
-       ${detailsJson}::jsonb, ${rawDataJson}::jsonb, ${orderRawJson}::jsonb,
-       NOW())
+       ${detailsJson}::jsonb, ${rawDataJson}::jsonb, ${orderRawJson}::jsonb)
     ON CONFLICT (id) DO NOTHING
     RETURNING id
   `;
@@ -547,10 +537,10 @@ export async function createOrderInPostgres(input: CreateOrderInput): Promise<{
 
     const jobInsert = await sql<{ id: number }>`
       INSERT INTO jobs
-        (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+        (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
       VALUES
         (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
-         ${jStaff}, ${jDept}, ${jStatus}, ${null}::jsonb, ${jobRawJson}::jsonb, NOW())
+         ${jStaff}, ${jDept}, ${jStatus}, ${null}::jsonb, ${jobRawJson}::jsonb)
       ON CONFLICT (id) DO NOTHING
       RETURNING id
     `;
@@ -578,9 +568,9 @@ export interface UpdateOrderInput {
   rawData?: Record<string, unknown> | null;
 }
 
-/** Phase 2 — single UPDATE on orders with merge-into-raw + dirty mark.
+/** Phase 2 — single UPDATE on orders with merge-into-raw.
  *  Mirrors updateJobInPostgres for the orders table. Returns found:false
- *  for row-missing fallback to legacy. */
+ *  when the row is missing (caller surfaces a 409). */
 export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('updateOrder', 'POSTGRES_URL env var missing');
@@ -635,8 +625,7 @@ export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ 
       status = ${status},
       details = ${detailsJson}::jsonb,
       raw_data = ${rawDataJson}::jsonb,
-      raw = ${newRawJson}::jsonb,
-      phase2_dirty_at = NOW()
+      raw = ${newRawJson}::jsonb
     WHERE id = ${idNum}::bigint
   `;
   return { ok: true, found: true };
@@ -692,8 +681,7 @@ export interface MoveToShippedInput {
 
 /** Atomic-ish move of a jobs row → shipped. Postgres is authoritative;
  *  no downstream sync.
- *  1. INSERT row into shipped (phase2_dirty_at=NOW() — legacy no-op marker,
- *     pending removal)
+ *  1. INSERT row into shipped
  *  2. Mark jobs.phase2_deleted_at=NOW() (soft-delete tombstone — permanent
  *     post-§12; nothing hard-deletes tombstoned rows)
  *  /board reads filter `phase2_deleted_at IS NULL` so the card hides instantly.
@@ -732,14 +720,13 @@ export async function moveToShippedInPostgres(input: MoveToShippedInput): Promis
   const shippedRawJson = JSON.stringify(shippedRaw);
 
   await sql`
-    INSERT INTO shipped (id, order_id, name, shipped_date, raw, phase2_dirty_at)
-    VALUES (${idNum}::bigint, ${orderId}::bigint, ${name}, ${shippedDate}, ${shippedRawJson}::jsonb, NOW())
+    INSERT INTO shipped (id, order_id, name, shipped_date, raw)
+    VALUES (${idNum}::bigint, ${orderId}::bigint, ${name}, ${shippedDate}, ${shippedRawJson}::jsonb)
     ON CONFLICT (id) DO UPDATE SET
       order_id = EXCLUDED.order_id,
       name = EXCLUDED.name,
       shipped_date = EXCLUDED.shipped_date,
-      raw = EXCLUDED.raw,
-      phase2_dirty_at = NOW()
+      raw = EXCLUDED.raw
   `;
   await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
 
@@ -801,10 +788,10 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
 
   await sql`
     INSERT INTO cancelled
-      (id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw, phase2_dirty_at)
+      (id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw)
     VALUES
       (${idNum}::bigint, ${orderId}::bigint, ${name}, ${dept}, ${staff},
-       ${cancelledBy}, ${cancelledAt}, ${reason}, ${cancelledRawJson}::jsonb, NOW())
+       ${cancelledBy}, ${cancelledAt}, ${reason}, ${cancelledRawJson}::jsonb)
     ON CONFLICT (id) DO UPDATE SET
       order_id = EXCLUDED.order_id,
       name = EXCLUDED.name,
@@ -813,8 +800,7 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
       cancelled_by = EXCLUDED.cancelled_by,
       cancelled_at = EXCLUDED.cancelled_at,
       reason = EXCLUDED.reason,
-      raw = EXCLUDED.raw,
-      phase2_dirty_at = NOW()
+      raw = EXCLUDED.raw
   `;
   await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
 
@@ -866,9 +852,7 @@ export interface RestoreJobInput {
 /** Restore a cancelled job: upsert the jobs row + delete the cancelled row
  *  in Postgres. Postgres is authoritative; no downstream sync.
  *
- *  The restored jobs row is NOT marked phase2_dirty_at — the column is a
- *  legacy no-op pending removal (§12). The ON CONFLICT branch deliberately
- *  clears BOTH phase2_deleted_at AND phase2_dirty_at: if the prior cancel's
+ *  The ON CONFLICT branch clears phase2_deleted_at: if the prior cancel's
  *  tombstone is still present, the upsert would otherwise leave the restored
  *  job hidden from /board (which filters `phase2_deleted_at IS NULL`). */
 export async function restoreJobInPostgres(input: RestoreJobInput): Promise<{ ok: true }> {
@@ -909,8 +893,7 @@ export async function restoreJobInPostgres(input: RestoreJobInput): Promise<{ ok
       status = EXCLUDED.status,
       cowork = EXCLUDED.cowork,
       raw = EXCLUDED.raw,
-      phase2_deleted_at = NULL,
-      phase2_dirty_at = NULL
+      phase2_deleted_at = NULL
   `;
   await sql`DELETE FROM cancelled WHERE id = ${idNum}::bigint`;
   return { ok: true };
@@ -984,23 +967,22 @@ export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<
 
   const jobInsert = await sql<{ id: number }>`
     INSERT INTO jobs
-      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
     VALUES
       (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
-       ${jStaff}, ${jDept}, 'pending', ${null}::jsonb, ${jobRawJson}::jsonb, NOW())
+       ${jStaff}, ${jDept}, 'pending', ${null}::jsonb, ${jobRawJson}::jsonb)
     ON CONFLICT (id) DO NOTHING
     RETURNING id
   `;
   await assertNoIdCollision('promoteDraft', 'jobs', jobInsert, jobIdNum, { name: jName, orderId: orderIdNum });
 
-  // Flip order status draft→sent. phase2_dirty_at is a legacy no-op marker.
+  // Flip order status draft→sent.
   const newOrderRaw = { ...oldOrderRaw, status: 'sent' };
   const newOrderRawJson = JSON.stringify(newOrderRaw);
   await sql`
     UPDATE orders SET
       status = 'sent',
-      raw = ${newOrderRawJson}::jsonb,
-      phase2_dirty_at = NOW()
+      raw = ${newOrderRawJson}::jsonb
     WHERE id = ${orderIdNum}::bigint
   `;
 
@@ -1017,8 +999,8 @@ export interface CancelOrderInput {
 }
 
 /** Phase 2 cancelOrder — for every active job of the order:
- *  INSERT cancelled (with phase2_dirty_at) + tombstone job (phase2_deleted_at).
- *  Then flip orders.status='cancelled' + dirty mark.
+ *  INSERT cancelled + tombstone job (phase2_deleted_at).
+ *  Then flip orders.status='cancelled'.
  *  Returns { cancelledJobs: [id...] } so caller can report cascade count. */
 export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
   ok: true;
@@ -1073,8 +1055,7 @@ export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
   await sql`
     UPDATE orders SET
       status = 'cancelled',
-      raw = ${newOrderRawJson}::jsonb,
-      phase2_dirty_at = NOW()
+      raw = ${newOrderRawJson}::jsonb
     WHERE id = ${orderIdNum}::bigint
   `;
 
@@ -1111,7 +1092,7 @@ export interface BulkForwardResult {
  *  1. Verify oldId exists in Postgres (not tombstoned). If missing, add to
  *     failed[] — caller can fall back to legacy bulkForward Apps Script for
  *     just those items.
- *  2. INSERT newJob (with phase2_dirty_at=NOW(), ON CONFLICT DO NOTHING)
+ *  2. INSERT newJob (ON CONFLICT DO NOTHING)
  *  3. Tombstone oldJob (UPDATE jobs SET phase2_deleted_at=NOW())
  *
  *  Best-effort per item — one item's failure doesn't block the others.
@@ -1185,15 +1166,15 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
       };
       const newRawJson = JSON.stringify(newRaw);
 
-      // INSERT new (with dirty mark) + tombstone old. Two statements, not
-      // transactional — retries hit ON CONFLICT DO NOTHING + the tombstone
-      // UPDATE is idempotent (NOW() override is fine).
+      // INSERT new + tombstone old. Two statements, not transactional —
+      // retries hit ON CONFLICT DO NOTHING + the tombstone UPDATE is
+      // idempotent (NOW() override is fine).
       const jobInsert = await sql<{ id: number }>`
         INSERT INTO jobs
-          (id, order_id, name, date, date_in, staff, dept, status, cowork, raw, phase2_dirty_at)
+          (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
         VALUES
           (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
-           ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb, NOW())
+           ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
       `;
@@ -1291,39 +1272,6 @@ export async function appendAuditToPostgres(input: AuditInput): Promise<void> {
       Sentry.captureException(err, { tags: { layer: 'phase2-audit', action: input.action } });
     } catch { /* ignore */ }
   }
-}
-
-// ─── dirty row helpers ───────────────────────────────────────────
-
-export type DirtyTable = 'jobs' | 'orders' | 'shipped' | 'cancelled';
-
-/** Legacy helper — clears phase2_dirty_at. This marker was consumed by the
- *  retired heal cron (deleted in §12). The column and this helper are now
- *  unused and pending removal in a separate task. */
-export async function markRowClean(table: DirtyTable, id: number | string): Promise<void> {
-  if (!isPostgresConfigured()) return;
-  const idNum = Number(id);
-  if (!Number.isFinite(idNum) || idNum <= 0) return;
-  // Tablename can't be parameterised in the @vercel/postgres tagged-template
-  // helper, so build the query string. table is constrained by the union
-  // type above so this isn't a SQL-injection vector.
-  await sql.query(
-    `UPDATE ${table} SET phase2_dirty_at = NULL WHERE id = $1::bigint`,
-    [idNum],
-  );
-}
-
-/** Legacy helper — sets phase2_dirty_at = NOW(). This marker was consumed
- *  by the retired heal cron (deleted in §12). The column and this helper are
- *  now unused and pending removal in a separate task. Idempotent. */
-export async function markRowDirty(table: DirtyTable, id: number | string): Promise<void> {
-  if (!isPostgresConfigured()) return;
-  const idNum = Number(id);
-  if (!Number.isFinite(idNum) || idNum <= 0) return;
-  await sql.query(
-    `UPDATE ${table} SET phase2_dirty_at = NOW() WHERE id = $1::bigint`,
-    [idNum],
-  );
 }
 
 // ─── small util ───────────────────────────────────────────────────

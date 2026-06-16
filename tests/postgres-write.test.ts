@@ -25,8 +25,6 @@ import {
   deleteJobInPostgres,
   restoreJobInPostgres,
   appendAuditToPostgres,
-  markRowClean,
-  markRowDirty,
   addTemplateToPostgres,
   deleteTemplateFromPostgres,
   PostgresWriteError,
@@ -58,7 +56,7 @@ describe('setCoworkInPostgres', () => {
     expect(callsContaining('UPDATE jobs')).toHaveLength(0);
   });
 
-  it('updates cowork column + raw snapshot + marks dirty when row exists', async () => {
+  it('updates cowork column + raw snapshot when row exists', async () => {
     const oldRaw = { id: 42, name: 'job-A', cowork: null, dept: 'print' };
     queueResult({ rows: [{ raw: oldRaw }], rowCount: 1 });  // SELECT
     queueResult({ rowCount: 1 });  // UPDATE
@@ -70,9 +68,8 @@ describe('setCoworkInPostgres', () => {
     expect(update).toBeDefined();
     expect(update!.text).toContain('cowork =');
     expect(update!.text).toContain('raw =');
-    // Critical: phase2_dirty_at must be set so the heal cron knows to push to Sheet.
-    // Without this, inline Sheet sync failure leaves Sheet drifted with no recovery.
-    expect(update!.text).toContain('phase2_dirty_at = NOW()');
+    // §12 Step 2F: phase2_dirty_at dropped — the UPDATE must no longer write it.
+    expect(update!.text).not.toContain('phase2_dirty_at');
 
     // Bound values: [coworkJson, newRawJson, idNum]
     expect(update!.values[0]).toBe(JSON.stringify(['mo', 'aor']));
@@ -100,40 +97,6 @@ describe('setCoworkInPostgres', () => {
     const update = findCallContaining('UPDATE jobs');
     const mergedRaw = JSON.parse(update!.values[1] as string);
     expect(mergedRaw).toEqual({ cowork: ['solo'] });
-  });
-});
-
-describe('markRowClean / markRowDirty', () => {
-  beforeEach(() => resetMockPostgres());
-
-  it('markRowClean issues UPDATE ... phase2_dirty_at = NULL with parameterized id', async () => {
-    queueResult({ rowCount: 1 });
-    await markRowClean('jobs', 100);
-    expect(sqlCalls).toHaveLength(1);
-    expect(sqlCalls[0].type).toBe('query');
-    expect(sqlCalls[0].text).toBe('UPDATE jobs SET phase2_dirty_at = NULL WHERE id = $1::bigint');
-    expect(sqlCalls[0].values).toEqual([100]);
-  });
-
-  it('markRowDirty issues UPDATE ... phase2_dirty_at = NOW() with parameterized id', async () => {
-    queueResult({ rowCount: 1 });
-    await markRowDirty('orders', '250');
-    expect(sqlCalls[0].text).toBe('UPDATE orders SET phase2_dirty_at = NOW() WHERE id = $1::bigint');
-    expect(sqlCalls[0].values).toEqual([250]);
-  });
-
-  it('silently no-ops on unconfigured Postgres', async () => {
-    setConfigured(false);
-    await markRowClean('jobs', 1);
-    await markRowDirty('jobs', 1);
-    expect(sqlCalls).toHaveLength(0);
-  });
-
-  it('silently no-ops on invalid id (no SQL injection via NaN)', async () => {
-    await markRowClean('jobs', 'not-a-number');
-    await markRowClean('jobs', 0);
-    await markRowDirty('jobs', -1);
-    expect(sqlCalls).toHaveLength(0);
   });
 });
 
@@ -168,7 +131,7 @@ describe('updateJobInPostgres', () => {
     expect(callsContaining('UPDATE jobs')).toHaveLength(0);
   });
 
-  it('updates all fields, sets phase2_dirty_at, merges raw with old snapshot', async () => {
+  it('updates all fields, merges raw with old snapshot', async () => {
     const oldRaw = {
       id: 42,
       name: 'old-name',
@@ -199,8 +162,8 @@ describe('updateJobInPostgres', () => {
     const update = findCallContaining('UPDATE jobs SET');
     expect(update).toBeDefined();
 
-    // Critical: phase2_dirty_at MUST be set so heal cron pushes to Sheet.
-    expect(update!.text).toContain('phase2_dirty_at = NOW()');
+    // §12 Step 2F: phase2_dirty_at dropped — the UPDATE must no longer write it.
+    expect(update!.text).not.toContain('phase2_dirty_at');
     expect(update!.text).toContain('order_id =');
     expect(update!.text).toContain('name =');
     expect(update!.text).toContain('dept =');
@@ -304,7 +267,7 @@ describe('addJobToPostgres', () => {
     expect(sqlCalls).toHaveLength(0);
   });
 
-  it('inserts with all fields + sets phase2_dirty_at', async () => {
+  it('inserts with all fields', async () => {
     queueResult({ rowCount: 1 });
     const r = await addJobToPostgres({
       id: 12345,
@@ -320,9 +283,8 @@ describe('addJobToPostgres', () => {
 
     const insert = findCallContaining('INSERT INTO jobs');
     expect(insert).toBeDefined();
-    // Critical — Phase 2 INSERT must mark dirty so heal cron pushes to Sheet.
-    expect(insert!.text).toContain('phase2_dirty_at');
-    expect(insert!.text).toMatch(/VALUES.*NOW\(\)/);
+    // §12 Step 2F: phase2_dirty_at dropped — INSERT must no longer reference it.
+    expect(insert!.text).not.toContain('phase2_dirty_at');
 
     // Bound values: [id, orderId, name, date, dateIn, staff, dept, status, cowork, raw]
     expect(insert!.values[0]).toBe(12345);
@@ -401,7 +363,7 @@ describe('createOrderInPostgres', () => {
     ).rejects.toBeInstanceOf(PostgresWriteError);
   });
 
-  it('INSERTs order row with phase2_dirty_at + draft (no job)', async () => {
+  it('INSERTs order row as draft (no job)', async () => {
     queueResult({ rows: [{ id: 202605070 }], rowCount: 1 }); // order insert
     const r = await createOrderInPostgres({
       orderId: 202605070,
@@ -416,9 +378,8 @@ describe('createOrderInPostgres', () => {
 
     const insert = findCallContaining('INSERT INTO orders');
     expect(insert, 'createOrderInPostgres must run INSERT INTO orders').toBeDefined();
-    // Critical — phase2_dirty_at must be set so heal cron pushes to Sheet.
-    expect(insert!.text, 'order INSERT must include phase2_dirty_at column').toContain('phase2_dirty_at');
-    expect(insert!.text, 'phase2_dirty_at must be set via NOW()').toMatch(/NOW\(\)/);
+    // §12 Step 2F: phase2_dirty_at dropped — order INSERT must not reference it.
+    expect(insert!.text, 'order INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
     expect(insert!.text, 'order INSERT must be idempotent via ON CONFLICT').toContain('ON CONFLICT (id) DO NOTHING');
 
     expect(insert!.values[0]).toBe(202605070);
@@ -429,7 +390,7 @@ describe('createOrderInPostgres', () => {
     expect(callsContaining('INSERT INTO jobs'), 'draft mode must NOT INSERT INTO jobs').toHaveLength(0);
   });
 
-  it('INSERTs both order + job rows with shared phase2_dirty_at', async () => {
+  it('INSERTs both order + job rows', async () => {
     queueResult({ rows: [{ id: 202605071 }], rowCount: 1 }); // order
     queueResult({ rows: [{ id: 480 }], rowCount: 1 }); // job
 
@@ -443,11 +404,11 @@ describe('createOrderInPostgres', () => {
 
     const orderInsert = findCallContaining('INSERT INTO orders');
     expect(orderInsert, 'order INSERT must run on non-draft createOrder').toBeDefined();
-    expect(orderInsert!.text, 'order INSERT must include phase2_dirty_at').toContain('phase2_dirty_at');
+    expect(orderInsert!.text, 'order INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
 
     const jobInsert = findCallContaining('INSERT INTO jobs');
     expect(jobInsert, 'job INSERT must run when input.job provided').toBeDefined();
-    expect(jobInsert!.text, 'job INSERT must include phase2_dirty_at').toContain('phase2_dirty_at');
+    expect(jobInsert!.text, 'job INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
     expect(jobInsert!.text, 'job INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
     // jobs INSERT values: [id, orderId, name, ...]
     expect(jobInsert!.values[0]).toBe(480);
@@ -547,7 +508,7 @@ describe('moveToShippedInPostgres', () => {
 
     const shippedInsert = findCallContaining('INSERT INTO shipped');
     expect(shippedInsert, 'must INSERT into shipped').toBeDefined();
-    expect(shippedInsert!.text, 'shipped INSERT must mark dirty').toContain('phase2_dirty_at');
+    expect(shippedInsert!.text, 'shipped INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
     expect(shippedInsert!.text, 'shipped INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
 
     const tombstone = findCallContaining('UPDATE jobs SET phase2_deleted_at');
@@ -593,7 +554,7 @@ describe('cancelJobInPostgres', () => {
 
     const cancelInsert = findCallContaining('INSERT INTO cancelled');
     expect(cancelInsert, 'must INSERT into cancelled').toBeDefined();
-    expect(cancelInsert!.text, 'cancelled INSERT must mark dirty').toContain('phase2_dirty_at');
+    expect(cancelInsert!.text, 'cancelled INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
     expect(cancelInsert!.text, 'cancelled INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
     // dept/staff inherited from raw (input didn't provide them)
     const dept = cancelInsert!.values.find((v) => v === 'graphic');
@@ -626,7 +587,7 @@ describe('bulkForwardInPostgres', () => {
     expect(r.failed[0].error).toMatch(/not in Postgres mirror/i);
   });
 
-  it('successful item INSERTs new with dirty mark + tombstones old', async () => {
+  it('successful item INSERTs new + tombstones old', async () => {
     queueResult({ rows: [{ id: 200 }], rowCount: 1 });
     queueResult({ rows: [{ id: 700 }], rowCount: 1 });
     queueResult({ rowCount: 1 });
@@ -637,7 +598,7 @@ describe('bulkForwardInPostgres', () => {
 
     const inserts = callsContaining('INSERT INTO jobs');
     expect(inserts, 'must INSERT new jobs row').toHaveLength(1);
-    expect(inserts[0].text, 'new job must mark dirty').toContain('phase2_dirty_at');
+    expect(inserts[0].text, 'new job must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
     expect(inserts[0].text, 'INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
 
     const tombstones = callsContaining('UPDATE jobs SET phase2_deleted_at');
@@ -670,7 +631,7 @@ describe('updateOrderInPostgres', () => {
     expect(callsContaining('UPDATE orders SET')).toHaveLength(0);
   });
 
-  it('UPDATEs order with merged fields + dirty mark', async () => {
+  it('UPDATEs order with merged fields', async () => {
     queueResult({ rows: [{ raw: { id: 202605061, name: 'old', customer: 'Cust' } }], rowCount: 1 });
     queueResult({ rowCount: 1 });
     const r = await updateOrderInPostgres({
@@ -682,7 +643,7 @@ describe('updateOrderInPostgres', () => {
     expect(r).toEqual({ ok: true, found: true });
     const upd = findCallContaining('UPDATE orders SET');
     expect(upd, 'must UPDATE orders').toBeDefined();
-    expect(upd!.text, 'orders UPDATE must mark dirty').toContain('phase2_dirty_at = NOW()');
+    expect(upd!.text, 'orders UPDATE must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
     expect(upd!.text).toContain('name =');
     expect(upd!.text).toContain('date_due =');
   });
@@ -702,7 +663,7 @@ describe('promoteDraftInPostgres', () => {
     expect(callsContaining('UPDATE orders')).toHaveLength(0);
   });
 
-  it('INSERTs job + flips order to sent + marks both dirty', async () => {
+  it('INSERTs job + flips order to sent', async () => {
     queueResult({ rows: [{ raw: { id: 202605061, status: 'draft', name: 'order-X' }, status: 'draft' }], rowCount: 1 });
     queueResult({ rows: [{ id: 510 }], rowCount: 1 });  // INSERT jobs
     queueResult({ rowCount: 1 });  // UPDATE orders
@@ -716,13 +677,13 @@ describe('promoteDraftInPostgres', () => {
 
     const jobInsert = findCallContaining('INSERT INTO jobs');
     expect(jobInsert, 'must INSERT new job').toBeDefined();
-    expect(jobInsert!.text).toContain('phase2_dirty_at');
+    expect(jobInsert!.text).not.toContain('phase2_dirty_at');
     expect(jobInsert!.text).toContain('ON CONFLICT (id) DO NOTHING');
 
     const orderUpdate = findCallContaining('UPDATE orders SET');
     expect(orderUpdate, 'must flip order status').toBeDefined();
     expect(orderUpdate!.text, "must set status='sent'").toMatch(/status\s*=\s*'sent'/);
-    expect(orderUpdate!.text).toContain('phase2_dirty_at');
+    expect(orderUpdate!.text).not.toContain('phase2_dirty_at');
   });
 });
 
@@ -1002,7 +963,7 @@ describe('restoreJobInPostgres', () => {
     expect(sqlCalls).toHaveLength(0);
   });
 
-  it('upserts the jobs row clearing tombstone + dirty marker, then deletes the cancelled row', async () => {
+  it('upserts the jobs row clearing the tombstone, then deletes the cancelled row', async () => {
     queueResult({ rowCount: 1 });  // INSERT ... ON CONFLICT
     queueResult({ rowCount: 1 });  // DELETE FROM cancelled
     const r = await restoreJobInPostgres({
@@ -1013,10 +974,10 @@ describe('restoreJobInPostgres', () => {
 
     const insert = findCallContaining('INSERT INTO jobs');
     expect(insert).toBeDefined();
-    // ON CONFLICT must clear the tombstone — else a not-yet-heal-pruned
-    // cancel tombstone keeps the restored job hidden from /board.
+    // ON CONFLICT must clear the tombstone — else a stale cancel tombstone
+    // keeps the restored job hidden from /board. phase2_dirty_at dropped (§12 2F).
     expect(insert!.text).toContain('phase2_deleted_at = NULL');
-    expect(insert!.text).toContain('phase2_dirty_at = NULL');
+    expect(insert!.text).not.toContain('phase2_dirty_at');
 
     expect(callsContaining('DELETE FROM cancelled')).toHaveLength(1);
   });

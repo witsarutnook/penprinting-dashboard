@@ -211,27 +211,26 @@ export async function GET() {
       }
     }
 
-    // ─── Phase 2 dirty-row tracking ─────────────────────────────
-    // phase2_dirty_at = NOT NULL means "row was just written by Phase 2,
-    // Sheet is behind and needs heal-cron sync to catch up". The from-
-    // Sheet cron must skip these rows (else it would overwrite Phase 2's
-    // newer state with Sheet's stale state). The to-Sheet heal cron picks
-    // up dirty rows, calls Apps Script setRow, marks clean on success.
-    //
-    // ALTER IF NOT EXISTS — Postgres doesn't have it, so use information_schema check
+    // ─── §12 Step 2F (2026-06-16): drop dead phase2_dirty_at ────────
+    // phase2_dirty_at was the "needs push to Sheet" marker consumed by the
+    // heal cron retired in §12. No operational reader survived: the
+    // bump_updated_at triggers key off `raw` / `phase2_deleted_at`, NOT
+    // this column (verified before drop), and nothing SELECTs/filters it.
+    // Writers stopped touching it in the SAME release as this migration —
+    // run this only AFTER that deploy is live, else in-flight writes from
+    // the old bundle would error on the missing column.
+    // Idempotent: a re-run finds the column already gone (rowCount 0) and
+    // skips. DROP ... IF EXISTS keeps the index/column drops safe too.
     for (const table of ['jobs', 'orders', 'shipped', 'cancelled']) {
       const r = await sql.query(
         `SELECT 1 FROM information_schema.columns
          WHERE table_name = $1 AND column_name = 'phase2_dirty_at' LIMIT 1`,
         [table],
       );
-      if (r.rowCount === 0) {
-        await sql.query(`ALTER TABLE ${table} ADD COLUMN phase2_dirty_at TIMESTAMPTZ`);
-        await sql.query(
-          `CREATE INDEX IF NOT EXISTS idx_${table}_phase2_dirty
-             ON ${table}(phase2_dirty_at) WHERE phase2_dirty_at IS NOT NULL`,
-        );
-        applied.push(`ALTER TABLE ${table} ADD phase2_dirty_at + partial index`);
+      if (r.rowCount === 1) {
+        await sql.query(`DROP INDEX IF EXISTS idx_${table}_phase2_dirty`);
+        await sql.query(`ALTER TABLE ${table} DROP COLUMN IF EXISTS phase2_dirty_at`);
+        applied.push(`ALTER TABLE ${table} DROP phase2_dirty_at + partial index`);
       }
     }
 
@@ -260,14 +259,10 @@ export async function GET() {
     // ─── Delta-fetch cursor (updated_at) ────────────────────────────
     // Board auto-sync uses `WHERE updated_at > ${lastSync}` to send only
     // changed rows instead of re-rendering the whole board every tick (the
-    // PA-H2 / PA-M2 / PA-L1 perf items in AUDIT-BACKLOG). Triggers bump
-    // updated_at on real data changes (raw JSONB or tombstone flip) but
-    // SKIP housekeeping writes (heal-cron clearing phase2_dirty_at), so
-    // the cursor only advances when the client actually needs to repaint.
-    //
-    // Why not reuse phase2_dirty_at: that column clears back to NULL after
-    // a successful Sheet sync — it's a "needs heal" signal, not a "what
-    // changed for the user" signal. Delta-fetch needs the latter.
+    // PA-H2 / PA-M2 / PA-L1 perf items in AUDIT-BACKLOG). The
+    // bump_updated_at triggers below advance the cursor only when `raw`
+    // (real user-visible data) or the phase2_deleted_at tombstone changes,
+    // so the client repaints only when it actually needs to.
     //
     // Phase 4.2 close-out (2026-05-18 cutover) makes this cursor
     // authoritative: jobs/orders/shipped/cancelled cron is OFF, dual-write

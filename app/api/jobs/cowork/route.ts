@@ -13,8 +13,7 @@ export const maxDuration = 30;
  * Post-§12: Postgres is the sole source of truth. The write goes directly
  * to Postgres (via setCoworkInPostgres) and is authoritative immediately.
  * No Apps Script call, no Sheet sync, no heal cron. /board reads from
- * Postgres so the cowork chip lands instantly. phase2_dirty_at is set on
- * the row but is a legacy no-op marker pending removal.
+ * Postgres so the cowork chip lands instantly.
  *
  * Request body: { id, cowork: Array<{ dept, staff }> }
  */
@@ -89,9 +88,8 @@ async function setCowork(id: number, cleaned: string[], role: string, user: stri
   }
 
   // Postgres write succeeded — authoritative, no downstream sync.
-  // phase2_dirty_at is set on the row but is a legacy no-op marker
-  // (§12 retired the heal cron). Card on /board re-renders from Postgres
-  // and sees the new cowork immediately.
+  // Card on /board re-renders from Postgres and sees the new cowork
+  // immediately.
   await appendAuditToPostgres({
     action: 'setCowork',
     role,
