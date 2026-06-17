@@ -302,6 +302,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### Spec "อื่นๆ" — กราฟฟิก row + staff-name resolution (2026-06-17)
+
+**Goal:** user ขอเพิ่มแถว "กราฟฟิก" ในส่วน "อื่นๆ" ของ tab สเปคงาน (modal ใบสั่งงาน)
+
+[`0133d2d`](https://github.com/witsarutnook/penprinting-dashboard/commit/0133d2d) — แก้ `lib/spec-format.ts` จุดเดียว (มีผลทั้ง modal /board `DetailsTable` + /orders `SpecSection` ที่ share renderer): (1) เพิ่ม `assignStaff` → label "กราฟฟิก" ใน "อื่นๆ" section (เดิมอยู่ใน `SPEC_HIDDEN_KEYS`) (2) resolve staff ID → ชื่อ สำหรับทั้ง `assignStaff` (graphic) + `forwardPrint` (print) ผ่าน `STAFF` — `pook`→ปุ๊ก, `sm74`→"SM74 (ต้อม)" (เดิม forwardPrint โชว์ ID ดิบ) (3) ใบที่ส่งตรงพิมพ์ (ไม่มีกราฟฟิก) → แถวซ่อนอัตโนมัติ · unknown id → fallback raw id. +5 regression tests (143→148). **Visual verified บน dev** (throwaway preview route + Chrome MCP screenshot, ลบก่อน commit). Lesson: ก่อน DROP/แก้ field ที่ "ซ่อน" ต้องเช็คว่า data อยู่ใน `details` จริง — ยืนยันผ่าน write path (`add/route.ts` formSnapshot = `{...body}` มี assignStaff+forwardPrint) ก่อนแก้ กัน no-op.
+
 ### Duplicate-order warning — only still-open orders + clearer copy (2026-06-11)
 
 **Goal:** ปิด user report "คนใช้ งง" dialog พบใบสั่งงานคล้ายกัน — staff โดนเตือนตอนสั่ง repeat order ให้ลูกค้าเดิมทั้งที่ใบเก่าส่งไปแล้ว + ปุ่ม "ยกเลิก"/"สร้างต่อ" อ่านกำกวม
