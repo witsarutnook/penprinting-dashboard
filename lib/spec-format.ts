@@ -7,6 +7,8 @@
  *  rawData shape (which includes per-flag fields from gatherFormData).
  */
 
+import { STAFF } from './board';
+
 export interface SpecSection {
   title: string;
   /** Ordered list of keys to render in this section. Keys not present in
@@ -25,9 +27,11 @@ export const SPEC_HIDDEN_KEYS = new Set<string>([
   'name', 'customer', 'dateIn', 'dateDue', 'pin', 'orderType',
   // Photobook items render in their own table
   'photobook', 'photobookItems',
-  // Job-level assignment fields (shown in the "มอบหมายงาน" section
-  // explicitly, no fallback render)
-  'cowork', 'assignDept', 'assignStaff',
+  // Job-level assignment fields. `assignStaff` (graphic) + `forwardPrint`
+  // (print) ARE shown in the "อื่นๆ" section (resolved ID → staff name).
+  // `assignDept`/`cowork` stay hidden — dept is implied by which field is set,
+  // cowork renders in its own block.
+  'cowork', 'assignDept',
   // Unit-suffix fields — paired with their value keys in formatSpecValue
   'sizeUnit', 'qtyUnit',
 ]);
@@ -94,10 +98,25 @@ export const SPEC_LABELS: Record<string, string> = {
   diecut: 'ไดคัท',
   diecutSelf: 'ไดคัท(เอง)',
   // Misc
+  assignStaff: 'กราฟฟิก',
   forwardPrint: 'ส่งต่อพิมพ์',
   orderer: 'ผู้สั่งงาน',
   notes: 'หมายเหตุ',
 };
+
+/** Spec keys that hold a staff ID → which STAFF dept to resolve the name
+ *  against. Rendered as the resolved display name (e.g. 'pook' → 'ปุ๊ก',
+ *  'sm74' → 'SM74 (ต้อม)') instead of the raw romanized ID. */
+const STAFF_ID_KEYS: Record<string, 'graphic' | 'print'> = {
+  assignStaff: 'graphic', // มอบหมายกราฟฟิก
+  forwardPrint: 'print', // ส่งต่อพิมพ์
+};
+
+/** Resolve a staff ID → display name; falls back to the raw ID for legacy /
+ *  unknown staff so the value never disappears. */
+function resolveStaffName(dept: 'graphic' | 'print', id: string): string {
+  return STAFF[dept]?.find((s) => s.id === id)?.name ?? id;
+}
 
 /** Section definitions for structured spec render — mirrors WP's
  *  printOrderHtml grouping so the dashboard modal matches what the
@@ -145,7 +164,7 @@ export const SPEC_SECTIONS: SpecSection[] = [
   },
   {
     title: 'อื่นๆ',
-    keys: ['orderer', 'forwardPrint', 'notes'],
+    keys: ['orderer', 'assignStaff', 'forwardPrint', 'notes'],
   },
 ];
 
@@ -181,6 +200,12 @@ export function formatSpecValue(key: string, value: unknown, ctx: FormatContext)
   if (key === 'qty') {
     const unit = String(ctx.raw.qtyUnit || '').trim();
     return unit ? `${value} ${unit}` : String(value);
+  }
+
+  // Staff-assignment IDs → display name (กราฟฟิก = graphic, ส่งต่อพิมพ์ = print)
+  const staffDept = STAFF_ID_KEYS[key];
+  if (staffDept && typeof value === 'string') {
+    return resolveStaffName(staffDept, value.trim());
   }
 
   // billColors array — join non-empty values
