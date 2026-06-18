@@ -10,8 +10,9 @@
 >
 > ## 🎯 งานหลัก session หน้า (ไม่เปลี่ยนจากเดิม — Phase 3 ปิดแล้ว)
 > 1. **Phase 1a — in-dashboard AI Quote Assistant** (deferred 9 sessions, งานใหญ่หลาย sub-steps; ตั้ง env `QUOTE_API_TOKEN` ใน Vercel `penprinting-calc` ก่อน — Phase 0 ship-dark รออยู่. ดู `design-ai-quoting.md` §13)
-> 2. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
-> 3. **Doc nit** — `/api/admin/db-migrate` route hint "sync-all" (carryover 6/04)
+> 2. **Dashboard Next 14→15 + React 18→19** — ตัวสุดท้ายของ 4 repo (calc/web/photobook จบหมดแล้ว). **Audited 6/18 → ดู [migration-plan-next15.md](migration-plan-next15.md)** (enumerate ครบ 27 จุด + codemod + smoke checklist, ไม่ต้อง re-audit). Effort Medium, well-bounded, จบ session เดียวได้. ข่าวดี: Sentry+config+middleware+React19 พร้อมอยู่แล้ว 0 งาน — งานจริง = async cookies(×14)/params(×4)/searchParams(×6) + eslint `<a>`×3 + smoke 7 flows. Risk หลัก = Client Router Cache `staleTimes`→0 (mitigation ใน doc)
+> 3. **A11Y-board-form-label** — dedicated a11y pass (ค้างจาก 6/05)
+> 4. **Doc nit** — `/api/admin/db-migrate` route hint "sync-all" (carryover 6/04)
 >
 > ---
 >
