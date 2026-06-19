@@ -45,8 +45,9 @@ function formatMonth(year: number, month: number): string {
   return `${year}-${String(month + 1).padStart(2, '0')}`;
 }
 
-export default async function CalendarPage({ searchParams }: { searchParams: SearchParams }) {
-  const cookieStore = cookies();
+export default async function CalendarPage(props: { searchParams: Promise<SearchParams> }) {
+  const searchParams = await props.searchParams;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session || session.role !== 'admin') {
     redirect('/analytics');

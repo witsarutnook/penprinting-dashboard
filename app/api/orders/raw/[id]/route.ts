@@ -16,10 +16,8 @@ export const maxDuration = 30;
  *
  *  Perf: uses Apps Script `getOrder` (single-row read) instead of
  *  `loadAll` (~200KB snapshot). Roughly 600ms → 200ms per modal open. */
-export async function GET(
-  _req: Request,
-  { params }: { params: { id: string } },
-) {
+export async function GET(_req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const session = await requireSession();
   if (session instanceof NextResponse) return session;
 

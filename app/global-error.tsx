@@ -64,6 +64,9 @@ export default function GlobalError({
               digest: {error.digest}
             </p>
           )}
+          {/* Must stay <a>: global-error renders its own <html>/<body> outside
+              the app router tree (root layout has failed) — next/link is unusable here. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a
             href="/"
             style={{

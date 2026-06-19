@@ -13,8 +13,9 @@ export const metadata: Metadata = {
   title: 'แก้ไขใบสั่งงาน',
 };
 
-export default async function EditOrderPage({ params }: { params: { id: string } }) {
-  const cookieStore = cookies();
+export default async function EditOrderPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect(`/login?next=/orders/${params.id}/edit`);
   // Edit = admin only. Sales can create new orders + promote drafts but

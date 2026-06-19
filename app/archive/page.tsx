@@ -14,9 +14,10 @@ interface SearchParams {
   q?: string;
 }
 
-export default async function ArchivePage({ searchParams }: { searchParams: SearchParams }) {
+export default async function ArchivePage(props: { searchParams: Promise<SearchParams> }) {
+  const searchParams = await props.searchParams;
   // Admin-only (matches WP — searchArchive is admin-restricted in ROLE_REQUIREMENTS)
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session || session.role !== 'admin') {
     redirect('/analytics');

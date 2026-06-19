@@ -157,7 +157,7 @@ async function currentActor(): Promise<string | undefined> {
   try {
     const { cookies } = await import('next/headers');
     const { COOKIE_NAME, verifySession } = await import('@/lib/auth');
-    const session = await verifySession(cookies().get(COOKIE_NAME)?.value);
+    const session = await verifySession((await cookies()).get(COOKIE_NAME)?.value);
     if (session) return `${session.role}:${session.user}`;
   } catch {
     // No request context (e.g. building, unit test) — fall back to dashboard service identity.

@@ -225,6 +225,8 @@ function FilterForm({
         กรอง
       </button>
       {hasActiveFilter && (
+        // Full reload intentional: remounts the form so uncontrolled filter inputs reset.
+        // eslint-disable-next-line @next/next/no-html-link-for-pages
         <a href="/cancelled" className="text-xs text-stone-500 hover:text-stone-700 underline">
           ล้างตัวกรอง
         </a>

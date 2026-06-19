@@ -16,7 +16,7 @@ import { COOKIE_NAME, verifySession } from '@/lib/auth';
  * is wanted (e.g. /analytics for admins).
  */
 export default async function Home() {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login');
   redirect('/board');

@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function CancelledPage() {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session || session.role !== 'admin') redirect('/board?dept=post');
 

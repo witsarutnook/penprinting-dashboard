@@ -29,7 +29,7 @@ function todayThaiLong(): string {
  *  layout skeleton in ~50ms instead of staring at a blank page for
  *  300-1500ms while Postgres holds. */
 export default async function BoardPage() {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/board');
 

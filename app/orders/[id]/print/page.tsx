@@ -52,8 +52,9 @@ interface OrderRaw {
   photobook?: PhotobookItem[];
 }
 
-export default async function OrderPrintPage({ params }: { params: { id: string } }) {
-  const cookieStore = cookies();
+export default async function OrderPrintPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect(`/login?next=/orders/${params.id}/print`);
 

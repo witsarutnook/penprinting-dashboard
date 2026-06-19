@@ -37,12 +37,13 @@ interface ChromeFilters {
   toIso: string;
 }
 
-export default async function OrdersListPage({
-  searchParams,
-}: {
-  searchParams: SearchParams;
-}) {
-  const cookieStore = cookies();
+export default async function OrdersListPage(
+  props: {
+    searchParams: Promise<SearchParams>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/orders');
   // /orders list is admin + sales only — staff don't manage orders, they
@@ -158,6 +159,8 @@ function FilterForm({ filters }: { filters: ChromeFilters }) {
         กรอง
       </button>
       {(query || fromIso || toIso || statusFilter) && (
+        // Full reload intentional: remounts the form so uncontrolled filter inputs reset.
+        // eslint-disable-next-line @next/next/no-html-link-for-pages
         <a href="/orders" className="text-xs text-stone-500 hover:text-stone-700 underline">
           ล้างตัวกรอง
         </a>
