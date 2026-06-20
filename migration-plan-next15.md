@@ -1,6 +1,6 @@
 # Migration Plan — Dashboard Next 14 → 15 + React 18 → 19
 
-> **Status:** 📋 PLANNED (audited 2026-06-18, not started). Pick up next session.
+> **Status:** ✅ DONE + LIVE (shipped 2026-06-20, PR #1 → `2c22301`). Migration `1d9cb6e` + board hydration fix `45d6c77`, squash-merged. Verified on Vercel preview + production. Plan held: ~27 mechanical edits matched the audit; the **one surprise** was a React-19 hydration mismatch (#418) on /board — see "Board #418" note at bottom. Soak: watch Sentry 1-2 days.
 > **Audited by:** read-only scan of the whole repo — surface enumerated below, **no re-audit needed**.
 > **Context:** Last of 4 Vercel repos to migrate. calc (Phase 1) · web (Phase 2, `a29b38f`) · photobook (Phase 3, `8927e5b`) all done & soaked. Dashboard is the biggest but **well-bounded — no architectural change**.
 > **Target versions (match the 3 soaked repos):** next `^15.5.19` · react/react-dom `^19.2.7` · @types/react `^19.2.16` · @types/react-dom `^19.2.3` · eslint-config-next `^15.5.19`. Keep: typescript `^5`, tailwindcss `3.4.x`, @sentry/nextjs `10.56` (already current), recharts `3.8` (React 19 compatible).
@@ -125,6 +125,17 @@ Then `npm install` (regen lockfile), confirm `npm ls react react-dom` dedupes to
 ## Rollback
 - If on a branch: don't promote / revert the merge.
 - If on main: `git revert <commit>` → Vercel redeploys Next 14. Deps revert via the reverted `package.json` + `npm install`. No DB/schema involved → clean rollback.
+
+## Board #418 — the one thing the audit didn't predict (fixed `45d6c77`)
+
+After the bump, `/board` threw **React #418 (hydration text mismatch)** on every load. Diagnosis (Chrome MCP + a TZ harness):
+- **Confirmed real, not extension noise** — reproduced in incognito (extensions off); production React 18 board was console-clean. So React 19 surfaces a mismatch React 18 silently recovered from.
+- **Values were always correct** — ruled out the date math by proof (server-UTC vs client-Bangkok `getBangkokToday()`/`daysUntilDue` offsets cancel exactly), plus `displayDate`/`Intl` are all TZ+locale-pinned. The mismatch is the board's data-derived text (KPI counts, "รับ Xว", card order) computed client-side off a live `useDeltaSync` snapshot, where SSR pass and first client render can differ.
+- **Root-class fix (not `suppressHydrationWarning`):** `BoardClient` now gates the data-derived tree on a post-mount flag — SSR + first client render emit the SAME `<BoardSkeleton/>` (byte-clean hydration), real board paints one tick later. Removes the whole hydration surface. `BoardSkeleton` extracted to `app/board/board-skeleton.tsx` (shared with the page.tsx Suspense fallback → seamless hand-off).
+- **Lesson:** a real-time client-driven view (delta-sync) shouldn't SSR its volatile content under React 19 — the SSR/hydration text WILL race. Check `/board`-like pages on the other repos if they ever add live data. See [[feedback_react19_hydration_realtime_board]].
+
+## Also surfaced
+- **`.eslintrc` ignore `next-env.d.ts`** — Next 15.5 adds `/// <reference path="./.next/types/routes.d.ts" />`, a `path` triple-slash ref that trips `next/typescript`'s `no-triple-slash-reference`. Pre-commit lint failed on the auto-gen file; ignoring it is the standard fix.
 
 ## Gotchas captured in memory
 - [[feedback_port_sibling_repo_framework_drift]] — web/calc/photobook are the proven reference; mirror their migration, and the **eslint `<a href>` gotcha** (Cat 4) is documented there too.
