@@ -8,10 +8,20 @@
 > 1. **Soak window dashboard** — เฝ้า Sentry (project dashboard) + ใช้งานจริง ~1 สัปดาห์ถึง **2026-06-27** ก่อนถือว่า stable (cadence เดียวกับ calc/web/photobook). ดู: error spike, /board render ปกติ (skeleton→board ไม่กระพริบ), staff ไม่รายงานปัญหา. ผมเสนอตั้ง scheduled soak-end check ได้ (ถาม)
 > 2. **(carryover) QUOTE_API_TOKEN** ใน Vercel `penprinting-calc` — ยังค้างจาก AI Quoting Phase 0 (prerequisite ของ Phase 1a)
 >
+> ## 🧠 AI Quoting Phase 1a — brainstormed + audited + PLANNED (2026-06-20, same session)
+> ทำ superpowers flow ครบ (brainstorm → audit → spec → writing-plans). **ยังไม่เขียนโค้ด — พักตามคำขอคุณนุ๊ก** (session ยาว + รอ ANTHROPIC_API_KEY billing).
+> - **Spec อัพเดต** `design-ai-quoting.md` [`46e7067`](https://github.com/witsarutnook/penprinting-dashboard/commit/46e7067): **D8** = 1a auto-quote แค่ brochure/book/notebook, box/ถุง/นามบัตร escalate (Phase 1c) + audit deltas (migration via db-migrate route ไม่ใช่ lib/migrations/ · pages Next 15 async cookies · Postgres @vercel/postgres sql · Phase 0 contract verified)
+> - **Implementation plan** (พร้อม build): `docs/superpowers/plans/2026-06-20-ai-quoting-phase1a.md` (workspace root, ไม่ git-track) — **11 tasks, TDD** (tools/prompt/run มี test), complete code สำหรับ tool/prompt/loop/db/routes, spec สำหรับ 2 หน้า UI. **Tasks 1-10 = env-independent (build ได้เลย)** · Task 11 (migrate+smoke เทียบ AI vs calc) รอ env+deploy
+> - **หัวใจ**: ราคาทุกตัวจาก calc `/api/quote` (single source of truth) · Haiku 4.5 + prompt caching · manual tool-use loop · env-gated deploy dark
+>
+> ## ⏳ Pending user actions (AI Quoting — ต้องทำก่อน Task 11 / build จริง)
+> 1. **ตั้ง env ใน Vercel `penprinting-dashboard`** (ทุก env): `ANTHROPIC_API_KEY` (กำลังเติม credit ที่ console.anthropic.com), `QUOTE_API_URL=https://calc.penprinting.co/api/quote`, `QUOTE_API_TOKEN` (ค่าเดียวกับที่ตั้งใน calc แล้ว ✅)
+> 2. (calc `QUOTE_API_TOKEN` = **ตั้งแล้ว** ✅ — Phase 0 `/api/quote` live ไม่ inert)
+>
 > ## 🎯 งานหลัก session หน้า
-> 1. **Phase 1a — in-dashboard AI Quote Assistant** (deferred 10 sessions, งานใหญ่หลาย sub-steps — ดู `design-ai-quoting.md` §13 Phase 1a + AI-Quoting block ด้านล่าง). ตั้ง env ก่อน
+> 1. **Build AI Quoting Phase 1a** — resume จาก plan (`docs/superpowers/plans/2026-06-20-ai-quoting-phase1a.md`). เริ่ม Task 1-10 ได้เลยไม่ต้องรอ env (env แค่ตอน Task 11 smoke). แนะนำ subagent-driven execution
 > 2. **A11Y-board-form-label** — a11y pass (ค้างจาก 6/05) — หมายเหตุ: board fix session นี้เปลี่ยนเป็น client-only render, เช็คว่า a11y issues เดิมยังเหมือนเดิมมั้ย
-> 3. ตอน soak ครบ (6/27) — ถ้าไม่มี issue, ลบ migration-plan-next15.md ได้ (งานจบ)
+> 3. ตอน soak migration ครบ (6/27) — ถ้าไม่มี issue, ลบ migration-plan-next15.md ได้ (งานจบ) · scheduled check `dashboard-next15-soak-end-check` จะเตือน
 >
 > ---
 >
