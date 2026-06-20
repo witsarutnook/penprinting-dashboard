@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { Job, Order } from '@/lib/types';
 import { computeBoard, type BoardFilters, type Dept } from '@/lib/board';
@@ -14,6 +14,7 @@ import { BulkModeProvider } from '@/components/board/bulk-context';
 import { BulkActionsBar } from '@/components/board/bulk-actions-bar';
 import { UndoProvider } from '@/components/board/undo-context';
 import { PendingMutationsProvider } from '@/components/board/pending-mutations';
+import { BoardSkeleton } from './board-skeleton';
 
 const VALID_DEPTS: Dept[] = ['graphic', 'print', 'post'];
 const VALID_URGENCY: Urgency[] = ['overdue', 'dday', 'urgent', 'normal'];
@@ -83,6 +84,18 @@ export function BoardClient({
     () => board.depts.flatMap((d) => d.columns.flatMap((c) => c.jobs)),
     [board],
   );
+
+  // Render the data-derived board client-only. `computeBoard` keys off
+  // `getBangkokToday()` + a live `useDeltaSync` snapshot, so the server's
+  // SSR pass and the client's first render can disagree on the resulting
+  // text (counts, "รับ Xว", card ordering) — React 19 treats that as a fatal
+  // hydration mismatch (#418) and regenerates the whole tree. Gating on a
+  // post-mount flag makes SSR + first client render emit the SAME stable
+  // skeleton, so hydration is byte-clean; the real board paints one tick
+  // later from the same snapshot. (React 18 silently recovered; 19 throws.)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return <BoardSkeleton />;
 
   return (
     <UndoProvider>

@@ -19,8 +19,9 @@ interface SearchParams {
 /** Standalone order-entry page — pure form, no Kanban. Replaces the old
  *  pattern of creating orders from the /board toolbar. Sidebar item
  *  "สั่งงาน" links here. */
-export default async function NewOrderPage({ searchParams }: { searchParams: SearchParams }) {
-  const cookieStore = cookies();
+export default async function NewOrderPage(props: { searchParams: Promise<SearchParams> }) {
+  const searchParams = await props.searchParams;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect(`/login?next=/orders/new${searchParams.from ? `?from=${searchParams.from}` : ''}`);
   if (session.role !== 'admin' && session.role !== 'sales') {

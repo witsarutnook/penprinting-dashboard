@@ -17,8 +17,9 @@ const TRACK_BASE_URL = 'https://dashboard.penprinting.co/track';
 /** Server page reads the order, generates a QR data-URL pointing at the
  *  public tracking URL, and hands everything to the client wrapper which
  *  handles the visual layout + "Download PNG" via html-to-image. */
-export default async function TrackingCardPage({ params }: { params: { id: string } }) {
-  const cookieStore = cookies();
+export default async function TrackingCardPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect(`/login?next=/orders/${params.id}/tracking-card`);
 

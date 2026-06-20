@@ -55,12 +55,13 @@ function parseMonth(input: string | undefined): { year: number; month: number } 
   return { year: y, month: mo };
 }
 
-export default async function AnalyticsPage({
-  searchParams,
-}: {
-  searchParams: SearchParams;
-}) {
-  const cookieStore = cookies();
+export default async function AnalyticsPage(
+  props: {
+    searchParams: Promise<SearchParams>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/analytics');
   // Admin only — sales + staff get bounced to the Kanban (matches WP

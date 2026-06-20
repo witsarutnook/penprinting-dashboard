@@ -8,7 +8,7 @@ type Role = Session['role'];
 /** Verify cookie-based session. Returns Session if valid, else returns a
  *  401/403 NextResponse that the caller should return as-is. */
 export async function requireSession(allowedRoles?: Role[]): Promise<Session | NextResponse> {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

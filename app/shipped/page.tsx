@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ShippedPage() {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect('/login?next=/shipped');
 

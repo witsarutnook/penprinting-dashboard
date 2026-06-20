@@ -86,6 +86,9 @@ export default function Error({
           >
             ลองใหม่
           </button>
+          {/* Full reload intentional: error boundary recovery — client router
+              state may be corrupted, so a hard navigation home is safer. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a
             href="/"
             style={{

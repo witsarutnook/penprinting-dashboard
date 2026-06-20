@@ -13,11 +13,12 @@ export const dynamic = 'force-dynamic';
  *  No auth required. Mirrors WP page-track-order.php look + feel:
  *  cream `#f5f5f0` background, text-only "PENPRINTING" wordmark,
  *  rounded-20px white card with the form OR the 6-step progress view. */
-export default function TrackPage({
-  searchParams,
-}: {
-  searchParams: { id?: string };
-}) {
+export default async function TrackPage(
+  props: {
+    searchParams: Promise<{ id?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   return (
     <div
       style={{
