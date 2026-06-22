@@ -354,6 +354,40 @@ export async function GET() {
     `;
     applied.push('CREATE TABLE counters');
 
+    // ─── AI Quote Assistant (Phase 1a) ──────────────────────────────
+    // ai_quote_sessions = the conversation + lead store (one row per chat).
+    // ai_quotes = each compute_quote result produced in a session (history).
+    await sql`
+      CREATE TABLE IF NOT EXISTS ai_quote_sessions (
+        id              SERIAL PRIMARY KEY,
+        channel         TEXT NOT NULL DEFAULT 'dashboard',
+        conversation    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        extracted_spec  JSONB,
+        customer_name   TEXT,
+        customer_contact TEXT,
+        lead_status     TEXT NOT NULL DEFAULT 'ใหม่',
+        assigned_to     TEXT,
+        converted_order_id INTEGER,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    applied.push('ai_quote_sessions table');
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS ai_quotes (
+        id           SERIAL PRIMARY KEY,
+        session_id   INTEGER NOT NULL REFERENCES ai_quote_sessions(id) ON DELETE CASCADE,
+        product_type TEXT NOT NULL,
+        spec         JSONB NOT NULL,
+        result       JSONB NOT NULL,
+        unit_price   NUMERIC NOT NULL,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    applied.push('ai_quotes table');
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_ai_quotes_session ON ai_quotes(session_id)`;
+    applied.push('idx_ai_quotes_session');
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
     for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates']) {
