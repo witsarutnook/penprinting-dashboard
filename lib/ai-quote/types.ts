@@ -53,6 +53,14 @@ export interface AiQuoteSession {
   updatedAt: string;
 }
 
+/** A lead row for the /quote-leads table — a session plus derived counts.
+ *  Defined here (not db.ts) so the client table can import the type without
+ *  pulling in the `server-only` db module. */
+export interface LeadRow extends AiQuoteSession {
+  quoteCount: number;
+  lastMessage: string | null;
+}
+
 /** POST /api/ai-quote request + response. */
 export interface AiQuoteRequest {
   sessionId?: number;       // omit to start a new session

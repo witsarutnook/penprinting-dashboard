@@ -2,7 +2,7 @@
 import 'server-only';
 import { sql } from '@/lib/postgres';
 import type {
-  AiQuoteSession, ConversationTurn, LeadStatus, ProductType, QuoteSpec, ComputeResult,
+  AiQuoteSession, ConversationTurn, LeadStatus, ProductType, QuoteSpec, ComputeResult, LeadRow,
 } from './types';
 
 function rowToSession(r: Record<string, unknown>): AiQuoteSession {
@@ -53,8 +53,6 @@ export async function saveQuote(
 export async function markEscalated(sessionId: number): Promise<void> {
   await sql`UPDATE ai_quote_sessions SET lead_status = 'escalated', updated_at = NOW() WHERE id = ${sessionId} AND lead_status = 'ใหม่'`;
 }
-
-export interface LeadRow extends AiQuoteSession { quoteCount: number; lastMessage: string | null; }
 
 export async function listLeads(): Promise<LeadRow[]> {
   const { rows } = await sql`

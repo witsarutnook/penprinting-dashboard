@@ -19,6 +19,8 @@ import {
   IconClock,
   IconTruck,
   IconAlertCircle,
+  IconSparkles,
+  IconClipboardList,
 } from '@/lib/icons';
 
 type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
@@ -56,6 +58,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'รายการ',
     items: [
       { href: '/analytics', label: 'รายงาน', icon: IconTrendingUp, adminOnly: true },
+      { href: '/quote-assistant', label: 'ผู้ช่วยตีราคา (AI)', icon: IconSparkles, adminOrSalesOnly: true },
+      { href: '/quote-leads', label: 'Lead ใบเสนอราคา', icon: IconClipboardList, adminOrSalesOnly: true },
       { href: '/orders', label: 'รายการใบสั่งงาน', icon: IconClock, adminOrSalesOnly: true },
       { href: '/shipped', label: 'จัดส่งแล้ว', icon: IconTruck },
       { href: '/cancelled', label: 'รายการยกเลิก', icon: IconAlertCircle, adminOnly: true },
