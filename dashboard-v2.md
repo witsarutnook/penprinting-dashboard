@@ -103,8 +103,10 @@
 | `/analytics` | any role | Sub-tabs: "รายงานประจำเดือน" (default, single-month deep dive) + "Analytics 12 เดือน" (KPIs + 4 charts). Month picker on monthly view; range selector on 12-month view |
 | `/calendar` | admin only | Month grid + Bangkok TZ |
 | `/archive` | admin only | Search archived sheets |
+| `/quote-assistant` | admin + sales | AI Quote Assistant staff chat (Phase 1a — env-gated) |
+| `/quote-leads` | admin + sales | Lead table จาก AI quote sessions (status + claim) — Phase 1a |
 
-Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders /shipped /cancelled` paths — defence-in-depth on top of per-page `verifySession()`.
+Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders /shipped /cancelled /quote-assistant /quote-leads` paths — defence-in-depth on top of per-page `verifySession()`. (API routes self-guard ด้วย `requireSession` — ไม่ใส่ใน matcher ตาม convention.)
 
 ### API routes
 | Route | Method | Auth | Purpose |
@@ -128,6 +130,9 @@ Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders
 | `/api/orders/raw/[id]` | GET | admin + sales | Lazy fetch full rawData for one order |
 | `/api/orders/templates/{add,delete}` | POST | admin + sales | Template CRUD |
 | `/api/track/lookup` | POST | open | Public order lookup (cookie rate-limit) |
+| `/api/ai-quote` | POST | admin + sales | AI Quote chat — `{ sessionId?, message }` → Claude tool-use loop → reply + spec + price. **env-gated** (ANTHROPIC_API_KEY/QUOTE_API_URL/QUOTE_API_TOKEN; 500 ถ้าไม่ตั้ง) |
+| `/api/ai-quote/leads` | GET | admin + sales | List leads (จาก `ai_quote_sessions`) |
+| `/api/ai-quote/leads/[id]` | PATCH | admin + sales | Update lead status / claim (`assigned_to`) |
 
 ---
 
@@ -207,6 +212,15 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - QR in header right panel (60×60, white background, links to `/track?id=...`)
 - Photobook + normal mode templates branch on `raw.orderType`
 
+### AI Quote Assistant (Phase 1a — 2026-06-23, branch `feat/ai-quote-phase1a`, รอ merge)
+> ดู design + decisions เต็ม: [`design-ai-quoting.md`](design-ai-quoting.md) §13. internal staff/sales tool เท่านั้น — **ยังไม่เปิด LINE channel** (Phase 1b).
+- `/quote-assistant` — staff chat ตีราคางานพิมพ์ด้วย AI (`requireSession(['admin','sales'])`). พิมพ์คำขอเป็นภาษาคน → AI สกัด spec → คืนราคาต่อชิ้น **ก่อน VAT** + offset/digital mode + การ์ด VAT. ปุ่ม "คัดลอกข้อความราคา" / "บันทึกเป็น lead".
+- `/quote-leads` — ตาราง lead จาก quote sessions + เปลี่ยน `lead_status` (ใหม่/กำลังติดตาม/ปิดการขาย/ไม่สนใจ) + หยิบงาน (`assigned_to`). reload persist.
+- **Pricing single source of truth**: tool `compute_quote` เรียก calc `POST /api/quote` (env `QUOTE_API_URL` + `QUOTE_API_TOKEN`) — ราคาตรงกับ calculator UI 100% (verify preview: brochure A4/4สี2หน้า/Art160/1000 = `5.048225 บาท/ชิ้น` ตรงเป๊ะ). AI emit ราคาเองไม่ได้ (บังคับผ่าน tool).
+- **Stack**: Claude Haiku 4.5 (`claude-haiku-4-5`) + prompt caching บน system block + **manual tool-use loop** (`MAX_TOOL_ROUNDS=6`, `lib/ai-quote/run.ts`).
+- **Scope (D8)**: auto-quote แค่ brochure/book/notebook (สูตร validated). กล่อง/ถุง + งานนอก 5 ประเภท → **escalate** (ไม่ตีราคา, บันทึก lead ให้ทีมขายตาม).
+- **Files**: `lib/ai-quote/{prompt,tools,run,db}.ts` · `app/api/ai-quote/route.ts` (+ `leads/`, `leads/[id]/`) · `app/quote-assistant/` · `app/quote-leads/` · Postgres `ai_quote_sessions` (lead store) + `ai_quotes` (db-migrate route).
+
 ---
 
 ## 6. Roadmap (v2 phases)
@@ -222,7 +236,10 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | 3.5.10 | ✅ | WP-parity card actions + inline order entry + drafts + templates UI |
 | 3.5.11 | ✅ | /orders /shipped /cancelled WP-parity + restore + tracking-card + /track public + audit close-out |
 | 2.3 (UI parity) | ✅ Stage A+B+C | DashboardShell + sidebar + KPI bar + filter chips + inline bulk |
-| 3.6 — Decommission WP | ⏳ | Future — switch DNS app.penprinting.co → Vercel after coexist period |
+| 3.6 — Decommission WP | ✅ | Cutover 2026-05-09 (DNS app.penprinting.co → Vercel; WP retired) |
+| AI Quoting 0 | ✅ | calc `/api/quote` pricing API (2026-06-17, repo penprinting-calc) |
+| AI Quoting 1a | ⏳ built + preview-verified + audited | In-dashboard AI Quote Assistant (branch `feat/ai-quote-phase1a`, **รอ merge + prod smoke**, 2026-06-23) |
+| AI Quoting 1b/1c | — | LINE OA channel · กล่อง/ถุง auto-quote (future, ดู design-ai-quoting.md) |
 
 ดูรายละเอียดเต็มใน [`../Tech-Roadmap-Status.md`](../Tech-Roadmap-Status.md).
 
@@ -295,12 +312,37 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | **/analytics First Load JS too big from recharts** (2026-05-07 afternoon, `1d6e57f`) | recharts (~110KB) bundled with /analytics page even though only admin opens it and not on first paint | `next/dynamic({ ssr: false })` lazy-load via `app/analytics/charts-lazy.tsx`. /analytics First Load: 295KB → 181KB (-39%). Same pattern applied to OrderForm + JobForm in /board card.tsx (modal chunks fetch on first ✏️ click). |
 | **/track v2 didn't match WP look** (2026-05-07 afternoon, `ce611b1` + `fe0b38e`) | Original v2 /track was minimal text + placeholder layout — customers used to WP's 6-step timeline saw a regression | Port WP page-track-order.php look: `currentDept` returned from `/api/track/lookup` so client positions step, white card on cream BG, 6-step vertical timeline (received → graphic → print → post → ready → shipped), pill badges with 5 variants, contact box with `tel:` link. Charcoal-only accents (no blue) for minimal mood; semantic colors retained for done/cancelled/overdue/received. |
 | **Apps Script payload included audit_log on every page render** (2026-05-07 afternoon, `3cb4501`) | `loadAll()` always returned `recentAudit` for /board and friends even though only /analytics consumed it | Apps Script `loadAll(opts?: { audit?: boolean })` (load.ts) + api.ts switch threads `e.parameter.audit !== '0'`. Default unchanged for backwards compat. Vercel `lib/api.ts` `loadAll()` passes `audit=0` (saves 50-100KB per call); new `loadAllWithAudit()` for /analytics. |
+| **AI tool-use loop persisted empty-text turn → bricked session** (AI Quote Phase 1a audit H1, 2026-06-23, `902d70a`) | `runQuoteTurn` อาจ persist assistant turn ที่ `text=''` (ชน `MAX_TOOL_ROUNDS` ขณะ `tool_use` / tool-use-only block / `max_tokens` stop). Anthropic API **reject empty text content block** → ทุก message ถัดไปใน session 400 พังถาวร | Fallback non-empty reply ก่อน persist ใน `lib/ai-quote/run.ts`. +2 regression test (`tests/ai-quote-run.test.ts`). Guard: assistant content ที่ persist ต้องไม่ว่าง |
+| **calc env "ตั้งแล้ว" แต่ไม่ redeploy = ไม่ live** (AI Quote Phase 1a smoke, 2026-06-23, calc `fd4f755`) | smoke เจอ `/api/ai-quote` คืน 500 "QUOTE_API_TOKEN not configured" — calc มี env ตั้งแต่ 6/20 (All Environments) แต่ production deploy ล่าสุด = `3edcfe1` (6/17, **ก่อน** มี token) → runtime อ่านไม่เจอ. note 6/20 "calc QUOTE_API_TOKEN ตั้งแล้ว ✅" = unverified claim | push empty commit `fd4f755` → calc auto-deploy production สด → token live (curl probe 500→401). Lesson: env var = live ต่อเมื่อมี deploy ใหม่ **หลัง** ตั้ง — verify ด้วย probe per host ([[feedback_omise_secret_roll_vm_sync]] + [[feedback_audit_backlog_hypothesis]]) |
 
 ---
 
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### AI Quote Assistant Phase 1a — built + preview-verified + audited (2026-06-23) 🤖
+
+> **Branch `feat/ai-quote-phase1a` — ยังไม่ merge main.** Pending = merge PR (Vercel auto prod-deploy) + 1 happy-path prod smoke + เคลียร์ test lead. Design/decisions: [`design-ai-quoting.md`](design-ai-quoting.md) §13 · audit: [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) (top entry).
+
+**Goal:** in-dashboard AI Quote Assistant ให้ทีม sales/admin ตีราคางานพิมพ์ (brochure/book/notebook) ผ่าน chat โดยราคามาจาก calc `/api/quote` ตัวเดียวกับ calculator UI (single source of truth, decision D2). internal tool — ยังไม่เปิด LINE (1b).
+
+**Tasks 1-10 build (2026-06-22, 10 commits `1424bfa`→`5d2de19`):** Postgres CRUD (`ai_quote_sessions` lead store + `ai_quotes`) · prompt (`lib/ai-quote/prompt.ts` — 5 product schema + รายการกระดาษ + กฎ "ห้ามเดาราคา/escalate กล่องถุง") · tools (`compute_quote` → fetch calc) · run loop (`lib/ai-quote/run.ts` — manual tool-use loop `MAX_TOOL_ROUNDS=6`, Haiku 4.5 + prompt caching) · API routes (`/api/ai-quote` + leads + leads/[id]) · 2 หน้า UI (`/quote-assistant` chat + `/quote-leads` table) + nav 2 เมนู (`adminOrSalesOnly`). **TDD** — +11 tests (148→159).
+
+**Reconcile (2026-06-23):** session 6/22 commit ผ่าน `--no-verify` ทิ้ง lint แดง + ไม่ push/doc. fix lint [`d773ea9`](https://github.com/witsarutnook/penprinting-dashboard/commit/d773ea9) (3× `no-explicit-any` ใน test → `unknown`-routed casts) → push branch. NEXT-SESSION reconcile [`8c23fe8`](https://github.com/witsarutnook/penprinting-dashboard/commit/8c23fe8). Lesson: [[feedback_session_discipline]] — context check จับ git ≠ doc mismatch.
+
+**Deploy + preview verify (2026-06-23):** ตั้ง env ครบ Vercel `penprinting-dashboard` (ANTHROPIC_API_KEY + QUOTE_API_URL + QUOTE_API_TOKEN, All Environments) + empty commit [`80d5c2a`](https://github.com/witsarutnook/penprinting-dashboard/commit/80d5c2a) trigger preview. **Preview smoke ผ่านครบ:** db-migrate (ai_quote_sessions + ai_quotes + idx, idempotent) · quote brochure A4/4สี2หน้า/Art160/1000 → **5.048225 บาท/ชิ้น ตรง calc เป๊ะ** + offset mode + VAT card · escalation (กล่อง → ไม่ตีราคา, escalate ทีมขาย D8) · lead flow (บันทึก→/quote-leads→เปลี่ยน status ปิดการขาย + หยิบงาน nook → reload persist) · auth admin (nook) เข้า 2 เมนู.
+
+**Calc-side fix (lesson):** smoke เจอ calc คืน 500 "QUOTE_API_TOKEN not configured" — env ตั้งใน calc ตั้งแต่ 6/20 แต่ production deploy ล่าสุด = `3edcfe1` (6/17, ก่อนมี token) → runtime อ่านไม่เจอ. push empty commit `fd4f755` → calc repo `penprinting-calc` main → auto-deploy production สด → token live (curl probe 500→401). **env var live ต่อเมื่อ deploy ใหม่หลังตั้ง** (ดู §9 row + [[feedback_omise_secret_roll_vm_sync]]).
+
+**Audit (penprinting-auditor) → fix 4 ตัวก่อน merge [`902d70a`](https://github.com/witsarutnook/penprinting-dashboard/commit/902d70a), +2 regression test (159→161):**
+- **H1 (High, session-brick)**: `runQuoteTurn` อาจ persist assistant turn `text=''` (ชน MAX_TOOL_ROUNDS ขณะ tool_use / tool-use-only / max_tokens stop) → Anthropic reject empty content block → ทุกข้อความถัดไปใน session 400 พังถาวร → fallback non-empty reply + 2 test.
+- **H2**: middleware matcher เพิ่ม `/quote-assistant` + `/quote-leads` (API self-guard ด้วย requireSession — ไม่ใส่ /api/* ตาม convention).
+- **M1**: เลิก echo calc error body ไป client → generic message + `console.error` ฝั่ง server.
+- **M2**: guard `message` เป็น non-empty string (non-string เคย throw 500) + cap 4000 chars.
+- **Deferred → AUDIT-BACKLOG open (Phase 1a internal-only, ปิดก่อนเปิด LINE)**: M3 (`markEscalated()` dead code + escalation lead ไม่ auto-escalate) · M4 (lead-claim race last-write-wins) · M5 (`loadSession` IDOR — ไม่ผูก owner) · Low (quote id=array index, comment typo, db-migrate row-count).
+
+**Gates ทุก commit เขียว Node 22:** type-check / lint "No issues found" / **161 tests** / build 40 หน้า. Lessons → §9 (empty-text turn bricks session · calc env unverified).
 
 ### Next 14→15 + React 18→19 migration + board hydration fix (2026-06-20) 🏁
 
