@@ -2,7 +2,7 @@
  * Shared nav config for sidebar (desktop) + bottom-nav (mobile).
  * Single source of truth so adding a section updates both at once.
  *
- * Mirrors WP sidebar groups: "การผลิต" (production) + "รายการ" (lists).
+ * Groups: "การผลิต" (production) + "AI Quote" (quoting assistant) + "รายการ" (lists).
  */
 
 import type { ComponentType, SVGProps } from 'react';
@@ -55,11 +55,16 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'AI Quote',
+    items: [
+      { href: '/quote-assistant', label: 'ผู้ช่วยตีราคา (AI)', icon: IconSparkles, adminOrSalesOnly: true },
+      { href: '/quote-leads', label: 'Lead ใบเสนอราคา', icon: IconClipboardList, adminOrSalesOnly: true },
+    ],
+  },
+  {
     label: 'รายการ',
     items: [
       { href: '/analytics', label: 'รายงาน', icon: IconTrendingUp, adminOnly: true },
-      { href: '/quote-assistant', label: 'ผู้ช่วยตีราคา (AI)', icon: IconSparkles, adminOrSalesOnly: true },
-      { href: '/quote-leads', label: 'Lead ใบเสนอราคา', icon: IconClipboardList, adminOrSalesOnly: true },
       { href: '/orders', label: 'รายการใบสั่งงาน', icon: IconClock, adminOrSalesOnly: true },
       { href: '/shipped', label: 'จัดส่งแล้ว', icon: IconTruck },
       { href: '/cancelled', label: 'รายการยกเลิก', icon: IconAlertCircle, adminOnly: true },
