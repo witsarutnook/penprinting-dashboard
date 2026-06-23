@@ -47,7 +47,7 @@ describe('runComputeQuote', () => {
   });
 
   it('tool definition only allows the 3 quotable product types', () => {
-    const pt = (COMPUTE_QUOTE_TOOL.input_schema as any).properties.productType.enum;
+    const pt = (COMPUTE_QUOTE_TOOL.input_schema as unknown as { properties: { productType: { enum: string[] } } }).properties.productType.enum;
     expect(pt).toEqual(['brochure', 'book', 'notebook']);
   });
 });

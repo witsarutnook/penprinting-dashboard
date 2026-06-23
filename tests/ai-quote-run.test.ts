@@ -1,11 +1,12 @@
 // tests/ai-quote-run.test.ts
 import { describe, it, expect, vi } from 'vitest';
+import type Anthropic from '@anthropic-ai/sdk';
 import { runQuoteTurn } from '@/lib/ai-quote/run';
 
 // Minimal fake Anthropic client: messages.create returns scripted responses.
-function fakeClient(responses: any[]) {
+function fakeClient(responses: unknown[]) {
   let i = 0;
-  return { messages: { create: vi.fn(async () => responses[i++]) } } as any;
+  return { messages: { create: vi.fn(async () => responses[i++]) } } as unknown as Anthropic;
 }
 
 const toolUseMsg = {
