@@ -81,10 +81,17 @@ export async function runQuoteTurn(
     messages.push({ role: 'user', content: toolResults });
   }
 
+  // Never persist an empty assistant turn: the Anthropic API rejects empty
+  // text content blocks, so an empty turn in history would 400 every later
+  // message and brick the whole session. Fall back to a retry prompt if the
+  // loop ended without text (MAX_TOOL_ROUNDS hit while still tool_use, or a
+  // tool-use-only / max_tokens stop with no text block).
+  const reply = replyText.trim() || 'ขออภัยค่ะ ระบบยังประมวลผลคำขอไม่เสร็จ — รบกวนพิมพ์คำขออีกครั้งนะคะ';
+
   const newHistory: ConversationTurn[] = [
     ...input.history,
     { role: 'user', text: input.userMessage },
-    { role: 'assistant', text: replyText },
+    { role: 'assistant', text: reply },
   ];
-  return { reply: replyText, quotes, newHistory };
+  return { reply, quotes, newHistory };
 }

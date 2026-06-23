@@ -61,4 +61,34 @@ describe('runQuoteTurn', () => {
     expect(out.reply).toContain('จำนวน');
     expect(out.quotes).toHaveLength(0);
   });
+
+  // Regression (audit H1): an empty assistant turn would brick the whole
+  // session — the Anthropic API rejects empty text content blocks, so every
+  // later message re-sending it 400s. reply + persisted turn must never be ''.
+  it('never persists an empty assistant turn when the model stops with no text', async () => {
+    const client = fakeClient([{ stop_reason: 'end_turn', content: [] }]);
+    const out = await runQuoteTurn(
+      { history: [], userMessage: 'x' },
+      { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'claude-haiku-4-5' },
+    );
+    expect(out.reply.trim()).not.toBe('');                                   // fallback, not empty
+    const lastTurn = out.newHistory[out.newHistory.length - 1];
+    expect(lastTurn.role).toBe('assistant');
+    expect(lastTurn.text.trim()).not.toBe('');                               // empty turn never persisted
+  });
+
+  it('caps at MAX_TOOL_ROUNDS and still returns a non-empty fallback reply', async () => {
+    // Model loops tool_use with no text block forever; the loop must cap.
+    const toolOnly = { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 'tu', name: 'compute_quote', input: { productType: 'brochure', spec: {} } },
+    ] };
+    const client = fakeClient(Array(10).fill(toolOnly));
+    const compute = vi.fn().mockResolvedValue({ ok: true, productType: 'brochure', spec: {}, result: { mode: 'offset', unitPrice: 1 } });
+    const out = await runQuoteTurn(
+      { history: [], userMessage: 'x' },
+      { client, compute, systemPrompt: 'SYS', model: 'claude-haiku-4-5' },
+    );
+    expect(client.messages.create).toHaveBeenCalledTimes(6);                 // MAX_TOOL_ROUNDS cap
+    expect(out.reply.trim()).not.toBe('');                                   // fallback
+  });
 });

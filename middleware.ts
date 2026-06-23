@@ -33,5 +33,7 @@ export const config = {
     '/orders/:path*',
     '/shipped/:path*',
     '/cancelled/:path*',
+    '/quote-assistant/:path*',
+    '/quote-leads/:path*',
   ],
 };

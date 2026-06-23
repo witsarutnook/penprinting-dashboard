@@ -27,7 +27,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   let body: AiQuoteRequest;
   try { body = (await req.json()) as AiQuoteRequest; } catch { return NextResponse.json({ error: 'invalid JSON' }, { status: 400 }); }
-  if (!body.message?.trim()) return NextResponse.json({ error: 'message ว่าง' }, { status: 400 });
+  if (typeof body.message !== 'string' || !body.message.trim()) {
+    return NextResponse.json({ error: 'message ว่างหรือไม่ถูกต้อง' }, { status: 400 });
+  }
+  const userMessage = body.message.trim().slice(0, 4000);  // cap length (cost/timeout guard)
 
   const sess = body.sessionId ? await loadSession(body.sessionId) : await createSession();
   if (!sess) return NextResponse.json({ error: 'ไม่พบ session' }, { status: 404 });
@@ -36,12 +39,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let out;
   try {
     out = await runQuoteTurn(
-      { history: sess.conversation, userMessage: body.message },
+      { history: sess.conversation, userMessage },
       { client, compute: (inp) => runComputeQuote(inp, { url: quoteUrl, token: quoteToken }), systemPrompt: buildSystemPrompt(), model: MODEL },
     );
   } catch (err) {
+    // Log full detail server-side (Sentry/console); never echo backend error
+    // bodies (e.g. calc response) to the staff client.
     const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `คิดราคาไม่สำเร็จ: ${msg}` }, { status: 502 });
+    console.error('[ai-quote] compute turn failed:', msg);
+    return NextResponse.json({ error: 'คิดราคาไม่สำเร็จ (ระบบขัดข้อง) — รบกวนลองใหม่ หรือแจ้งแอดมิน' }, { status: 502 });
   }
 
   // Persist: conversation + any quotes. Escalation lead-status is NOT auto-set
