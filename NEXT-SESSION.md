@@ -12,7 +12,7 @@
 > - **Docs updated**: dashboard-v2.md (routes + API table + features + roadmap + §9 lessons + Version History Phase 1a entry) · AUDIT-BACKLOG.md (top entry + M3/M4/M5 + Low open) · design-ai-quoting.md (Phase 1a ✅) · NEXT-SESSION (this). Gates ทุก commit เขียว Node 22 (type-check / lint / 161 tests / build 40 หน้า).
 >
 > ## ⏳ Pending — เหลือแค่ merge + prod smoke (ของที่ parent/คุณนุ๊กทำ)
-> 1. **Merge PR `feat/ai-quote-phase1a` → main** (parent จะเปิด PR เอง) → Vercel auto prod-deploy. branch ยังไม่ merge (ตั้งใจ — tool ที่ staff ใช้จริง ผ่าน preview ก่อน เหมือน Next 15 migration)
+> 1. **Merge PR [#2](https://github.com/witsarutnook/penprinting-dashboard/pull/2) `feat/ai-quote-phase1a` → main** — **PR เปิดแล้ว, คุณนุ๊กจะ merge พรุ่งนี้ (2026-06-24)** (hold วันนี้ไว้ก่อน) → Vercel auto prod-deploy. branch ยังไม่ merge (ตั้งใจ — staff tool ผ่าน preview ก่อน เหมือน Next 15). รวม nav [`39d85333`](https://github.com/witsarutnook/penprinting-dashboard/commit/39d85333) (sidebar group ใหม่ "AI Quote" แยก 2 เมนูออกจาก "รายการ" — verified ด้วยตาบน preview)
 > 2. **1 happy-path prod smoke** หลัง deploy: เข้า /quote-assistant (admin/sales) → ตีราคา brochure 1 ใบ → เทียบ calc → บันทึก lead → /quote-leads เห็น lead
 > 3. **เคลียร์ test lead "ทดสอบ Smoke 23/6"** ที่ค้างจาก preview smoke (อยู่ใน `ai_quote_sessions`)
 > 4. **(soak) Dashboard Next 15** — เฝ้า Sentry ถึง **2026-06-27** (migration 6/20). scheduled check `dashboard-next15-soak-end-check` จะเตือน
