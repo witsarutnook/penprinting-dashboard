@@ -1,7 +1,7 @@
 // tests/ai-quote-run.test.ts
 import { describe, it, expect, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { runQuoteTurn } from '@/lib/ai-quote/run';
+import { runQuoteTurn, detectEscalation } from '@/lib/ai-quote/run';
 
 // Minimal fake Anthropic client: messages.create returns scripted responses.
 function fakeClient(responses: unknown[]) {
@@ -90,5 +90,44 @@ describe('runQuoteTurn', () => {
     );
     expect(client.messages.create).toHaveBeenCalledTimes(6);                 // MAX_TOOL_ROUNDS cap
     expect(out.reply.trim()).not.toBe('');                                   // fallback
+  });
+
+  // Audit M3: escalation must be wired off one source of truth so the route
+  // can flag the lead "ต้องประเมินเอง". A successful quote turn never escalates;
+  // a no-quote hand-off does.
+  it('flags escalated on a no-quote hand-off reply', async () => {
+    const client = fakeClient([{ stop_reason: 'end_turn', content: [
+      { type: 'text', text: 'งานกล่องรบกวนให้ทีมงานประเมินราคาให้นะคะ' },
+    ] }]);
+    const out = await runQuoteTurn(
+      { history: [], userMessage: 'ทำกล่อง 500 ใบ' },
+      { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'claude-haiku-4-5' },
+    );
+    expect(out.quotes).toHaveLength(0);
+    expect(out.escalated).toBe(true);
+  });
+
+  it('does not flag escalated when a quote was produced', async () => {
+    const client = fakeClient([toolUseMsg, finalMsg]);
+    const compute = vi.fn().mockResolvedValue({ ok: true, productType: 'brochure', spec: {}, result: { mode: 'offset', unitPrice: 5 } });
+    const out = await runQuoteTurn(
+      { history: [], userMessage: 'โบรชัวร์' },
+      { client, compute, systemPrompt: 'SYS', model: 'claude-haiku-4-5' },
+    );
+    expect(out.quotes).toHaveLength(1);
+    expect(out.escalated).toBe(false);
+  });
+});
+
+describe('detectEscalation', () => {
+  it('true only when there is no quote AND the reply uses hand-off wording', () => {
+    expect(detectEscalation(0, 'รบกวนให้ทีมงานช่วยดูให้นะคะ')).toBe(true);
+    expect(detectEscalation(0, 'ขอประเมินราคาเพิ่มเติมก่อนนะคะ')).toBe(true);
+  });
+  it('false when a quote exists, even with hand-off wording', () => {
+    expect(detectEscalation(1, 'ให้ทีมงานยืนยันอีกครั้งนะคะ')).toBe(false);
+  });
+  it('false when no quote but the reply is an ordinary clarifying question', () => {
+    expect(detectEscalation(0, 'ขอจำนวนกี่ใบคะ')).toBe(false);
   });
 });

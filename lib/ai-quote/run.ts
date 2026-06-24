@@ -25,7 +25,16 @@ export interface ProducedQuote {
 export interface RunQuoteTurnOutput {
   reply: string;
   quotes: ProducedQuote[];
+  escalated: boolean;              // model handed off (no quote + handoff wording)
   newHistory: ConversationTurn[];  // history + this user turn + this assistant turn
+}
+
+/** Did this turn escalate to the sales team rather than quote? Heuristic:
+ *  no compute_quote succeeded AND the reply uses handoff wording. Pure +
+ *  exported so the route can wire the lead-status badge off one source of
+ *  truth (audit M3) and tests can pin the trigger. */
+export function detectEscalation(quoteCount: number, reply: string): boolean {
+  return quoteCount === 0 && /ทีมงาน|ประเมินราคา/.test(reply);
 }
 
 /** Map our stored history to Anthropic message params (text-only turns). */
@@ -93,5 +102,5 @@ export async function runQuoteTurn(
     { role: 'user', text: input.userMessage },
     { role: 'assistant', text: reply },
   ];
-  return { reply, quotes, newHistory };
+  return { reply, quotes, escalated: detectEscalation(quotes.length, reply), newHistory };
 }

@@ -5,7 +5,7 @@ import { requireSession } from '@/lib/route-helpers';
 import { runQuoteTurn } from '@/lib/ai-quote/run';
 import { runComputeQuote } from '@/lib/ai-quote/tools';
 import { buildSystemPrompt } from '@/lib/ai-quote/prompt';
-import { createSession, loadSession, saveConversation, saveQuote } from '@/lib/ai-quote/db';
+import { createSession, loadSession, saveConversation, saveQuote, markEscalated } from '@/lib/ai-quote/db';
 import type { AiQuoteRequest, AiQuoteResponse } from '@/lib/ai-quote/types';
 
 export const runtime = 'nodejs';
@@ -50,11 +50,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'คิดราคาไม่สำเร็จ (ระบบขัดข้อง) — รบกวนลองใหม่ หรือแจ้งแอดมิน' }, { status: 502 });
   }
 
-  // Persist: conversation + any quotes. Escalation lead-status is NOT auto-set
-  // here — heuristic detection of "the model handed off" is unreliable, so
-  // staff set it on /quote-leads. We only surface an `escalated` hint flag.
+  // Persist: conversation + any quotes. On an escalation hand-off (no quote +
+  // handoff wording, see detectEscalation) flag the lead so the sales team can
+  // tell "needs manual pricing" leads apart from fresh ones on /quote-leads
+  // (audit M3). markEscalated only promotes a still-'ใหม่' lead, so it never
+  // clobbers a status a human already set.
   await saveConversation(sess.id, out.newHistory);
   for (const q of out.quotes) await saveQuote(sess.id, q);
+  if (out.escalated) await markEscalated(sess.id);
 
   const resp: AiQuoteResponse = {
     sessionId: sess.id,
@@ -62,7 +65,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     quotes: out.quotes.map((q, i) => ({
       id: i, sessionId: sess.id, productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice, createdAt: new Date().toISOString(),
     })),
-    escalated: out.quotes.length === 0 && /ทีมงาน|ประเมินราคา/.test(out.reply),
+    escalated: out.escalated,
   };
   return NextResponse.json(resp);
 }

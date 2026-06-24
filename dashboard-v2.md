@@ -212,10 +212,11 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - QR in header right panel (60×60, white background, links to `/track?id=...`)
 - Photobook + normal mode templates branch on `raw.orderType`
 
-### AI Quote Assistant (Phase 1a — 2026-06-23, branch `feat/ai-quote-phase1a`, รอ merge)
+### AI Quote Assistant (Phase 1a — shipped 2026-06-24, `91d8dc8` + FAB `66d0286`)
 > ดู design + decisions เต็ม: [`design-ai-quoting.md`](design-ai-quoting.md) §13. internal staff/sales tool เท่านั้น — **ยังไม่เปิด LINE channel** (Phase 1b).
 - `/quote-assistant` — staff chat ตีราคางานพิมพ์ด้วย AI (`requireSession(['admin','sales'])`). พิมพ์คำขอเป็นภาษาคน → AI สกัด spec → คืนราคาต่อชิ้น **ก่อน VAT** + offset/digital mode + การ์ด VAT. ปุ่ม "คัดลอกข้อความราคา" / "บันทึกเป็น lead".
-- `/quote-leads` — ตาราง lead จาก quote sessions + เปลี่ยน `lead_status` (ใหม่/กำลังติดตาม/ปิดการขาย/ไม่สนใจ) + หยิบงาน (`assigned_to`). reload persist.
+- **Floating FAB widget** (`components/ai-quote-widget.tsx`, 2026-06-24 `66d0286`) — ปุ่มลอยมุมขวาล่างแบบแชต PEAK Support เปิด AI Quote เป็น popup panel ได้ทุกหน้า dashboard. reuse `QuoteAssistantClient` โหมด `compact`, mount ใน `DashboardShell` **gate `role === 'admin'`**, ซ่อนบน `/quote-assistant` (กันแชตซ้อน), `z-40`, Esc ปิด, responsive (มือถือ near-full-width / desktop panel 400px).
+- `/quote-leads` — ตาราง lead จาก quote sessions + เปลี่ยน `lead_status` (ใหม่/กำลังติดตาม/ปิดการขาย/ไม่สนใจ/**ต้องประเมินเอง**=escalated/ถูกทิ้ง=abandoned) + หยิบงาน (`assigned_to`, race-safe 409). escalation lead มี badge ส้ม "⚠ ต้องประเมินเอง". reload persist.
 - **Pricing single source of truth**: tool `compute_quote` เรียก calc `POST /api/quote` (env `QUOTE_API_URL` + `QUOTE_API_TOKEN`) — ราคาตรงกับ calculator UI 100% (verify preview: brochure A4/4สี2หน้า/Art160/1000 = `5.048225 บาท/ชิ้น` ตรงเป๊ะ). AI emit ราคาเองไม่ได้ (บังคับผ่าน tool).
 - **Stack**: Claude Haiku 4.5 (`claude-haiku-4-5`) + prompt caching บน system block + **manual tool-use loop** (`MAX_TOOL_ROUNDS=6`, `lib/ai-quote/run.ts`).
 - **Scope (D8)**: auto-quote แค่ brochure/book/notebook (สูตร validated). กล่อง/ถุง + งานนอก 5 ประเภท → **escalate** (ไม่ตีราคา, บันทึก lead ให้ทีมขายตาม).
@@ -321,6 +322,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### AI Quote — Floating FAB widget + audit M3/M4 (2026-06-24) 🤖
+
+> **PR [#4](https://github.com/witsarutnook/penprinting-dashboard/pull/4) squash → [`66d0286`](https://github.com/witsarutnook/penprinting-dashboard/commit/66d0286)** (หลัง Phase 1a merge `91d8dc8`).
+
+ต่อจาก Phase 1a merge. คุณนุ๊กรายงาน "AI quote widget ไม่ขึ้น" บน iPad → **diagnose: FAB ไม่เคยถูก build** (ค้างขั้น brainstorm) ไม่ใช่บั๊ก PWA. **(1) Build FAB widget** `components/ai-quote-widget.tsx` 🆕 — ปุ่มลอยมุมขวาล่างเปิด AI Quote เป็น popup panel ได้ทุกหน้า, reuse `QuoteAssistantClient` โหมด `compact` (prop ใหม่ — conversation 52vh→44vh + ตัด intro), mount ใน `DashboardShell` gate `role === 'admin'`, ซ่อนบน `/quote-assistant`, z-40, Esc ปิด. **Preview-verified iPad** (ใบปลิว 5000 → 1.58 บาท/ชิ้น offset + assume-and-disclose). **(2) Audit M3/M4** (gate Phase 1b): **M3** wire escalation — pure `detectEscalation(quoteCount, reply)` ใน run.ts → `out.escalated` → route `markEscalated` (เลิก dead code) + `/quote-leads` STATUS_LABEL 'escalated'→"ต้องประเมินเอง" + badge ส้ม · **M4** `claimLead` conditional UPDATE + 409 race-safe หยิบงาน. **M5 (loadSession IDOR) คงเปิด — ตั้งใจ** (shared inbox 1a; ปิดพร้อม Phase 1b LINE identity). +5 test (170→**175**). Gates เขียว Node 22. **Lesson**: "ไม่ขึ้น" = "ยังไม่สร้าง" ไม่ใช่ "พัง" — grep หา component จริงก่อน diagnose env/PWA.
 
 ### AI Quote prompt-tuning — assume-and-disclose defaults (2026-06-24) 🤖
 

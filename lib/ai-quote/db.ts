@@ -68,6 +68,17 @@ export async function listLeads(): Promise<LeadRow[]> {
   });
 }
 
+/** Claim a lead atomically (audit M4). Conditional on `assigned_to IS NULL`
+ *  so two staff racing to "หยิบงาน" can't silently overwrite each other —
+ *  returns false when someone already holds it (route → 409). */
+export async function claimLead(id: number, user: string): Promise<boolean> {
+  const { rowCount } = await sql`
+    UPDATE ai_quote_sessions
+       SET assigned_to = ${user}, updated_at = NOW()
+     WHERE id = ${id} AND assigned_to IS NULL`;
+  return (rowCount ?? 0) > 0;
+}
+
 export async function updateLead(
   id: number, patch: { leadStatus?: LeadStatus; assignedTo?: string | null; customerName?: string | null; customerContact?: string | null },
 ): Promise<void> {

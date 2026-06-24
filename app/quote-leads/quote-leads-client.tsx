@@ -6,6 +6,18 @@ import type { LeadRow, LeadStatus } from '@/lib/ai-quote/types';
 
 const STATUSES: LeadStatus[] = ['ใหม่', 'กำลังติดตาม', 'ปิดการขาย', 'ไม่สนใจ', 'escalated', 'abandoned'];
 
+// Thai display labels for the two enum values that are stored in English
+// (audit M3 — "escalated" leads need to read as "ต้องประเมินเอง" so the
+// sales team can tell hand-off leads apart from fresh ones at a glance).
+const STATUS_LABEL: Record<LeadStatus, string> = {
+  'ใหม่': 'ใหม่',
+  'กำลังติดตาม': 'กำลังติดตาม',
+  'ปิดการขาย': 'ปิดการขาย',
+  'ไม่สนใจ': 'ไม่สนใจ',
+  'escalated': 'ต้องประเมินเอง',
+  'abandoned': 'ถูกทิ้ง',
+};
+
 // Colour-code the status select by its current value (board-style tints).
 const STATUS_CLASS: Record<LeadStatus, string> = {
   'ใหม่': 'bg-sky-50 text-sky-700 border-sky-200',
@@ -69,6 +81,7 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
     } catch (err) {
       setLeads(prev);
       setError(err instanceof Error ? err.message : String(err));
+      void load(); // 409 = someone else claimed it — refresh to show the real owner
     }
   }
 
@@ -106,7 +119,14 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                   <tr key={l.id} className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50">
                     <td className="px-3 py-2.5 tabular-nums text-stone-400">{l.id}</td>
                     <td className="px-3 py-2.5">
-                      <div className="font-medium text-stone-800">{l.customerName || '—'}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-stone-800">{l.customerName || '—'}</span>
+                        {l.leadStatus === 'escalated' && (
+                          <span className="inline-flex items-center rounded-md bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 ring-1 ring-orange-200">
+                            ⚠ ต้องประเมินเอง
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-stone-400">{l.customerContact || '—'}</div>
                     </td>
                     <td className="px-3 py-2.5 max-w-[18rem]">
@@ -120,7 +140,7 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                         className={`px-2 py-1 rounded-lg border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-accent/20 ${STATUS_CLASS[l.leadStatus] ?? 'bg-white border-stone-200'}`}
                       >
                         {STATUSES.map((s) => (
-                          <option key={s} value={s}>{s}</option>
+                          <option key={s} value={s}>{STATUS_LABEL[s]}</option>
                         ))}
                       </select>
                     </td>
