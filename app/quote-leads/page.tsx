@@ -21,7 +21,7 @@ export default async function QuoteLeadsPage() {
         </div>
       </header>
       <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto">
-        <QuoteLeadsClient currentUser={session.user} />
+        <QuoteLeadsClient currentUser={session.user} currentRole={session.role} />
       </div>
     </DashboardShell>
   );

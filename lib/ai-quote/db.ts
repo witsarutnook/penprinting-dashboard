@@ -68,6 +68,12 @@ export async function listLeads(): Promise<LeadRow[]> {
   });
 }
 
+/** Hard-delete a lead (its ai_quotes rows go too via ON DELETE CASCADE).
+ *  Admin-only at the route — used to clear test/junk sessions. */
+export async function deleteLead(id: number): Promise<void> {
+  await sql`DELETE FROM ai_quote_sessions WHERE id = ${id}`;
+}
+
 /** Claim a lead atomically (audit M4). Conditional on `assigned_to IS NULL`
  *  so two staff racing to "หยิบงาน" can't silently overwrite each other —
  *  returns false when someone already holds it (route → 409). */

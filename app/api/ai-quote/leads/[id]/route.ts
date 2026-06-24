@@ -1,7 +1,7 @@
 // app/api/ai-quote/leads/[id]/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
-import { claimLead, updateLead } from '@/lib/ai-quote/db';
+import { claimLead, updateLead, deleteLead } from '@/lib/ai-quote/db';
 import type { LeadStatus } from '@/lib/ai-quote/types';
 
 export const runtime = 'nodejs';
@@ -35,5 +35,17 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       customerContact: body.customerContact,
     });
   }
+  return NextResponse.json({ ok: true });
+}
+
+// Hard-delete a lead (clear test/junk sessions). Destructive → admin only,
+// matching the /api/jobs/delete convention. ai_quotes rows cascade-delete.
+export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: string }> }): Promise<NextResponse> {
+  const session = await requireSession(['admin']);
+  if (session instanceof NextResponse) return session;
+  const { id } = await props.params;
+  const sid = Number(id);
+  if (!sid) return NextResponse.json({ error: 'bad id' }, { status: 400 });
+  await deleteLead(sid);
   return NextResponse.json({ ok: true });
 }

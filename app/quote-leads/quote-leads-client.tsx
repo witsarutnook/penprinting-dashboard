@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { displayDateTime } from '@/lib/jobs';
+import { useConfirm } from '@/components/confirm-provider';
+import { IconTrash } from '@/lib/icons';
 import type { LeadRow, LeadStatus } from '@/lib/ai-quote/types';
 
 const STATUSES: LeadStatus[] = ['ใหม่', 'กำลังติดตาม', 'ปิดการขาย', 'ไม่สนใจ', 'escalated', 'abandoned'];
@@ -28,10 +30,12 @@ const STATUS_CLASS: Record<LeadStatus, string> = {
   'abandoned': 'bg-stone-100 text-stone-400 border-stone-200',
 };
 
-export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
+export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: string; currentRole: string }) {
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { confirm } = useConfirm();
+  const isAdmin = currentRole === 'admin';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,6 +89,29 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
     }
   }
 
+  async function onDelete(id: number) {
+    const ok = await confirm({
+      title: `ลบ lead #${id}?`,
+      message: 'ลบถาวร กู้คืนไม่ได้ — รวมราคาที่คิดไว้ในนี้ทั้งหมด',
+      variant: 'danger',
+      okLabel: 'ลบ',
+      cancelLabel: 'ยกเลิก',
+    });
+    if (!ok) return;
+    const prev = leads;
+    setLeads((ls) => ls.filter((l) => l.id !== id)); // optimistic
+    try {
+      const res = await fetch(`/api/ai-quote/leads/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(d.error || `ลบไม่สำเร็จ (${res.status})`);
+      }
+    } catch (err) {
+      setLeads(prev); // rollback
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div className="space-y-4">
       {error && (
@@ -112,6 +139,7 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                   <th className="px-3 py-2.5 font-medium">สถานะ</th>
                   <th className="px-3 py-2.5 font-medium">ผู้ดูแล</th>
                   <th className="px-3 py-2.5 font-medium whitespace-nowrap">อัปเดต</th>
+                  {isAdmin && <th className="px-3 py-2.5 font-medium" aria-label="ลบ" />}
                 </tr>
               </thead>
               <tbody>
@@ -160,6 +188,18 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-stone-400 tabular-nums">
                       {displayDateTime(l.updatedAt)}
                     </td>
+                    {isAdmin && (
+                      <td className="px-3 py-2.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void onDelete(l.id)}
+                          aria-label={`ลบ lead ${l.id}`}
+                          className="p-1.5 rounded-lg text-stone-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <IconTrash size={16} />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
