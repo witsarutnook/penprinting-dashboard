@@ -3,6 +3,7 @@ import { BottomNav } from './bottom-nav';
 import { MobileUserMenu } from './mobile-user-menu';
 import { ToastProvider } from './toast-provider';
 import { ConfirmProvider } from './confirm-provider';
+import { AiQuoteWidget } from './ai-quote-widget';
 
 interface ShellProps {
   user: string;
@@ -40,6 +41,8 @@ export function DashboardShell({ user, role, children }: ShellProps) {
           <main id="main-content" tabIndex={-1} className="md:pl-[220px] pb-20 md:pb-0 outline-none">
             {children}
           </main>
+          {/* Floating AI-quote assistant — admin only for now */}
+          {role === 'admin' && <AiQuoteWidget />}
         </div>
       </ConfirmProvider>
     </ToastProvider>
