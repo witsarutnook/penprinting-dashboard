@@ -29,6 +29,28 @@ export interface RunQuoteTurnOutput {
   newHistory: ConversationTurn[];  // history + this user turn + this assistant turn
 }
 
+/** No-auto-save rule: a turn is persisted ONLY when a session already exists
+ *  (escalation/explicit save earlier) or the model escalated this turn (must
+ *  not lose a hand-off). Plain quote chats stay unsaved until staff saves. */
+export function shouldPersistTurn(hasSession: boolean, escalated: boolean): boolean {
+  return hasSession || escalated;
+}
+
+/** Clamp a client-supplied conversation to safe bounds before replaying it to
+ *  the model (the client owns history now — don't trust its size/shape). Keeps
+ *  the last MAX turns, drops malformed entries, caps each text. */
+export function sanitizeHistory(input: unknown, maxTurns = 40, maxLen = 4000): ConversationTurn[] {
+  if (!Array.isArray(input)) return [];
+  const turns: ConversationTurn[] = [];
+  for (const t of input) {
+    if (!t || typeof t !== 'object') continue;
+    const { role, text } = t as { role?: unknown; text?: unknown };
+    if ((role !== 'user' && role !== 'assistant') || typeof text !== 'string' || !text.trim()) continue;
+    turns.push({ role, text: text.slice(0, maxLen) });
+  }
+  return turns.slice(-maxTurns);
+}
+
 /** Did this turn escalate to the sales team rather than quote? Heuristic:
  *  no compute_quote succeeded AND the reply uses handoff wording. Pure +
  *  exported so the route can wire the lead-status badge off one source of

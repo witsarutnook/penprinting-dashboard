@@ -29,6 +29,21 @@ export async function createSession(): Promise<AiQuoteSession> {
   return rowToSession(rows[0]);
 }
 
+/** Explicit "save as lead" (no-auto-save) — create a session straight to
+ *  'กำลังติดตาม' with the full chat + customer info. Quotes are saved by the
+ *  caller via saveQuote. Returns the new session id. */
+export async function createLead(input: {
+  conversation: ConversationTurn[];
+  customerName?: string | null;
+  customerContact?: string | null;
+}): Promise<number> {
+  const { rows } = await sql`
+    INSERT INTO ai_quote_sessions (channel, conversation, lead_status, customer_name, customer_contact)
+    VALUES ('dashboard', ${JSON.stringify(input.conversation)}::jsonb, 'กำลังติดตาม', ${input.customerName ?? null}, ${input.customerContact ?? null})
+    RETURNING id`;
+  return Number(rows[0].id);
+}
+
 export async function loadSession(id: number): Promise<AiQuoteSession | null> {
   const { rows } = await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id}`;
   return rows[0] ? rowToSession(rows[0]) : null;

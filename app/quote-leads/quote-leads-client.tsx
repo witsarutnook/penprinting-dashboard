@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { displayDateTime } from '@/lib/jobs';
 import { useConfirm } from '@/components/confirm-provider';
 import { IconTrash } from '@/lib/icons';
@@ -36,6 +36,8 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
   const [error, setError] = useState<string | null>(null);
   const { confirm } = useConfirm();
   const isAdmin = currentRole === 'admin';
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const colSpan = isAdmin ? 8 : 7;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,7 +146,8 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
               </thead>
               <tbody>
                 {leads.map((l) => (
-                  <tr key={l.id} className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50">
+                  <Fragment key={l.id}>
+                  <tr className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50">
                     <td className="px-3 py-2.5 tabular-nums text-stone-400">{l.id}</td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1.5">
@@ -158,7 +161,15 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                       <div className="text-xs text-stone-400">{l.customerContact || '—'}</div>
                     </td>
                     <td className="px-3 py-2.5 max-w-[18rem]">
-                      <div className="text-stone-600 truncate">{l.lastMessage || '—'}</div>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId((cur) => (cur === l.id ? null : l.id))}
+                        className="text-left text-stone-600 hover:text-accent w-full truncate"
+                        title="กดเพื่อดูบทสนทนาทั้งหมด"
+                      >
+                        {l.conversation.length > 0 ? (expandedId === l.id ? '▾ ' : '▸ ') : ''}
+                        {l.lastMessage || '—'}
+                      </button>
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums text-stone-500">{l.quoteCount}</td>
                     <td className="px-3 py-2.5">
@@ -201,6 +212,30 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                       </td>
                     )}
                   </tr>
+                  {expandedId === l.id && (
+                    <tr className="bg-stone-50/60">
+                      <td colSpan={colSpan} className="px-3 pb-3 pt-0">
+                        <div className="rounded-xl border border-stone-200 bg-white p-3 space-y-2 max-h-80 overflow-y-auto">
+                          {l.conversation.length === 0 ? (
+                            <div className="text-xs text-stone-400">ไม่มีบทสนทนา</div>
+                          ) : (
+                            l.conversation.map((m, i) => (
+                              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div
+                                  className={`max-w-[80%] rounded-2xl px-3 py-2 text-xs whitespace-pre-wrap break-words ${
+                                    m.role === 'user' ? 'bg-accent text-white rounded-br-sm' : 'bg-stone-100 text-stone-800 rounded-bl-sm'
+                                  }`}
+                                >
+                                  {m.text}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

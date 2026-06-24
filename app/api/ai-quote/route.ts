@@ -2,7 +2,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireSession } from '@/lib/route-helpers';
-import { runQuoteTurn } from '@/lib/ai-quote/run';
+import { runQuoteTurn, sanitizeHistory, shouldPersistTurn } from '@/lib/ai-quote/run';
 import { runComputeQuote } from '@/lib/ai-quote/tools';
 import { buildSystemPrompt } from '@/lib/ai-quote/prompt';
 import { createSession, loadSession, saveConversation, saveQuote, markEscalated } from '@/lib/ai-quote/db';
@@ -32,14 +32,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   const userMessage = body.message.trim().slice(0, 4000);  // cap length (cost/timeout guard)
 
-  const sess = body.sessionId ? await loadSession(body.sessionId) : await createSession();
-  if (!sess) return NextResponse.json({ error: 'ไม่พบ session' }, { status: 404 });
+  // Stateless chat (no-auto-save): if a session already exists (escalation or
+  // explicit save earlier) load its authoritative history; otherwise replay
+  // the client-owned history. Nothing is created here for a plain chat.
+  let sess = body.sessionId ? await loadSession(body.sessionId) : null;
+  if (body.sessionId && !sess) return NextResponse.json({ error: 'ไม่พบ session' }, { status: 404 });
+  const history = sess ? sess.conversation : sanitizeHistory(body.history);
 
   const client = new Anthropic({ apiKey });
   let out;
   try {
     out = await runQuoteTurn(
-      { history: sess.conversation, userMessage },
+      { history, userMessage },
       { client, compute: (inp) => runComputeQuote(inp, { url: quoteUrl, token: quoteToken }), systemPrompt: buildSystemPrompt(), model: MODEL },
     );
   } catch (err) {
@@ -50,20 +54,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'คิดราคาไม่สำเร็จ (ระบบขัดข้อง) — รบกวนลองใหม่ หรือแจ้งแอดมิน' }, { status: 502 });
   }
 
-  // Persist: conversation + any quotes. On an escalation hand-off (no quote +
-  // handoff wording, see detectEscalation) flag the lead so the sales team can
-  // tell "needs manual pricing" leads apart from fresh ones on /quote-leads
-  // (audit M3). markEscalated only promotes a still-'ใหม่' lead, so it never
-  // clobbers a status a human already set.
-  await saveConversation(sess.id, out.newHistory);
-  for (const q of out.quotes) await saveQuote(sess.id, q);
-  if (out.escalated) await markEscalated(sess.id);
+  // Persist ONLY when a session already exists or the model escalated this
+  // turn (no-auto-save — plain quote chats aren't saved until staff clicks
+  // "save lead"). Escalations are auto-saved + flagged so the sales team never
+  // misses a hand-off; markEscalated only promotes a still-'ใหม่' lead so it
+  // never clobbers a status a human set.
+  if (shouldPersistTurn(sess !== null, out.escalated)) {
+    if (!sess) sess = await createSession();
+    await saveConversation(sess.id, out.newHistory);
+    for (const q of out.quotes) await saveQuote(sess.id, q);
+    if (out.escalated) await markEscalated(sess.id);
+  }
 
+  const sessionId = sess?.id ?? null;
   const resp: AiQuoteResponse = {
-    sessionId: sess.id,
+    sessionId,
     reply: out.reply,
     quotes: out.quotes.map((q, i) => ({
-      id: i, sessionId: sess.id, productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice, createdAt: new Date().toISOString(),
+      id: i, sessionId: sessionId ?? 0, productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice, createdAt: new Date().toISOString(),
     })),
     escalated: out.escalated,
   };

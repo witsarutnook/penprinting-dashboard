@@ -1,7 +1,7 @@
 // tests/ai-quote-run.test.ts
 import { describe, it, expect, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { runQuoteTurn, detectEscalation } from '@/lib/ai-quote/run';
+import { runQuoteTurn, detectEscalation, shouldPersistTurn, sanitizeHistory } from '@/lib/ai-quote/run';
 
 // Minimal fake Anthropic client: messages.create returns scripted responses.
 function fakeClient(responses: unknown[]) {
@@ -129,5 +129,35 @@ describe('detectEscalation', () => {
   });
   it('false when no quote but the reply is an ordinary clarifying question', () => {
     expect(detectEscalation(0, 'ขอจำนวนกี่ใบคะ')).toBe(false);
+  });
+});
+
+// No-auto-save: a plain quote chat is NOT persisted until it escalates or
+// staff explicitly saves.
+describe('shouldPersistTurn', () => {
+  it('persists when a session already exists', () => {
+    expect(shouldPersistTurn(true, false)).toBe(true);
+  });
+  it('persists a fresh chat only when it escalated', () => {
+    expect(shouldPersistTurn(false, true)).toBe(true);
+    expect(shouldPersistTurn(false, false)).toBe(false); // plain chat → not saved
+  });
+});
+
+describe('sanitizeHistory', () => {
+  it('keeps well-formed turns and drops junk', () => {
+    const out = sanitizeHistory([
+      { role: 'user', text: 'hi' },
+      { role: 'bot', text: 'nope' },     // bad role
+      { role: 'assistant', text: '' },   // empty
+      { role: 'assistant', text: 'ok' },
+      'garbage',
+    ]);
+    expect(out).toEqual([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'ok' }]);
+  });
+  it('returns [] for non-array input and clamps to the last N turns', () => {
+    expect(sanitizeHistory('nope')).toEqual([]);
+    const many = Array.from({ length: 50 }, (_, i) => ({ role: 'user', text: `m${i}` }));
+    expect(sanitizeHistory(many, 40)).toHaveLength(40);
   });
 });

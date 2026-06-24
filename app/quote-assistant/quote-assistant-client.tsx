@@ -43,13 +43,14 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
     setError(null);
     setCopied(false);
     setInput('');
+    const history = messages; // prior turns (chat is stateless — we replay them)
     setMessages((prev) => [...prev, { role: 'user', text }]);
     setLoading(true);
     try {
       const res = await fetch('/api/ai-quote', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, message: text }),
+        body: JSON.stringify({ sessionId, history, message: text }),
       });
       const data = (await res.json()) as AiQuoteResponse & { error?: string };
       if (!res.ok) throw new Error(data.error || `ผิดพลาด (${res.status})`);
@@ -83,22 +84,40 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
   }
 
   async function saveLead() {
-    if (!sessionId) return;
+    if (messages.length === 0) return;
     setError(null);
     try {
-      const res = await fetch(`/api/ai-quote/leads/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          leadStatus: 'กำลังติดตาม',
-          customerName: customerName.trim() || undefined,
-          customerContact: customerContact.trim() || undefined,
-        }),
-      });
+      let res: Response;
+      if (sessionId) {
+        // Already persisted (escalation auto-save) — update customer + status.
+        res = await fetch(`/api/ai-quote/leads/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            leadStatus: 'กำลังติดตาม',
+            customerName: customerName.trim() || undefined,
+            customerContact: customerContact.trim() || undefined,
+          }),
+        });
+      } else {
+        // No-auto-save: create the lead now with the whole chat + quotes.
+        res = await fetch('/api/ai-quote/leads', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            conversation: messages,
+            quotes: lastQuotes,
+            customerName: customerName.trim() || undefined,
+            customerContact: customerContact.trim() || undefined,
+          }),
+        });
+      }
       if (!res.ok) {
         const d = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(d.error || `บันทึกไม่สำเร็จ (${res.status})`);
       }
+      const d = (await res.json().catch(() => ({}))) as { sessionId?: number };
+      if (d.sessionId) setSessionId(d.sessionId);
       setLeadSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -192,10 +211,11 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
         </div>
       )}
 
-      {/* Save as lead */}
-      {sessionId && (
+      {/* Save as lead — appears once the AI has replied (chat isn't auto-saved) */}
+      {messages.some((m) => m.role === 'assistant') && (
         <div className="bg-white rounded-2xl border border-stone-200 p-4 space-y-2">
           <h3 className="text-sm font-semibold text-stone-900">บันทึกเป็น lead (ติดตามต่อ)</h3>
+          <p className="text-xs text-stone-400">บทสนทนานี้จะถูกบันทึกเมื่อกดปุ่มเท่านั้น</p>
           <div className="flex flex-wrap gap-2">
             <input
               type="text"
