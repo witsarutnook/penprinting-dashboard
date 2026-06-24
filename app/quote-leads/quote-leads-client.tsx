@@ -91,6 +91,24 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
     }
   }
 
+  async function onRelease(id: number) {
+    const ok = await confirm({
+      title: 'คืนงานนี้?',
+      message: 'lead จะกลับเป็น "ว่าง" ให้คนอื่นหยิบได้',
+      okLabel: 'คืนงาน',
+      cancelLabel: 'ยกเลิก',
+    });
+    if (!ok) return;
+    const prev = leads;
+    setLeads((ls) => ls.map((l) => (l.id === id ? { ...l, assignedTo: null } : l))); // optimistic
+    try {
+      await patch(id, { release: true });
+    } catch (err) {
+      setLeads(prev);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function onDelete(id: number) {
     const ok = await confirm({
       title: `ลบ lead #${id}?`,
@@ -185,7 +203,19 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                     </td>
                     <td className="px-3 py-2.5">
                       {l.assignedTo ? (
-                        <span className="text-stone-700">{l.assignedTo}</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-stone-700">{l.assignedTo}</span>
+                          {(isAdmin || l.assignedTo === currentUser) && (
+                            <button
+                              type="button"
+                              onClick={() => void onRelease(l.id)}
+                              className="text-[11px] text-stone-400 hover:text-red-600"
+                              title="คืนงาน (ปล่อยให้คนอื่นหยิบได้)"
+                            >
+                              คืน
+                            </button>
+                          )}
+                        </span>
                       ) : (
                         <button
                           type="button"

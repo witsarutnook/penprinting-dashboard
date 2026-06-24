@@ -1,7 +1,7 @@
 // app/api/ai-quote/leads/[id]/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
-import { claimLead, updateLead, deleteLead } from '@/lib/ai-quote/db';
+import { claimLead, updateLead, deleteLead, releaseLead } from '@/lib/ai-quote/db';
 import type { LeadStatus } from '@/lib/ai-quote/types';
 
 export const runtime = 'nodejs';
@@ -15,8 +15,14 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   const { id } = await props.params;
   const sid = Number(id);
   if (!sid) return NextResponse.json({ error: 'bad id' }, { status: 400 });
-  const body = (await req.json().catch(() => ({}))) as { leadStatus?: LeadStatus; assignedTo?: string; customerName?: string; customerContact?: string };
+  const body = (await req.json().catch(() => ({}))) as { leadStatus?: LeadStatus; assignedTo?: string; customerName?: string; customerContact?: string; release?: boolean };
   if (body.leadStatus && !VALID.includes(body.leadStatus)) return NextResponse.json({ error: 'bad status' }, { status: 422 });
+
+  // Release owner (คืนงาน): admin can release any; others only their own.
+  if (body.release) {
+    await releaseLead(sid, session.role === 'admin' ? undefined : session.user);
+    return NextResponse.json({ ok: true });
+  }
 
   // Claiming a lead is a conditional, race-safe write (audit M4) — handled
   // apart from the COALESCE updateLead so two staff can't silently overwrite

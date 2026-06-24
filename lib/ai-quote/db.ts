@@ -30,18 +30,31 @@ export async function createSession(): Promise<AiQuoteSession> {
 }
 
 /** Explicit "save as lead" (no-auto-save) — create a session straight to
- *  'กำลังติดตาม' with the full chat + customer info. Quotes are saved by the
- *  caller via saveQuote. Returns the new session id. */
+ *  'กำลังติดตาม' with the full chat + customer info, owned by the saver
+ *  (auto-assign — the person who quoted is the natural owner). Quotes are
+ *  saved by the caller via saveQuote. Returns the new session id. */
 export async function createLead(input: {
   conversation: ConversationTurn[];
   customerName?: string | null;
   customerContact?: string | null;
+  assignedTo?: string | null;
 }): Promise<number> {
   const { rows } = await sql`
-    INSERT INTO ai_quote_sessions (channel, conversation, lead_status, customer_name, customer_contact)
-    VALUES ('dashboard', ${JSON.stringify(input.conversation)}::jsonb, 'กำลังติดตาม', ${input.customerName ?? null}, ${input.customerContact ?? null})
+    INSERT INTO ai_quote_sessions (channel, conversation, lead_status, customer_name, customer_contact, assigned_to)
+    VALUES ('dashboard', ${JSON.stringify(input.conversation)}::jsonb, 'กำลังติดตาม', ${input.customerName ?? null}, ${input.customerContact ?? null}, ${input.assignedTo ?? null})
     RETURNING id`;
   return Number(rows[0].id);
+}
+
+/** Release a lead's owner (set assigned_to NULL → claimable again). When
+ *  `onlyOwner` is given, releases only if that user currently holds it (a
+ *  non-admin can release their own; admin passes undefined to release any). */
+export async function releaseLead(id: number, onlyOwner?: string): Promise<void> {
+  if (onlyOwner) {
+    await sql`UPDATE ai_quote_sessions SET assigned_to = NULL, updated_at = NOW() WHERE id = ${id} AND assigned_to = ${onlyOwner}`;
+  } else {
+    await sql`UPDATE ai_quote_sessions SET assigned_to = NULL, updated_at = NOW() WHERE id = ${id}`;
+  }
 }
 
 export async function loadSession(id: number): Promise<AiQuoteSession | null> {
