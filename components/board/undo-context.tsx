@@ -157,7 +157,7 @@ function UndoToast({
 
   return (
     <div
-      className="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-6 md:max-w-md mx-auto md:mx-0 z-50 bg-stone-900 text-white rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3 animate-in"
+      className="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-24 md:max-w-md mx-auto md:mx-0 z-50 bg-stone-900 text-white rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3 animate-in"
       style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 0.75rem)' }}
     >
       <IconRefreshCw size={16} className="flex-shrink-0 text-stone-300" />
@@ -197,7 +197,7 @@ function ResultToast({
   const isOk = msg.kind === 'ok';
   return (
     <div
-      className={`fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-6 md:max-w-md mx-auto md:mx-0 z-50 rounded-2xl shadow-xl px-4 py-3 flex items-center gap-3 ${
+      className={`fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-24 md:max-w-md mx-auto md:mx-0 z-50 rounded-2xl shadow-xl px-4 py-3 flex items-center gap-3 ${
         isOk
           ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
           : 'bg-red-50 border border-red-200 text-red-800'

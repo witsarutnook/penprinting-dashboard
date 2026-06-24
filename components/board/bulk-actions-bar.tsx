@@ -136,7 +136,7 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
 
   return (
     <div
-      className="fixed bottom-16 md:bottom-4 left-4 right-4 md:left-[calc(220px+1rem)] md:right-4 z-40 bg-white rounded-2xl border border-stone-200 shadow-xl px-4 py-3"
+      className="fixed bottom-16 md:bottom-4 left-4 right-4 md:left-[calc(220px+1rem)] md:right-24 z-40 bg-white rounded-2xl border border-stone-200 shadow-xl px-4 py-3"
       style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 0.75rem)' }}
     >
       <div className="flex items-center gap-2 flex-wrap">
