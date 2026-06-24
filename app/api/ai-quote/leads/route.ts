@@ -28,6 +28,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     conversation,
     customerName: body.customerName?.trim() || null,
     customerContact: body.customerContact?.trim() || null,
+    assignedTo: session.user, // auto-assign — the saver owns the lead
   });
   for (const q of body.quotes ?? []) {
     await saveQuote(id, { productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice });
