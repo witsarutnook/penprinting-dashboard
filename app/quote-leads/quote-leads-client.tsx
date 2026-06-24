@@ -1,10 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { displayDateTime } from '@/lib/jobs';
+import { useConfirm } from '@/components/confirm-provider';
+import { IconTrash } from '@/lib/icons';
 import type { LeadRow, LeadStatus } from '@/lib/ai-quote/types';
 
 const STATUSES: LeadStatus[] = ['ใหม่', 'กำลังติดตาม', 'ปิดการขาย', 'ไม่สนใจ', 'escalated', 'abandoned'];
+
+// Thai display labels for the two enum values that are stored in English
+// (audit M3 — "escalated" leads need to read as "ต้องประเมินเอง" so the
+// sales team can tell hand-off leads apart from fresh ones at a glance).
+const STATUS_LABEL: Record<LeadStatus, string> = {
+  'ใหม่': 'ใหม่',
+  'กำลังติดตาม': 'กำลังติดตาม',
+  'ปิดการขาย': 'ปิดการขาย',
+  'ไม่สนใจ': 'ไม่สนใจ',
+  'escalated': 'ต้องประเมินเอง',
+  'abandoned': 'ถูกทิ้ง',
+};
 
 // Colour-code the status select by its current value (board-style tints).
 const STATUS_CLASS: Record<LeadStatus, string> = {
@@ -16,10 +30,14 @@ const STATUS_CLASS: Record<LeadStatus, string> = {
   'abandoned': 'bg-stone-100 text-stone-400 border-stone-200',
 };
 
-export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
+export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: string; currentRole: string }) {
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { confirm } = useConfirm();
+  const isAdmin = currentRole === 'admin';
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const colSpan = isAdmin ? 8 : 7;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,6 +87,30 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
     } catch (err) {
       setLeads(prev);
       setError(err instanceof Error ? err.message : String(err));
+      void load(); // 409 = someone else claimed it — refresh to show the real owner
+    }
+  }
+
+  async function onDelete(id: number) {
+    const ok = await confirm({
+      title: `ลบ lead #${id}?`,
+      message: 'ลบถาวร กู้คืนไม่ได้ — รวมราคาที่คิดไว้ในนี้ทั้งหมด',
+      variant: 'danger',
+      okLabel: 'ลบ',
+      cancelLabel: 'ยกเลิก',
+    });
+    if (!ok) return;
+    const prev = leads;
+    setLeads((ls) => ls.filter((l) => l.id !== id)); // optimistic
+    try {
+      const res = await fetch(`/api/ai-quote/leads/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(d.error || `ลบไม่สำเร็จ (${res.status})`);
+      }
+    } catch (err) {
+      setLeads(prev); // rollback
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -99,18 +141,35 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                   <th className="px-3 py-2.5 font-medium">สถานะ</th>
                   <th className="px-3 py-2.5 font-medium">ผู้ดูแล</th>
                   <th className="px-3 py-2.5 font-medium whitespace-nowrap">อัปเดต</th>
+                  {isAdmin && <th className="px-3 py-2.5 font-medium" aria-label="ลบ" />}
                 </tr>
               </thead>
               <tbody>
                 {leads.map((l) => (
-                  <tr key={l.id} className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50">
+                  <Fragment key={l.id}>
+                  <tr className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50">
                     <td className="px-3 py-2.5 tabular-nums text-stone-400">{l.id}</td>
                     <td className="px-3 py-2.5">
-                      <div className="font-medium text-stone-800">{l.customerName || '—'}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-stone-800">{l.customerName || '—'}</span>
+                        {l.leadStatus === 'escalated' && (
+                          <span className="inline-flex items-center rounded-md bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 ring-1 ring-orange-200">
+                            ⚠ ต้องประเมินเอง
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-stone-400">{l.customerContact || '—'}</div>
                     </td>
                     <td className="px-3 py-2.5 max-w-[18rem]">
-                      <div className="text-stone-600 truncate">{l.lastMessage || '—'}</div>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId((cur) => (cur === l.id ? null : l.id))}
+                        className="text-left text-stone-600 hover:text-accent w-full truncate"
+                        title="กดเพื่อดูบทสนทนาทั้งหมด"
+                      >
+                        {l.conversation.length > 0 ? (expandedId === l.id ? '▾ ' : '▸ ') : ''}
+                        {l.lastMessage || '—'}
+                      </button>
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums text-stone-500">{l.quoteCount}</td>
                     <td className="px-3 py-2.5">
@@ -120,7 +179,7 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                         className={`px-2 py-1 rounded-lg border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-accent/20 ${STATUS_CLASS[l.leadStatus] ?? 'bg-white border-stone-200'}`}
                       >
                         {STATUSES.map((s) => (
-                          <option key={s} value={s}>{s}</option>
+                          <option key={s} value={s}>{STATUS_LABEL[s]}</option>
                         ))}
                       </select>
                     </td>
@@ -140,7 +199,43 @@ export function QuoteLeadsClient({ currentUser }: { currentUser: string }) {
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-stone-400 tabular-nums">
                       {displayDateTime(l.updatedAt)}
                     </td>
+                    {isAdmin && (
+                      <td className="px-3 py-2.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void onDelete(l.id)}
+                          aria-label={`ลบ lead ${l.id}`}
+                          className="p-1.5 rounded-lg text-stone-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <IconTrash size={16} />
+                        </button>
+                      </td>
+                    )}
                   </tr>
+                  {expandedId === l.id && (
+                    <tr className="bg-stone-50/60">
+                      <td colSpan={colSpan} className="px-3 pb-3 pt-0">
+                        <div className="rounded-xl border border-stone-200 bg-white p-3 space-y-2 max-h-80 overflow-y-auto">
+                          {l.conversation.length === 0 ? (
+                            <div className="text-xs text-stone-400">ไม่มีบทสนทนา</div>
+                          ) : (
+                            l.conversation.map((m, i) => (
+                              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div
+                                  className={`max-w-[80%] rounded-2xl px-3 py-2 text-xs whitespace-pre-wrap break-words ${
+                                    m.role === 'user' ? 'bg-accent text-white rounded-br-sm' : 'bg-stone-100 text-stone-800 rounded-bl-sm'
+                                  }`}
+                                >
+                                  {m.text}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

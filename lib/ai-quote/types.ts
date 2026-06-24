@@ -61,14 +61,29 @@ export interface LeadRow extends AiQuoteSession {
   lastMessage: string | null;
 }
 
-/** POST /api/ai-quote request + response. */
+/** POST /api/ai-quote request + response.
+ *  Chat is stateless: the client owns the conversation and replays it each
+ *  turn via `history`. Nothing is persisted until the model escalates (auto-
+ *  saved as a lead) or staff explicitly saves (POST /api/ai-quote/leads) —
+ *  so plain quote chats never pile up as junk leads. Once a session exists
+ *  (escalation/save) the client passes its `sessionId` and the server keeps
+ *  it in sync. */
 export interface AiQuoteRequest {
-  sessionId?: number;       // omit to start a new session
+  sessionId?: number | null;       // set once a session exists; else omit
+  history?: ConversationTurn[];    // prior turns (used when no sessionId yet)
   message: string;
 }
 export interface AiQuoteResponse {
-  sessionId: number;
+  sessionId: number | null; // non-null once persisted (escalation/existing)
   reply: string;            // assistant text for the staff to read/copy
   quotes: AiQuote[];        // any compute_quote results produced this turn
   escalated: boolean;       // true if the model signalled an escalation
+}
+
+/** POST /api/ai-quote/leads — explicit "save as lead" (no-auto-save). */
+export interface SaveLeadRequest {
+  conversation: ConversationTurn[];
+  quotes?: { productType: ProductType; spec: QuoteSpec; result: ComputeResult; unitPrice: number }[];
+  customerName?: string;
+  customerContact?: string;
 }

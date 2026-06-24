@@ -25,7 +25,38 @@ export interface ProducedQuote {
 export interface RunQuoteTurnOutput {
   reply: string;
   quotes: ProducedQuote[];
+  escalated: boolean;              // model handed off (no quote + handoff wording)
   newHistory: ConversationTurn[];  // history + this user turn + this assistant turn
+}
+
+/** No-auto-save rule: a turn is persisted ONLY when a session already exists
+ *  (escalation/explicit save earlier) or the model escalated this turn (must
+ *  not lose a hand-off). Plain quote chats stay unsaved until staff saves. */
+export function shouldPersistTurn(hasSession: boolean, escalated: boolean): boolean {
+  return hasSession || escalated;
+}
+
+/** Clamp a client-supplied conversation to safe bounds before replaying it to
+ *  the model (the client owns history now — don't trust its size/shape). Keeps
+ *  the last MAX turns, drops malformed entries, caps each text. */
+export function sanitizeHistory(input: unknown, maxTurns = 40, maxLen = 4000): ConversationTurn[] {
+  if (!Array.isArray(input)) return [];
+  const turns: ConversationTurn[] = [];
+  for (const t of input) {
+    if (!t || typeof t !== 'object') continue;
+    const { role, text } = t as { role?: unknown; text?: unknown };
+    if ((role !== 'user' && role !== 'assistant') || typeof text !== 'string' || !text.trim()) continue;
+    turns.push({ role, text: text.slice(0, maxLen) });
+  }
+  return turns.slice(-maxTurns);
+}
+
+/** Did this turn escalate to the sales team rather than quote? Heuristic:
+ *  no compute_quote succeeded AND the reply uses handoff wording. Pure +
+ *  exported so the route can wire the lead-status badge off one source of
+ *  truth (audit M3) and tests can pin the trigger. */
+export function detectEscalation(quoteCount: number, reply: string): boolean {
+  return quoteCount === 0 && /ทีมงาน|ประเมินราคา/.test(reply);
 }
 
 /** Map our stored history to Anthropic message params (text-only turns). */
@@ -93,5 +124,5 @@ export async function runQuoteTurn(
     { role: 'user', text: input.userMessage },
     { role: 'assistant', text: reply },
   ];
-  return { reply, quotes, newHistory };
+  return { reply, quotes, escalated: detectEscalation(quotes.length, reply), newHistory };
 }

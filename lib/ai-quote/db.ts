@@ -29,6 +29,21 @@ export async function createSession(): Promise<AiQuoteSession> {
   return rowToSession(rows[0]);
 }
 
+/** Explicit "save as lead" (no-auto-save) — create a session straight to
+ *  'กำลังติดตาม' with the full chat + customer info. Quotes are saved by the
+ *  caller via saveQuote. Returns the new session id. */
+export async function createLead(input: {
+  conversation: ConversationTurn[];
+  customerName?: string | null;
+  customerContact?: string | null;
+}): Promise<number> {
+  const { rows } = await sql`
+    INSERT INTO ai_quote_sessions (channel, conversation, lead_status, customer_name, customer_contact)
+    VALUES ('dashboard', ${JSON.stringify(input.conversation)}::jsonb, 'กำลังติดตาม', ${input.customerName ?? null}, ${input.customerContact ?? null})
+    RETURNING id`;
+  return Number(rows[0].id);
+}
+
 export async function loadSession(id: number): Promise<AiQuoteSession | null> {
   const { rows } = await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id}`;
   return rows[0] ? rowToSession(rows[0]) : null;
@@ -66,6 +81,23 @@ export async function listLeads(): Promise<LeadRow[]> {
     const conv = s.conversation;
     return { ...s, quoteCount: Number(r.quote_count) || 0, lastMessage: conv.length ? conv[conv.length - 1].text : null };
   });
+}
+
+/** Hard-delete a lead (its ai_quotes rows go too via ON DELETE CASCADE).
+ *  Admin-only at the route — used to clear test/junk sessions. */
+export async function deleteLead(id: number): Promise<void> {
+  await sql`DELETE FROM ai_quote_sessions WHERE id = ${id}`;
+}
+
+/** Claim a lead atomically (audit M4). Conditional on `assigned_to IS NULL`
+ *  so two staff racing to "หยิบงาน" can't silently overwrite each other —
+ *  returns false when someone already holds it (route → 409). */
+export async function claimLead(id: number, user: string): Promise<boolean> {
+  const { rowCount } = await sql`
+    UPDATE ai_quote_sessions
+       SET assigned_to = ${user}, updated_at = NOW()
+     WHERE id = ${id} AND assigned_to IS NULL`;
+  return (rowCount ?? 0) > 0;
 }
 
 export async function updateLead(
