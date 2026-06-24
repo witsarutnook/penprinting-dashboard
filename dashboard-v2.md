@@ -219,6 +219,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - **Pricing single source of truth**: tool `compute_quote` เรียก calc `POST /api/quote` (env `QUOTE_API_URL` + `QUOTE_API_TOKEN`) — ราคาตรงกับ calculator UI 100% (verify preview: brochure A4/4สี2หน้า/Art160/1000 = `5.048225 บาท/ชิ้น` ตรงเป๊ะ). AI emit ราคาเองไม่ได้ (บังคับผ่าน tool).
 - **Stack**: Claude Haiku 4.5 (`claude-haiku-4-5`) + prompt caching บน system block + **manual tool-use loop** (`MAX_TOOL_ROUNDS=6`, `lib/ai-quote/run.ts`).
 - **Scope (D8)**: auto-quote แค่ brochure/book/notebook (สูตร validated). กล่อง/ถุง + งานนอก 5 ประเภท → **escalate** (ไม่ตีราคา, บันทึก lead ให้ทีมขายตาม).
+- **Clarify policy (assume-and-disclose, 2026-06-24 `237b66d`)**: field ที่มี shop-standard ลูกค้าไม่ระบุ → เติม default แล้วตีราคาเลย + แจ้งบรรทัดสมมติฐาน (โบรชัวร์ A4/4สี/2หน้า/Art120 · book+notebook A5+innerB=0). ถามเฉพาะที่เดาไม่ได้ — qty ทุกงาน + book/notebook ถาม จำนวนหน้า/กระดาษ/สี แบบ batch ครั้งเดียว. กระดาษระบุชื่อแต่นอก list ยัง escalate. ลด over-clarify ที่ Haiku ระวังเกิน (`lib/ai-quote/prompt.ts`).
 - **Files**: `lib/ai-quote/{prompt,tools,run,db}.ts` · `app/api/ai-quote/route.ts` (+ `leads/`, `leads/[id]/`) · `app/quote-assistant/` · `app/quote-leads/` · Postgres `ai_quote_sessions` (lead store) + `ai_quotes` (db-migrate route).
 
 ---
@@ -320,6 +321,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### AI Quote prompt-tuning — assume-and-disclose defaults (2026-06-24) 🤖
+
+> **Branch `feat/ai-quote-phase1a` (เข้า PR #2 เดียวกับ Phase 1a)** — pushed [`237b66d`](https://github.com/witsarutnook/penprinting-dashboard/commit/237b66d). Spec: `docs/superpowers/specs/2026-06-24-ai-quote-clarify-defaults-design.md`.
+
+คุณนุ๊กสังเกตจาก preview smoke 6/23 ว่า Haiku **clarify เยอะไป** — ถามซ้ำ field ที่มี shop-standard. แก้ด้วย **assume-and-disclose**: เติมค่ามาตรฐาน (โบรชัวร์ A4/4สี/2หน้า/Art120 · book+notebook A5+innerB=0) ให้ field ที่ลูกค้าไม่ระบุ → เรียก `compute_quote` ตีราคาเลย + แจ้งบรรทัดสมมติฐานให้แก้ได้. ถามเฉพาะที่เดาไม่ได้ (qty ทุกงาน + book/notebook batch จำนวนหน้า/กระดาษ/สี, ไม่ drip). กระดาษ named-but-unknown ยัง escalate. **prompt-only** (`lib/ai-quote/prompt.ts`) — run.ts/tools/schema/calc ไม่แตะ. TDD +7 assertion (161→168 tests). Gates เขียว Node 22. **Behavior change ฝั่ง model → ต้อง smoke จริงหลัง deploy** (prompt content unit-tested, clarify reduction ยังไม่). Lesson → [[feedback_llm_assume_and_disclose_clarify]].
 
 ### AI Quote Assistant Phase 1a — built + preview-verified + audited (2026-06-23) 🤖
 
