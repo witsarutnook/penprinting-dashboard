@@ -1,7 +1,7 @@
 ---
 name: AI Quoting — Research + Design Doc
 description: ระบบ AI ออกใบเสนอราคางานพิมพ์อัตโนมัติ — เชื่อม dashboard + calculator + LINE OA + (optional) PEAK
-status: IN PROGRESS — Phase 0 ✅ DONE 2026-06-17 (calc /api/quote shipped). ถัดไป = Phase 1a
+status: IN PROGRESS — Phase 0 ✅ + Phase 1a ✅ built+preview-verified+audited 2026-06-23 (branch feat/ai-quote-phase1a, รอ merge + prod smoke). ถัดไป = Phase 1b (LINE OA)
 created: 2026-05-17
 author: Claude + คุณนุ๊ก
 tags: [dashboard, ai, quoting, design-doc]
@@ -9,7 +9,7 @@ tags: [dashboard, ai, quoting, design-doc]
 
 # AI Quoting — Research + Design Doc
 
-> สถานะ: **Phase 0 ✅ DONE (2026-06-17)** — calc `/api/quote` ship แล้ว (commit `3edcfe1` repo `penprinting-calc`, ship-dark รอ `QUOTE_API_TOKEN`). ขั้นต่อไป = **Phase 1a** (in-dashboard AI Quote Assistant, ดู §13)
+> สถานะ: **Phase 0 ✅ DONE (2026-06-17)** + **Phase 1a ✅ built + preview-verified + audited (2026-06-23)** — branch `feat/ai-quote-phase1a` (10 build commits `1424bfa`→`5d2de19` + audit fix `902d70a`), **รอ merge main + 1 happy-path prod smoke**. ขั้นต่อไป = **Phase 1b** (LINE OA, ดู §7) — ต้องปิด AUDIT-BACKLOG M5 (loadSession IDOR) ก่อน. calc `/api/quote` live (token deployed 6/23 `fd4f755`).
 
 ---
 
@@ -231,8 +231,8 @@ ai_quotes
 
 | Phase | ขอบเขต | เสี่ยง |
 |---|---|---|
-| **0** ✅ | Calculator เปิด `/api/quote` (server-side pricing) — **DONE 2026-06-17** (`3edcfe1`) | ต่ำ |
-| **1a** | In-dashboard AI Quote Assistant (พนักงาน, review ก่อนเสมอ) | ต่ำ |
+| **0** ✅ | Calculator เปิด `/api/quote` (server-side pricing) — **DONE 2026-06-17** (`3edcfe1`), token live 6/23 (`fd4f755`) | ต่ำ |
+| **1a** ✅ | In-dashboard AI Quote Assistant (พนักงาน, review ก่อนเสมอ) — **built + preview-verified + audited 2026-06-23** (branch `feat/ai-quote-phase1a`, รอ merge + prod smoke) | ต่ำ |
 | **1b** | LINE OA AI quoting (ลูกค้า, 1-on-1) — โบรชัวร์/หนังสือ/สมุด ก่อน | กลาง |
 | **1c** | เพิ่มกล่อง/ถุง หลัง calibrate ราคา | กลาง |
 
@@ -338,8 +338,16 @@ Repo: **`print-calculator-next`** · Deploy: Vercel auto · commit **`3edcfe1`**
 
 **⏳ Pending user action**: ตั้ง env `QUOTE_API_TOKEN` ใน Vercel project `penprinting-calc` (ค่า random เช่น `openssl rand -hex 32`) — ค่าเดียวกันจะใช้ใน dashboard project ตอน Phase 1a
 
-### Phase 1a — AI Quote Assistant (in-dashboard)
-Repo: **`penprinting-dashboard`**
+### Phase 1a — AI Quote Assistant (in-dashboard) ✅ BUILT + PREVIEW-VERIFIED + AUDITED (2026-06-23)
+Repo: **`penprinting-dashboard`** · Branch: **`feat/ai-quote-phase1a`** (ยังไม่ merge main — รอ merge PR + 1 happy-path prod smoke)
+
+> **✅ Built (2026-06-23)** — Tasks 1-10 (10 commits `1424bfa`→`5d2de19`, 6/22, TDD +11 tests) + lint reconcile `d773ea9` + audit fix `902d70a` (H1/H2/M1/M2 +2 test). Gates เขียว Node 22: type-check / lint "No issues found" / **161 tests** / build 40 หน้า.
+> - **Files (ตามที่ลงจริง):** `lib/ai-quote/{prompt,tools,run,db}.ts` (run loop = manual tool-use `MAX_TOOL_ROUNDS=6`, **Haiku 4.5** `claude-haiku-4-5` + prompt caching) · `app/api/ai-quote/route.ts` (+ `leads/route.ts` GET · `leads/[id]/route.ts` PATCH) · `app/quote-assistant/` · `app/quote-leads/` · nav 2 เมนู (`adminOrSalesOnly`) · Postgres `ai_quote_sessions` + `ai_quotes` ผ่าน db-migrate route (idempotent).
+> - **Env (Vercel `penprinting-dashboard`, All Environments):** `ANTHROPIC_API_KEY` + `QUOTE_API_URL=https://calc.penprinting.co/api/quote` + `QUOTE_API_TOKEN`.
+> - **Preview smoke ผ่านครบ** (empty commit `80d5c2a` trigger): db-migrate idempotent · quote brochure A4/4สี2หน้า/Art160/1000 → **5.048225 บาท/ชิ้น ตรง calc เป๊ะ** + offset mode + VAT card · escalation (กล่อง → ไม่ตีราคา, escalate ทีมขาย D8) · lead flow (บันทึก→/quote-leads→เปลี่ยน status ปิดการขาย + หยิบงาน → reload persist) · auth admin (nook) เข้า 2 เมนู.
+> - **Calc token fix:** smoke เจอ calc 500 "QUOTE_API_TOKEN not configured" — env ตั้งใน calc ตั้งแต่ 6/20 แต่ prod deploy ล่าสุด = `3edcfe1` (6/17 ก่อนมี token) → push empty commit `fd4f755` (repo `penprinting-calc`) → auto-deploy → token live (probe 500→401). **env var live ต่อเมื่อมี deploy ใหม่หลังตั้ง.**
+> - **Audit deferred → [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) open**: M3 (escalation lead ไม่ wired + markEscalated dead) · M4 (lead-claim race) · M5 (loadSession IDOR — **ต้องปิดก่อน Phase 1b**) · 3 Low.
+> - **Pending user note**: AI clarify เยอะไป (Haiku ระวังเกินตอนสกัด spec) — prompt-tuning candidate รอบหน้า.
 
 > **🔎 Audit refinement (2026-06-20, ก่อนเขียน implementation plan — [[feedback_audit_before_plan]]):**
 > - **Scope รอบแรก (D8, คุณนุ๊ก 2026-06-20):** AI auto-quote **แค่ brochure/book/notebook** (สูตร validated จาก Sheet). **box/bag → escalate อย่างเดียว** (AI ตรวจจับ → ไม่ตีราคา → "งานกล่อง/ถุงขอให้ทีมงานประเมินราคาให้" + บันทึก lead) เพราะราคา research-based ยังไม่ calibrate. box/bag auto-quote = Phase 1c (หลัง calibrate). งานนอก 5 ประเภท (นามบัตร/สติกเกอร์/โปสการ์ด) → escalate เหมือนเดิม.
