@@ -56,4 +56,15 @@ describe('buildSystemPrompt — clarify defaults (assume-and-disclose)', () => {
   it('still escalates a named-but-unknown paper rather than defaulting it', () => {
     expect(p).toMatch(/กระดาษพิเศษ|นอกรายการ/);
   });
+
+  it('hard-rules that a brochure with qty is "enough to quote" (do not ask)', () => {
+    expect(p).toContain('ครบพอตีราคา');
+    expect(p).toMatch(/ห้ามถาม[^]*โบรชัวร์|โบรชัวร์[^]*ห้ามถาม/);
+  });
+
+  it('includes a worked brochure example that quotes instead of asking', () => {
+    expect(p).toContain('ใบปลิว 1000');
+    expect(p).toContain('✅');
+    expect(p).toContain('❌');
+  });
 });
