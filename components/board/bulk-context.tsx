@@ -1,6 +1,7 @@
 'use client';
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { setBulkActive } from '@/lib/bulk-mode-signal';
 
 interface BulkState {
   mode: boolean;
@@ -53,6 +54,15 @@ export function BulkModeProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
   }, []);
+
+  // Mirror bulk mode into the module-level signal so the global Quote FAB
+  // (mounted in DashboardShell, outside this provider) can hide itself on
+  // mobile while the full-width bulk-actions bar is showing. Cleanup resets
+  // the signal when the provider unmounts (navigating away from /board).
+  useEffect(() => {
+    setBulkActive(mode);
+    return () => setBulkActive(false);
+  }, [mode]);
 
   const value = useMemo<BulkState>(
     () => ({ mode, selected, toggleMode, toggleJob, clearSelection, selectIds }),
