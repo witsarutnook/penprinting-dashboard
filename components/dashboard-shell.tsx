@@ -1,6 +1,7 @@
 import { Sidebar } from './sidebar';
 import { BottomNav } from './bottom-nav';
 import { MobileUserMenu } from './mobile-user-menu';
+import { QuoteFab } from './quote-fab';
 import { ToastProvider } from './toast-provider';
 import { ConfirmProvider } from './confirm-provider';
 
@@ -36,6 +37,7 @@ export function DashboardShell({ user, role, children }: ShellProps) {
           <Sidebar user={user} role={role} />
           <BottomNav role={role} />
           <MobileUserMenu user={user} role={role} />
+          <QuoteFab role={role} />
           {/* Offsets: 220px sidebar on desktop; 64px bottom-nav on mobile */}
           <main id="main-content" tabIndex={-1} className="md:pl-[220px] pb-20 md:pb-0 outline-none">
             {children}
