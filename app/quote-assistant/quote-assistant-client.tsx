@@ -13,7 +13,10 @@ const MODE_LABEL: Record<string, string> = { offset: 'ออฟเซ็ต', di
 
 const PRICE_NOTE = 'ราคานี้ยังไม่รวม VAT 7% · ราคาประเมินเบื้องต้น ทีมขายยืนยันอีกครั้ง';
 
-export function QuoteAssistantClient() {
+/** `compact` trims the chat for the floating widget popup (shorter
+ *  conversation pane + drops the page-level intro line, which the panel
+ *  header already covers). Default layout is unchanged for the full page. */
+export function QuoteAssistantClient({ compact = false }: { compact?: boolean } = {}) {
   const [messages, setMessages] = useState<ConversationTurn[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [input, setInput] = useState('');
@@ -104,15 +107,19 @@ export function QuoteAssistantClient() {
 
   return (
     <div className="space-y-4">
-      <p className="flex items-center gap-2 text-sm text-stone-500">
-        <IconSparkles size={16} className="text-accent" />
-        วางข้อความที่ลูกค้าถามมา — ระบบช่วยสกัดสเปกและคิดราคา (โบรชัวร์ / หนังสือ / สมุด)
-      </p>
+      {!compact && (
+        <p className="flex items-center gap-2 text-sm text-stone-500">
+          <IconSparkles size={16} className="text-accent" />
+          วางข้อความที่ลูกค้าถามมา — ระบบช่วยสกัดสเปกและคิดราคา (โบรชัวร์ / หนังสือ / สมุด)
+        </p>
+      )}
 
       {/* Conversation */}
       <div
         ref={scrollRef}
-        className="bg-white rounded-2xl border border-stone-200 p-4 h-[52vh] overflow-y-auto space-y-3"
+        className={`bg-white rounded-2xl border border-stone-200 p-4 overflow-y-auto space-y-3 ${
+          compact ? 'h-[44vh]' : 'h-[52vh]'
+        }`}
       >
         {messages.length === 0 && !loading && (
           <div className="h-full flex flex-col items-center justify-center text-center text-stone-400 text-sm gap-2">
