@@ -131,3 +131,17 @@ describe('buildSystemPrompt — cover color hard-rule (Haiku hardening)', () => 
     expect(p).toContain('เนื้อในขาวดำ');
   });
 });
+
+describe('buildSystemPrompt — colloquial paper-name alias (อาร์ทการ์ด)', () => {
+  const p = buildSystemPrompt();
+
+  it('maps อาร์ทการ์ด 210/230 to the Art paper line (no Art Card at those weights)', () => {
+    expect(p).toContain('230 → Art 230');
+    expect(p).toContain('210 → Art 210');
+  });
+
+  it('keeps อาร์ทการ์ด 300/350 on the distinct Art Card stock', () => {
+    expect(p).toContain('300 → Art Card 300');
+    expect(p).toContain('350 → Art Card 350');
+  });
+});
