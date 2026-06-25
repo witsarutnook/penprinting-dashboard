@@ -223,6 +223,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - **Stack**: Claude Haiku 4.5 (`claude-haiku-4-5`) + prompt caching บน system block + **manual tool-use loop** (`MAX_TOOL_ROUNDS=6`, `lib/ai-quote/run.ts`).
 - **Scope (D8)**: auto-quote แค่ brochure/book/notebook (สูตร validated). กล่อง/ถุง + งานนอก 5 ประเภท → **escalate** (ไม่ตีราคา, บันทึก lead ให้ทีมขายตาม).
 - **Clarify policy (assume-and-disclose, 2026-06-24 `237b66d`)**: field ที่มี shop-standard ลูกค้าไม่ระบุ → เติม default แล้วตีราคาเลย + แจ้งบรรทัดสมมติฐาน (โบรชัวร์ A4/4สี/2หน้า/Art120 · book+notebook A5+innerB=0). ถามเฉพาะที่เดาไม่ได้ — qty ทุกงาน + book/notebook ถาม จำนวนหน้า/กระดาษ/สี แบบ batch ครั้งเดียว. กระดาษระบุชื่อแต่นอก list ยัง escalate. ลด over-clarify ที่ Haiku ระวังเกิน (`lib/ai-quote/prompt.ts`).
+- **Book cover defaults (2026-06-25 `0b93f8e`)**: ปกหนังสือ/สมุด default = **4 สี + กระดาษ Art 230** (ออกจาก always-ask + เกณฑ์ครบ; เนื้อในยังถาม). กฎ **"X สีทั้งเล่ม"** → set ทั้งปก+เนื้อใน. **hard-rule "⛔ ห้ามถามสีปกเด็ดขาด"** — แม้เนื้อในระบุสีต่าง (ขาวดำ) ก็ไม่ถามปก (live smoke จับ Haiku regression). หนังสือเหลือถามแค่ qty + จำนวนหน้า + กระดาษเนื้อใน + สีเนื้อใน.
 - **Files**: `lib/ai-quote/{prompt,tools,run,db}.ts` · `app/api/ai-quote/route.ts` (+ `leads/`, `leads/[id]/`) · `app/quote-assistant/` · `app/quote-leads/` · Postgres `ai_quote_sessions` (lead store) + `ai_quotes` (db-migrate route).
 
 ---
@@ -242,7 +243,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | 2.3 (UI parity) | ✅ Stage A+B+C | DashboardShell + sidebar + KPI bar + filter chips + inline bulk |
 | 3.6 — Decommission WP | ✅ | Cutover 2026-05-09 (DNS app.penprinting.co → Vercel; WP retired) |
 | AI Quoting 0 | ✅ | calc `/api/quote` pricing API (2026-06-17, repo penprinting-calc) |
-| AI Quoting 1a | ⏳ built + preview-verified + audited | In-dashboard AI Quote Assistant (branch `feat/ai-quote-phase1a`, **รอ merge + prod smoke**, 2026-06-23) |
+| AI Quoting 1a | ✅ shipped | In-dashboard AI Quote Assistant (PR #2 merge `91d8dc8` 2026-06-24) + FAB widget (PR #4 `66d0286`) + M3/M4 closed + prompt-tuning: assume-and-disclose (`237b66d`) + book cover defaults 4สี/Art230 (PR #9 `0b93f8e` 2026-06-25). M5 IDOR เปิด (ปิดพร้อม 1b) |
 | AI Quoting 1b/1c | — | LINE OA channel · กล่อง/ถุง auto-quote (future, ดู design-ai-quoting.md) |
 
 ดูรายละเอียดเต็มใน [`../Tech-Roadmap-Status.md`](../Tech-Roadmap-Status.md).
@@ -324,6 +325,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### AI Quote prompt-tuning — book cover defaults (4 สี + Art 230) + hard-rule (2026-06-25) 🤖
+
+> **PR [#9](https://github.com/witsarutnook/penprinting-dashboard/pull/9) squash → [`0b93f8e`](https://github.com/witsarutnook/penprinting-dashboard/commit/0b93f8e)** (prompt-only). Spec: `docs/superpowers/specs/2026-06-25-ai-quote-book-cover-color-design.md`.
+
+คุณนุ๊กเจอเคสจริง: AI ถามซ้ำ "สีปก 4 สีใช่ไหม?" 2 รอบ ทั้งที่ลูกค้าพิมพ์ "พิมพ์ 4 สีทั้งเล่ม". แก้ `lib/ai-quote/prompt.ts` (prompt-only, 3 commit): **(1)** default ปก = **4 สี + กระดาษ Art 230** → ปกออกจาก always-ask + เกณฑ์ "ครบพอตีราคา" (เนื้อในยังถาม — เป็นตัวขยับราคาแรง, เก็บ decision 6/24) **(2)** กฎ **"X สีทั้งเล่ม"** → set ทั้ง `cover.color` + `inner.color` = X ไม่ถามซ้ำ **(3)** **hard-rule "⛔ ห้ามถามสีปกเด็ดขาด"** — live smoke พบ soft default แพ้ Haiku ตอนเนื้อในระบุสีต่าง ("เนื้อในขาวดำ" → Haiku ถามปก) → hard-rule ห้ามใช้ "เนื้อในต่าง" เป็นเหตุถามปก + worked example เคส B&W. **Live smoke PASS preview** (nook/ADMIN, 2 เคส): "4 สีทั้งเล่ม 500" → **47.27 บาท/เล่ม** · "เนื้อในขาวดำ 1000" → **20.49 บาท/เล่ม** — ทั้งคู่ตีราคาเลย ปก default 4สี/Art230 แจ้งในสมมติฐาน **ไม่ถามปก**. TDD +11 assertion (179→**190 tests** บน main). Gates เขียว Node 22 (type-check/lint/190/build 40). Lesson (ซ้ำ 6/24): soft prompt ไม่พอกับ Haiku ที่ระวัง — ต้อง hard-rule + few-shot เคส fail; live smoke จับ regression ที่ unit test จับไม่ได้ → [[feedback_llm_assume_and_disclose_clarify]].
 
 ### AI Quote — Floating FAB widget + audit M3/M4 (2026-06-24) 🤖
 
