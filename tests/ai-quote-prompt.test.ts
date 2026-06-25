@@ -117,3 +117,17 @@ describe('buildSystemPrompt — book cover paper default (Art 230)', () => {
     expect(p).toContain('qty + จำนวนหน้า + กระดาษเนื้อใน + สีเนื้อใน');
   });
 });
+
+describe('buildSystemPrompt — cover color hard-rule (Haiku hardening)', () => {
+  const p = buildSystemPrompt();
+
+  it('hard-rules that cover color is never asked', () => {
+    expect(p).toContain('ห้ามถามสีปกเด็ดขาด');
+  });
+
+  it('has a worked example where inner is B&W but cover stays defaulted', () => {
+    // Haiku regresses here: inner ขาวดำ → it asks about cover. The example must
+    // show NOT asking cover (default 4 สี) even when inner color differs.
+    expect(p).toContain('เนื้อในขาวดำ');
+  });
+});
