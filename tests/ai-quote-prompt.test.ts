@@ -68,3 +68,36 @@ describe('buildSystemPrompt — clarify defaults (assume-and-disclose)', () => {
     expect(p).toContain('❌');
   });
 });
+
+describe('buildSystemPrompt — book cover color default + "ทั้งเล่ม" rule', () => {
+  const p = buildSystemPrompt();
+
+  it('defaults book/notebook cover color to 4 สี', () => {
+    expect(p).toContain('สีปก = 4 สี');
+  });
+
+  it('no longer lists cover color in the always-ask section', () => {
+    // old combined token "สีปก/สีเนื้อใน" is gone — cover is now defaulted
+    expect(p).not.toContain('สีปก/สีเนื้อใน');
+  });
+
+  it('still always-asks inner color (the variable price-mover)', () => {
+    expect(p).toMatch(/ถามเพิ่ม:[^]*สีเนื้อใน/);
+  });
+
+  it('documents the "X สีทั้งเล่ม" rule (sets both cover + inner)', () => {
+    expect(p).toContain('ทั้งเล่ม');
+  });
+
+  it('includes a worked book example that does NOT re-ask cover color', () => {
+    expect(p).toContain('4 สีทั้งเล่ม');
+    expect(p).toContain('✅');
+    expect(p).toContain('❌');
+  });
+
+  it('book "enough to quote" criteria requires inner color, not bare color', () => {
+    // line 42 must read "...กระดาษเนื้อใน + สีเนื้อใน" — cover color is defaulted,
+    // so it must NOT be part of the completeness gate (else Haiku re-asks it)
+    expect(p).toContain('กระดาษเนื้อใน + สีเนื้อใน');
+  });
+});
