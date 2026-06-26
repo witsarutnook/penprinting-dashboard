@@ -35,7 +35,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // Stateless chat (no-auto-save): if a session already exists (escalation or
   // explicit save earlier) load its authoritative history; otherwise replay
   // the client-owned history. Nothing is created here for a plain chat.
-  let sess = body.sessionId ? await loadSession(body.sessionId) : null;
+  // Scope continuation to dashboard-channel sessions only (M5 IDOR boundary):
+  // this is the staff chat route, so a staff-supplied sessionId can never
+  // cross-load a Phase 1b LINE-channel session. The LINE route adds owner
+  // (LINE userId) binding on top. See design-ai-quoting.md §7.
+  let sess = body.sessionId ? await loadSession(body.sessionId, { channel: 'dashboard' }) : null;
   if (body.sessionId && !sess) return NextResponse.json({ error: 'ไม่พบ session' }, { status: 404 });
   const history = sess ? sess.conversation : sanitizeHistory(body.history);
 
@@ -59,10 +63,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // "save lead"). Escalations are auto-saved + flagged so the sales team never
   // misses a hand-off; markEscalated only promotes a still-'ใหม่' lead so it
   // never clobbers a status a human set.
+  const savedQuoteIds: number[] = [];
   if (shouldPersistTurn(sess !== null, out.escalated)) {
     if (!sess) sess = await createSession();
     await saveConversation(sess.id, out.newHistory);
-    for (const q of out.quotes) await saveQuote(sess.id, q);
+    for (const q of out.quotes) savedQuoteIds.push(await saveQuote(sess.id, q));
     if (out.escalated) await markEscalated(sess.id);
   }
 
@@ -71,7 +76,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     sessionId,
     reply: out.reply,
     quotes: out.quotes.map((q, i) => ({
-      id: i, sessionId: sessionId ?? 0, productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice, createdAt: new Date().toISOString(),
+      // Real ai_quotes.id once persisted (escalation/existing session); for an
+      // unsaved plain-chat quote there is no DB row yet, so fall back to a
+      // transient within-turn index.
+      id: savedQuoteIds[i] ?? i, sessionId: sessionId ?? 0, productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice, createdAt: new Date().toISOString(),
     })),
     escalated: out.escalated,
   };

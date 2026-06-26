@@ -199,6 +199,12 @@ calc.ts อยู่ใน repo `print-calculator-next` แต่ฟีเจอ
 - ⚠️ **reply token ของ LINE หมดอายุ ~1 นาที** — Claude ตอบเร็ว (~2-5 วิ) ปกติทัน แต่เผื่อช้า → fallback ใช้ push API
 - Cloudflare Worker = dumb fan-out — ไม่ต้องแตะ, routing ทำที่ Apps Script
 
+#### 🔒 Acceptance criterion — session ownership / IDOR (audit **M5**, gate ของ 1b)
+ใน Phase 1a ทุก caller = staff ภายใน (admin/sales) → `loadSession` แบบ shared inbox **เป็น design ที่ตั้งใจ ไม่ใช่ช่องโหว่**. IDOR จริงเกิด**เมื่อเปิด LINE** เพราะลูกค้าแต่ละคนถือ `sessionId` ของตัวเอง → ถ้าไม่ผูก owner ลูกค้า A อ่านบทสนทนา/ราคาของลูกค้า B ได้. **ต้องทำตอนสร้าง LINE identity ใน 1b** (ผูกก่อน ไม่ได้ — ยังไม่มี identity model):
+1. เซ็ต `line_user_id` ตอนสร้าง session ฝั่ง LINE (`channel='line'`) + เซ็ต `channel='line'`
+2. LINE route โหลด session ด้วย `loadSession(id, { channel: 'line' })` **+ เช็ค `line_user_id` ตรงกับ sender** ก่อนคืนบทสนทนา (mismatch → 404, ไม่ใช่ leak)
+3. **มีแล้ว (prep 2026-06-26):** channel scope — staff chat route เรียก `loadSession(id, { channel: 'dashboard' })` → staff `sessionId` กับ LINE `sessionId` cross-load กันไม่ได้ตั้งแต่ก่อน 1b ([`lib/ai-quote/db.ts` loadSession](lib/ai-quote/db.ts) + [route](app/api/ai-quote/route.ts)). 1b เพิ่ม owner-check ทับ channel scope
+
 ---
 
 ## 8. Data Model (Postgres — v2 mirror)

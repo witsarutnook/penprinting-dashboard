@@ -57,8 +57,18 @@ export async function releaseLead(id: number, onlyOwner?: string): Promise<void>
   }
 }
 
-export async function loadSession(id: number): Promise<AiQuoteSession | null> {
-  const { rows } = await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id}`;
+/** Load a session by id. Pass `opts.channel` to scope the lookup to a single
+ *  channel — the staff chat route passes 'dashboard' so a staff sessionId can
+ *  never cross-load a future LINE-channel session (and vice-versa). This is the
+ *  M5 IDOR boundary set up ahead of Phase 1b; the LINE route will add owner
+ *  (LINE userId) binding on top of the channel scope. See design-ai-quoting.md §7. */
+export async function loadSession(
+  id: number,
+  opts?: { channel?: 'dashboard' | 'line' },
+): Promise<AiQuoteSession | null> {
+  const { rows } = opts?.channel
+    ? await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id} AND channel = ${opts.channel}`
+    : await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id}`;
   return rows[0] ? rowToSession(rows[0]) : null;
 }
 
@@ -70,12 +80,17 @@ export async function saveConversation(id: number, conversation: ConversationTur
      WHERE id = ${id}`;
 }
 
+/** Persist one compute_quote result. Returns the new ai_quotes.id so the route
+ *  can surface a real persisted id on the response (not a transient array
+ *  index) — closes the Low "quote id = array index" finding. */
 export async function saveQuote(
   sessionId: number, q: { productType: ProductType; spec: QuoteSpec; result: ComputeResult; unitPrice: number },
-): Promise<void> {
-  await sql`
+): Promise<number> {
+  const { rows } = await sql`
     INSERT INTO ai_quotes (session_id, product_type, spec, result, unit_price)
-    VALUES (${sessionId}, ${q.productType}, ${JSON.stringify(q.spec)}::jsonb, ${JSON.stringify(q.result)}::jsonb, ${q.unitPrice})`;
+    VALUES (${sessionId}, ${q.productType}, ${JSON.stringify(q.spec)}::jsonb, ${JSON.stringify(q.result)}::jsonb, ${q.unitPrice})
+    RETURNING id`;
+  return Number(rows[0].id);
 }
 
 export async function markEscalated(sessionId: number): Promise<void> {

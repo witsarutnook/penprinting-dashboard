@@ -101,7 +101,7 @@ export async function runQuoteTurn(
     for (const block of res.content) {
       if (block.type !== 'tool_use' || block.name !== 'compute_quote') continue;
       const inp = block.input as ComputeQuoteInput;
-      const outcome = await compute(inp);   // throws on 401/500 → caller maps to 500
+      const outcome = await compute(inp);   // throws on 401/500 → caller maps to 502
       if (outcome.ok) {
         quotes.push({ productType: outcome.productType, spec: outcome.spec, result: outcome.result, unitPrice: outcome.result.unitPrice });
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(outcome.result) });

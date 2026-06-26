@@ -327,6 +327,16 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### AI Quote — M5 IDOR resolved + 3 Low closed + housekeeping (2026-06-26) 🔒
+
+> ปิด AI Quote audit backlog ให้เหลือ 0 open. ไม่มี PR แยก — commit ตรง main (internal hardening + doc, ไม่กระทบ user flow). Gates เขียว Node 22 (type-check/lint/**193 tests**/build 40).
+
+**M5-loadsession-idor** — finding เองแนะนำ defer ไป 1b; **decision คุณนุ๊ก: fold เข้า Phase 1b spec + prep channel guard now**. Phase 1a shared team inbox (admin/sales ภายใน) → `loadSession` ไม่ผูก owner = **design ที่ตั้งใจ ไม่ใช่ช่องโหว่**; owner-binding ตอนนี้ = regression + ยังไม่มี identity model. IDOR จริงเกิดตอน LINE (1b) ที่ลูกค้าถือ sessionId เอง — fix นั้น (ผูก `line_user_id`) เป็นส่วนหนึ่งของ 1b เอง. **ทำ 2 อย่าง:** (1) เขียน M5 เป็น **acceptance criterion ของ Phase 1b** ใน [design-ai-quoting.md §7](design-ai-quoting.md) (set `line_user_id` + เช็ค sender ก่อนคืนบทสนทนา → mismatch 404) (2) **zero-regression channel guard:** staff chat route เรียก `loadSession(id, { channel: 'dashboard' })` → staff `sessionId` ↔ LINE `sessionId` cross-load กันไม่ได้ตั้งแต่ก่อน 1b ([db.ts](lib/ai-quote/db.ts) loadSession + [route](app/api/ai-quote/route.ts)). session ปัจจุบันทั้งหมด `channel='dashboard'` → ไม่กระทบ behavior.
+
+**3 Low ปิดหมด:** (1) **quote id=array index** — `saveQuote` คืน `ai_quotes.id` (`RETURNING id`) → route ใช้ `savedQuoteIds[i] ?? i` (real DB id ตอน persist; transient index ตอน unsaved plain chat). client ใช้ map-index เป็น key อยู่แล้ว ไม่เคยอ่าน `q.id` → zero behaviour change แต่ field truthful (2) **run.ts comment** `caller maps to 500`→**502** (route map compute throw เป็น 502 จริง) (3) **db-migrate row-count** เพิ่ม `ai_quote_sessions`+`ai_quotes` ใน counts array.
+
+**Housekeeping:** ปิด stale **PR [#3](https://github.com/witsarutnook/penprinting-dashboard/pull/3)** (FAB widget — ของจริง ship ผ่าน PR #4 `66d0286` แล้ว, branch `feat/ai-quote-fab` ไม่เคย merge). **Lesson**: security finding ที่ "ปิดเดี่ยวๆ ไม่ได้สะอาด" → แยกเป็น **non-regressive prep ทำได้ทันที** (channel scope) + **acceptance criterion fold เข้า phase ที่มี identity model** (owner-check) แทนที่จะ force owner-binding ที่ regress shared inbox.
+
 ### AI Quote prompt-tuning — book cover defaults (4 สี + Art 230) + hard-rule (2026-06-25) 🤖
 
 > **PR [#9](https://github.com/witsarutnook/penprinting-dashboard/pull/9) squash → [`0b93f8e`](https://github.com/witsarutnook/penprinting-dashboard/commit/0b93f8e)** (prompt-only). Spec: `docs/superpowers/specs/2026-06-25-ai-quote-book-cover-color-design.md`.
