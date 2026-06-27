@@ -1,5 +1,6 @@
 // lib/ai-quote/slip.ts
 import 'server-only';
+import type Anthropic from '@anthropic-ai/sdk';
 
 const THUNDER_BASE = process.env.THUNDER_API_URL ?? 'https://api.thunder.in.th/v2';
 
@@ -64,8 +65,6 @@ export function formatSlipReply(r: ThunderVerifyResponse): string {
   }
   return 'ขออภัยค่ะ ระบบอ่านสลิปไม่ได้ 🙏 รบกวนส่งรูปสลิปใหม่ให้ชัดเจน หรือรอทีมงานตรวจสอบให้นะคะ';
 }
-
-import type Anthropic from '@anthropic-ai/sdk';
 
 /** Cheap pre-filter: ask Haiku vision whether the image is a Thai bank/e-wallet
  *  transfer slip BEFORE spending a Thunder quota slot (Thunder counts every
