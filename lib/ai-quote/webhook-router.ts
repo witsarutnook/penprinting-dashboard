@@ -1,6 +1,6 @@
 // lib/ai-quote/webhook-router.ts
 import type { InboundMessage, ChannelAdapter } from './channels/types';
-import { isTrackCommand } from './track-flex';
+import { isTrackCommand, extractOrderId } from './track-flex';
 import type { ThunderVerifyResponse } from './slip';
 
 export type Route = 'slip' | 'track' | 'ai' | 'enter-ai' | 'exit-ai' | 'ignore';
@@ -45,7 +45,8 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     return;
   }
   if (route === 'track') {
-    const id = m.text!.trim().match(/^\/?track\s+(\d{6,})/i)![1];
+    const id = extractOrderId(m.text!);
+    if (!id) return;
     const state = await deps.loadOrder(Number(id));
     const flex = deps.buildOrderFlex(id, state.order ? state : null);
     await deps.adapter.reply(m, flex);
