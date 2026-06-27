@@ -44,4 +44,8 @@ describe('isSlipImage (Haiku vision pre-filter)', () => {
     const throwing = { messages: { create: async () => { throw new Error('boom'); } } } as never;
     expect(await isSlipImage(b64, 'image/png', { client: throwing, model: 'm' })).toBe(true);
   });
+  it('fail-safe: returns true when the model returns no text blocks', async () => {
+    const noText = { messages: { create: async () => ({ content: [] }) } } as never;
+    expect(await isSlipImage(b64, 'image/png', { client: noText, model: 'm' })).toBe(true);
+  });
 });

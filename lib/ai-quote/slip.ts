@@ -4,6 +4,12 @@ import type Anthropic from '@anthropic-ai/sdk';
 
 const THUNDER_BASE = process.env.THUNDER_API_URL ?? 'https://api.thunder.in.th/v2';
 
+const ALLOWED_MEDIA = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+type AllowedMedia = (typeof ALLOWED_MEDIA)[number];
+function toAllowedMedia(s: string): AllowedMedia {
+  return (ALLOWED_MEDIA as readonly string[]).includes(s) ? (s as AllowedMedia) : 'image/jpeg';
+}
+
 export interface ThunderVerifyResponse {
   success: boolean;
   message?: string;
@@ -56,7 +62,7 @@ export function formatSlipReply(r: ThunderVerifyResponse): string {
     if (r.data.isAccountMatched === false) return 'ยอดโอนนี้ดูไม่ตรงบัญชีของร้านค่ะ 🙏 รบกวนตรวจสอบเลขบัญชีปลายทางอีกครั้งนะคะ';
     const amount = r.data.rawSlip?.amount?.amount;
     const sender = r.data.rawSlip?.sender?.account?.name?.th;
-    const amountStr = typeof amount === 'number' ? amount.toLocaleString('th-TH', { minimumFractionDigits: 0 }) : null;
+    const amountStr = typeof amount === 'number' ? amount.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : null;
     let msg = 'ได้รับสลิปแล้วค่ะ ✅';
     if (amountStr) msg += ` ยอด ${amountStr} บาท`;
     if (sender) msg += ` จากคุณ${sender}`;
@@ -82,13 +88,14 @@ export async function isSlipImage(
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType as 'image/png', data: imageBase64 } },
+          { type: 'image', source: { type: 'base64', media_type: toAllowedMedia(mediaType), data: imageBase64 } },
           { type: 'text', text: 'รูปนี้เป็นสลิป/หลักฐานการโอนเงินของธนาคารไทยหรือ e-wallet ใช่ไหม ตอบแค่ "yes" หรือ "no" คำเดียว' },
         ],
       }],
     });
     const text = (res.content as Array<{ type: string; text?: string }>)
       .filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ').trim().toLowerCase();
+    if (!text) return true; // empty/text-less response → fail-safe (don't drop a possible slip)
     return text.startsWith('yes') || text.startsWith('ใช่');
   } catch {
     return true; // fail-safe
