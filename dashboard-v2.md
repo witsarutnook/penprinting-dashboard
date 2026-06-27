@@ -1,6 +1,6 @@
 # Penprinting Dashboard v2 — Project Memory
 
-`dashboard.penprinting.co` — Next.js 14 strangler dashboard ที่ค่อยๆ ย้าย feature มาจาก WordPress dashboard เดิม (`app.penprinting.co/production-monitoring`)
+`dashboard.penprinting.co` — Next.js 15 strangler dashboard ที่ค่อยๆ ย้าย feature มาจาก WordPress dashboard เดิม (`app.penprinting.co/production-monitoring`)
 
 > **Companion doc**: shared infrastructure (Apps Script API, Google Sheet schema, role/permission matrix, lessons learned ที่ apply ทั้ง 2 ฝั่ง) อยู่ที่ [`production-monitoring/monitoring.md`](../production-monitoring/monitoring.md). เอกสารนี้เน้นเฉพาะส่วนที่เป็น Next.js ของ v2 — features, version history, deploy, patterns, lessons.
 >
@@ -13,7 +13,7 @@
 ระบบ Kanban + order entry + analytics + calendar + tracking — port จาก WP สู่ Next.js แบบ strangler pattern. ทั้ง 2 ฝั่งใช้ **Google Sheet เดียวกัน** ผ่าน Apps Script API → coexist ได้
 
 ### Stack
-- **Framework**: Next.js 14 (App Router) + TypeScript + Tailwind 3
+- **Framework**: Next.js 15 (App Router) + React 19 + TypeScript + Tailwind 3 _(migrated 2026-06-20, soak-stable 2026-06-27)_
 - **Backend connection**: Apps Script Web App (HMAC-signed service token)
 - **Auth**: cookie-based (HMAC-SHA256, Edge-compatible via Web Crypto)
 - **Hosting**: Vercel (auto-deploy ทุก `git push origin main`)
@@ -386,14 +386,14 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 ### Next 14→15 + React 18→19 migration + board hydration fix (2026-06-20) 🏁
 
-**Goal:** ปิด migration ตัวสุดท้ายของ 4 Vercel repo (calc/web/photobook จบแล้ว). ไม่มี architectural change — async-request-API + deps bump ตาม [migration-plan-next15.md](migration-plan-next15.md) (audit 6/18, ~27 จุด, no re-audit).
+**Goal:** ปิด migration ตัวสุดท้ายของ 4 Vercel repo (calc/web/photobook จบแล้ว). ไม่มี architectural change — async-request-API + deps bump ตาม plan `migration-plan-next15.md` (audit 6/18, ~27 จุด, no re-audit; plan **ลบแล้ว 2026-06-27** หลัง soak ปิด — งานจบ, history อยู่ใน git).
 
 **PR [#1](https://github.com/witsarutnook/penprinting-dashboard/pull/1) → `2c22301` (squash), 2 commits:**
 
 1. [`1d9cb6e`](https://github.com/witsarutnook/penprinting-dashboard/commit/1d9cb6e) **migration** — deps (next 15.5.19 · react/react-dom 19.2.7 · @types 19 · eslint-config-next 15) · async `cookies()` (await ใน route-helpers/api currentActor + 12 pages) · async `params` Promise<> (3 dynamic pages + raw/[id]) · async `searchParams` Promise<> (6 pages) · React 19 global `JSX` namespace → `import { type JSX }` (history-tab) · eslint-config-next 15 จับ app-router `<a href>` → เก็บ 5 ลิงก์ full-reload ที่ตั้งใจ (3 filter-reset + 2 error-boundary) ด้วย documented eslint-disable · tsconfig auto-add `target: ES2017`. Codemod ทำ cat 1-3, hand-fix lib/api dynamic-import cookies() + print page (revert codemod's 323-line JSX churn → hand-edit 3 บรรทัด)
 2. [`45d6c77`](https://github.com/witsarutnook/penprinting-dashboard/commit/45d6c77) **board #418 fix** — React 19 throw hydration text mismatch บน /board (React 18 กลืนเงียบ). **ยืนยัน real ผ่าน incognito** (ไม่ใช่ extension) + harness พิสูจน์ค่า**ถูกต้อง** (date math offset cancel เป๊ะ; mismatch = data-derived text จาก live `useDeltaSync` snapshot). **Root-class fix**: `BoardClient` gate data-derived tree ด้วย post-mount flag → SSR + first client render = `<BoardSkeleton/>` เดียวกัน (byte-clean hydration), board จริง paint หลัง mount. extract `BoardSkeleton` → `app/board/board-skeleton.tsx` (share กับ page.tsx Suspense fallback). + `.eslintrc` ignore `next-env.d.ts` (Next 15.5 routes.d.ts triple-slash ref).
 
-**Verify:** gates เขียว Node 22 (type-check/lint/148 tests/build 38 หน้า). **Preview smoke 8/8** (login edge HMAC · board · orders · analytics+recharts · calendar `?m=` · print async params · track edge route · create-order cache-bust ผ่าน order จริง #202606110) · **#418 fix verified ทั้ง preview + production** (skeleton→board, console 0 error). Soak: เฝ้า Sentry 1-2 วัน. **Lessons** → [[feedback_react19_hydration_realtime_board]] (real-time delta-sync view อย่า SSR volatile content บน React 19) + [[feedback_port_sibling_repo_framework_drift]] (codemod JSX churn → revert+hand-edit หน้าใหญ่).
+**Verify:** gates เขียว Node 22 (type-check/lint/148 tests/build 38 หน้า). **Preview smoke 8/8** (login edge HMAC · board · orders · analytics+recharts · calendar `?m=` · print async params · track edge route · create-order cache-bust ผ่าน order จริง #202606110) · **#418 fix verified ทั้ง preview + production** (skeleton→board, console 0 error). **✅ Soak ปิด 2026-06-27** (1 สัปดาห์): routes health-check เขียวหมด (`/login` 200 · `/board`/`/` 307→login · `/track` 200 · RSC payload ปกติ) + คุณนุ๊ก verify /board ด้วยตา (skeleton→board, console 0 error) + Sentry project dashboard ไม่มี error spike → migration **stable**, plan doc ลบ. **Next 15 + React 19 = 4/4 repos จบ 🏁**. **Lessons** → [[feedback_react19_hydration_realtime_board]] (real-time delta-sync view อย่า SSR volatile content บน React 19) + [[feedback_port_sibling_repo_framework_drift]] (codemod JSX churn → revert+hand-edit หน้าใหญ่).
 
 ### Spec "อื่นๆ" — กราฟฟิก row + staff-name resolution (2026-06-17)
 

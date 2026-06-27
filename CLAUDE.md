@@ -1,6 +1,6 @@
 # Penprinting Dashboard v2
 
-`dashboard.penprinting.co` — Next.js 14 App Router dashboard ที่ค่อยๆ ย้าย feature มาจาก WordPress dashboard เดิม (`app.penprinting.co/production-monitoring`) แบบ **strangler pattern**
+`dashboard.penprinting.co` — Next.js 15 App Router dashboard ที่ค่อยๆ ย้าย feature มาจาก WordPress dashboard เดิม (`app.penprinting.co/production-monitoring`) แบบ **strangler pattern**
 
 ## ★ ก่อนแก้อะไร — อ่านไฟล์นี้ก่อน
 
@@ -13,7 +13,7 @@
 7. **[../production-monitoring/monitoring.md](../production-monitoring/monitoring.md)** — WP source of truth + **shared infrastructure** (Sheet schema, security model, recurring lessons)
 
 ## Stack
-- **Next.js 14** (App Router) + TypeScript + Tailwind 3
+- **Next.js 15** (App Router) + React 19 + TypeScript + Tailwind 3 _(migrated 2026-06-20, soak-stable 2026-06-27)_
 - **Hosting**: Vercel auto-deploy ทุก `git push origin main`
 - **GitHub**: `witsarutnook/penprinting-dashboard` (private)
 - **Font**: Anuphan (Thai) + Inter (numerals) ผ่าน next/font/google
