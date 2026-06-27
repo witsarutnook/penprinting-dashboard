@@ -1,7 +1,7 @@
 ---
 name: AI Quoting — Research + Design Doc
 description: ระบบ AI ออกใบเสนอราคางานพิมพ์อัตโนมัติ — เชื่อม dashboard + calculator + LINE OA + (optional) PEAK
-status: IN PROGRESS — Phase 0 ✅ + Phase 1a ✅ built+preview-verified+audited 2026-06-23 (branch feat/ai-quote-phase1a, รอ merge + prod smoke). ถัดไป = Phase 1b (LINE OA)
+status: IN PROGRESS — Phase 0 ✅ + Phase 1a ✅ live (merged) + Phase 1b-A ✅ built+reviewed 2026-06-27 (PR #11 — dashboard ถือ LINE webhook เต็มตัว: slip Thunder API + /track parity, AI ยังปิด, รอ cutover+merge). ถัดไป = Phase 1b-B (เปิด AI). ดู spec/plan ใหม่ docs/superpowers/{specs,plans}/2026-06-27-ai-quote-phase1b-*
 created: 2026-05-17
 author: Claude + คุณนุ๊ก
 tags: [dashboard, ai, quoting, design-doc]

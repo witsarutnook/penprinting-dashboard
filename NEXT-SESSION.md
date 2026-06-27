@@ -2,6 +2,22 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-06-27 (later) — AI Quote Phase 1b-A: LINE webhook takeover (slip+track parity) ✅ BUILT + reviewed → PR [#11](https://github.com/witsarutnook/penprinting-dashboard/pull/11) (รอ cutover+merge):** คุณนุ๊กเลือก focus = Phase 1b (LINE OA ลูกค้าตีราคาเอง) ต่อจาก soak. ทำ superpowers flow ครบ: **brainstorm** (decisions B1-B10) → **spec** (`docs/superpowers/specs/2026-06-27-ai-quote-phase1b-line-webhook-takeover-design.md`) → **plan** (`docs/superpowers/plans/2026-06-27-ai-quote-phase1b-a-line-webhook-takeover.md`) → **subagent-driven execution** (4 work units, spec+quality review 2 ชั้น/unit + final review). **Architectural pivot (คุณนุ๊กเสนอ): Path 1 — dashboard ถือ LINE webhook เต็มตัว** แทนพึ่ง Thunder-webhook/Cloudflare Worker → เรียก **Thunder verify API เอง** (slip), `/track` เอง, AI quote (1b-B). **channel-agnostic** (`channel`+`channel_user_id`) → Messenger เสียบทีหลัง (gate = Meta App Review). **1b-A** (PR #11, branch `feat/ai-quote-phase1b-a-line-webhook`, 16 commits): slip (Thunder `verify/bank` port จาก Remedy `lib/thunder.ts` + **Haiku vision pre-filter** กัน quota burn — Thunder นับทุก request รวม non-slip) + `/track` Flex (port `buildOrderFlex_`→TS, loadOrder-backed) + webhook route (verify HMAC→ack 200→`after()`). **AI ยังปิด** (`AI_QUOTE_LINE_ENABLED` flag, no-op stub). Gates เขียว Node 22: type-check/lint/**227 tests** (+34)/build (route `ƒ /api/ai-quote/line`). **Review จับ 3 bug จริง:** TZ day-hint เพี้ยนบน UTC server (port จาก Apps Script Bangkok-TZ) · slip vision fail-safe ไม่ครอบ empty content · reply interface โกหก type (object ผ่าน `as string`). **Lesson:** paid per-call API (Thunder) → cheap vision/heuristic gate ก่อนจ่าย quota.
+>
+> ## ⏳ Pending (2026-06-27 later) — คุณนุ๊ก action ก่อน merge PR #11 (Task 13 cutover)
+> 1. **Thunder dashboard** → + เพิ่มสาขา "Penprinting" → KeyAPI + ตั้ง 3 บัญชีรับเงิน Penprinting + เช็ค quota
+> 2. **LINE Console** (OA penprinting 2008126362) → copy Channel secret + access token
+> 3. **Vercel env** `penprinting-dashboard`: `LINE_CHANNEL_SECRET` `LINE_CHANNEL_TOKEN` `THUNDER_API_KEY` `THUNDER_API_URL` → **redeploy** (env live ต่อเมื่อ deploy ใหม่)
+> 4. **บันทึก Webhook URL เดิม** (rollback) → ตั้ง Webhook URL = `https://dashboard.penprinting.co/api/ai-quote/line` → Verify
+> 5. **Smoke:** สลิปจริง→ตอบผล · รูปไม่ใช่สลิป→เงียบ (ไม่กิน quota) · `/track <เลข>`→Flex · ข้อความทั่วไป→เงียบ · กลุ่ม→เงียบ. Rollback = ชี้ webhook กลับ
+> 6. **ดู reply slip-check เดิม 1 เคส** → จูน wording slip handler ให้ใกล้เคียง (open item §8)
+> 7. **(ถ้าจะทำ Messenger)** เริ่ม submit **Meta App Review + Business Verification** คู่ขนาน (gate เป็นสัปดาห์)
+>
+> ## ⏳ Next — Phase 1b-B (plan แยก หลัง 1b-A cutover นิ่ง)
+> เปิด AI quote: `channel_user_id` migration · mode state KV (opt-in rich menu "ขอราคา AI" + idle timeout) · customer prompt variant (ภาษาชาวบ้าน) · escalation push กลุ่มพนักงาน · qualified-lead filter ใน /quote-leads · M5 owner-check ปิดสะอาดด้วย channel_user_id (webhook-verified)
+>
+> ---
+>
 > **Session 2026-06-27 — Dashboard Next 15 + React 19 soak ปิด ✅ (migration 4/4 repos จบ 🏁):** ครบ soak window 1 สัปดาห์ (ship 6/20 → 6/27). scheduled check `dashboard-next15-soak-end-check` fire เมื่อเช้า 9:00. **Health-check production (agent, `/usr/bin/curl`):** `/login` 200 · `/`+`/board` 307→login (gated, ปกติ) · `/track` 200 · `/login` body มี title `เข้าสู่ระบบ | PP Dashboard` + RSC payload `__next_f` ×5 (Next 15 streaming ปกติ, ไม่มี error page). **คุณนุ๊ก verify manual: "ผ่าน"** — /board render skeleton→board ปกติ console 0 error (#418 fix holds) + Sentry project dashboard ไม่มี error spike ตั้งแต่ 6/20. **Cleanup:** ลบ `migration-plan-next15.md` (งานจบ, history ใน git) · update Stack ใน dashboard-v2.md + CLAUDE.md `Next.js 14`→`15 + React 19` · unlink dead refs · record soak-closed ใน Version History + AUDIT-BACKLOG. local==origin clean ก่อนเริ่ม (`15316f7`). **Lesson:** curl ไม่อยู่ใน PATH (rtk/env) → ใช้ `/usr/bin/curl` ตรง สำหรับ verification-critical HTTP check ([[feedback_rtk_git_pull_stale_uptodate]] family).
 >
 > ## ⏳ Pending (2026-06-27)
