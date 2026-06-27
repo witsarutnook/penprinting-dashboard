@@ -5,7 +5,7 @@ import { verifyLineSignature } from '@/lib/ai-quote/channels/line';
 
 const SECRET = 'test_channel_secret';
 function sign(body: string, secret = SECRET): string {
-  return crypto.createHmac('sha256', secret).update(body).digest('base64');
+  return crypto.createHmac('sha256', secret).update(body, 'utf8').digest('base64');
 }
 
 describe('verifyLineSignature', () => {

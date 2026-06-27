@@ -13,7 +13,7 @@ interface LineEvent {
 /** Verify LINE webhook signature: base64(HMAC-SHA256(rawBody, secret)) === header.
  *  Constant-time compare; returns false on any malformed input (never throws). */
 export function verifyLineSignature(rawBody: string, signature: string, secret: string): boolean {
-  if (!signature || !secret) return false;
+  if (!rawBody || !signature || !secret) return false;
   let expected: Buffer;
   let got: Buffer;
   try {
