@@ -66,7 +66,12 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
     const parts = due.split('/');
     if (parts.length === 3) {
       const dt    = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-      const today = new Date(); today.setHours(0, 0, 0, 0);
+      // Build "today" from the Bangkok calendar date so both dt and today are server-local-midnight
+      // of their Bangkok dates — the subtraction cancels cleanly even on a UTC server (Vercel).
+      // (Apps Script ran in Bangkok TZ so this wasn't needed there; Node on Vercel runs UTC, where
+      //  new Date(); setHours(0,...) = UTC-midnight = 07:00 Bangkok → off-by-one 00:00–07:00 BKK.)
+      const nowBkk = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-');
+      const today = new Date(+nowBkk[0], +nowBkk[1] - 1, +nowBkk[2]);
       const daysLeft = Math.floor((dt.getTime() - today.getTime()) / 86400000);
       if (daysLeft < 0) {
         daysHint = 'เลยกำหนด ' + Math.abs(daysLeft) + ' วัน';
@@ -325,7 +330,8 @@ function cleanDate_(d: unknown): string {
       timeZone: 'Asia/Bangkok',
       day: '2-digit', month: '2-digit', year: 'numeric',
     });
-    return fmt.format(ts); // returns dd/mm/yyyy
+    const result = fmt.format(ts); // usually dd/mm/yyyy, but ECMA-402 doesn't mandate the separator
+    return /^\d{2}\/\d{2}\/\d{4}$/.test(result) ? result : s;
   }
 
   // 3) Parse ไม่ได้ → คืนค่าเดิม
