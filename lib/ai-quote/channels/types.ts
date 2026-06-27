@@ -26,8 +26,8 @@ export interface ChannelAdapter {
   parseEvents(body: unknown): InboundMessage[];
   /** ดึง bytes ของรูปจาก provider (สำหรับ slip). */
   downloadImage(msg: InboundMessage): Promise<Blob>;
-  /** ตอบกลับ (ฟรีถ้ามี replyToken). */
-  reply(msg: InboundMessage, text: string, quickReplies?: QuickReply[]): Promise<void>;
+  /** ตอบกลับ (ฟรีถ้ามี replyToken). message = text หรือ flex/object. */
+  reply(msg: InboundMessage, message: string | object, quickReplies?: QuickReply[]): Promise<void>;
   /** ส่ง push by user id (เผื่อ reply token หมด / แจ้งทีหลัง). */
   push(channelUserId: string, text: string): Promise<void>;
 }

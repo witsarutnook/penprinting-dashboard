@@ -75,8 +75,9 @@ function quickReplyPayload(qrs?: QuickReply[]) {
 
 /** ตอบกลับด้วย reply token (ฟรี). messages = text หรือ flex object. */
 export async function replyLine(replyToken: string, message: string | object, qrs?: QuickReply[]): Promise<void> {
+  const qrp = quickReplyPayload(qrs);
   const msg = typeof message === 'string'
-    ? { type: 'text', text: message, ...(quickReplyPayload(qrs) ? { quickReply: quickReplyPayload(qrs) } : {}) }
+    ? { type: 'text', text: message, ...(qrp ? { quickReply: qrp } : {}) }
     : message;
   const res = await fetch(`${LINE_API}/message/reply`, {
     method: 'POST',
@@ -103,11 +104,11 @@ export function buildLineAdapter(secret: string): ChannelAdapter {
     verifySignature: (rawBody, sig) => verifyLineSignature(rawBody, sig, secret),
     parseEvents: parseLineEvents,
     downloadImage: (msg) => downloadLineImage(msg.imageMessageId!),
-    reply: async (msg, text, qrs) => {
+    reply: async (msg, message, qrs) => {
       try {
-        if (msg.replyToken) { await replyLine(msg.replyToken, text, qrs); return; }
+        if (msg.replyToken) { await replyLine(msg.replyToken, message, qrs); return; }
       } catch { /* token หมด/ใช้แล้ว → push */ }
-      await pushLine(msg.channelUserId, text);
+      await pushLine(msg.channelUserId, message);
     },
     push: (id, text) => pushLine(id, text),
   };

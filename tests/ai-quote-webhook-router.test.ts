@@ -29,13 +29,13 @@ describe('routeInbound (Phase 1b-A, aiEnabled=false)', () => {
 });
 
 function stubDeps(over: Record<string, unknown> = {}) {
-  const replies: string[] = [];
+  const replies: unknown[] = [];
   return {
     replies,
     deps: {
       adapter: {
         downloadImage: async () => new Blob(['x']),
-        reply: async (_m: unknown, text: string) => { replies.push(text); },
+        reply: async (_m: unknown, message: string | object) => { replies.push(message); },
         push: async () => {},
       },
       blobToBase64: async () => ({ data: 'AAA', mediaType: 'image/jpeg' }),
@@ -71,7 +71,12 @@ describe('handleInbound', () => {
   it('answers /track with a flex card', async () => {
     const { replies, deps } = stubDeps();
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track 202606110', replyToken: 'rt' }, deps as never);
-    expect(replies.length).toBe(1); // flex sent
+    expect(replies[0]).toMatchObject({ type: 'flex' }); // flex object sent
+  });
+  it('replies (not-found bubble) when the order does not exist', async () => {
+    const { replies, deps } = stubDeps({ loadOrder: async () => ({ order: null, job: null, shipped: null, cancelled: null }) });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track 999999', replyToken: 'rt' }, deps as never);
+    expect(replies.length).toBe(1);
   });
   it('ignores non-track text when AI disabled', async () => {
     const { replies, deps } = stubDeps();

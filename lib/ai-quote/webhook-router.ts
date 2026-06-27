@@ -48,7 +48,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     const id = m.text!.trim().match(/^\/?track\s+(\d{6,})/i)![1];
     const state = await deps.loadOrder(Number(id));
     const flex = deps.buildOrderFlex(id, state.order ? state : null);
-    await deps.adapter.reply(m, flex as unknown as string);
+    await deps.adapter.reply(m, flex);
     return;
   }
   // slip/track เท่านั้นใน 1b-A. ai/enter-ai/exit-ai → 1b-B.
