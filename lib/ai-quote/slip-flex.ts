@@ -2,7 +2,7 @@
 // Slip-verify result → LINE Flex card (Penprinting theme). Pure + total: never throws,
 // every field access is null-safe. altText reuses formatSlipReply (notification + fallback
 // text when a device can't render Flex). Mirrors the buildOrderFlex pattern in track-flex.ts.
-import { formatSlipReply, type ThunderVerifyResponse } from './slip';
+import { formatSlipReply, type ThunderVerifyResponse, type ThunderParty } from './slip';
 
 type State = 'success' | 'duplicate' | 'mismatch' | 'unreadable';
 
@@ -19,10 +19,7 @@ const TEXT = '#2c2c2a';
 const MUTED = '#888780';
 const SEP = { type: 'separator', margin: 'md', color: '#eceae4' } as const;
 
-type Party = {
-  account?: { name?: { th?: string; en?: string }; number?: string };
-  bank?: { nameTh?: string; nameEn?: string };
-};
+type Party = ThunderParty;
 
 /** Mirror formatSlipReply priority exactly so the card + its altText always agree. */
 function classify(r: ThunderVerifyResponse): State {
@@ -51,8 +48,11 @@ function fmtDate(iso?: string): string | null {
 function partyName(p?: Party): string {
   return p?.account?.name?.th || p?.account?.name?.en || '-';
 }
+function bankName(p?: Party): string | undefined {
+  return p?.bank?.name || p?.bank?.nameTh || p?.bank?.nameEn; // Thunder v2 / legacy dual-read
+}
 function partySub(p?: Party): string {
-  return [p?.bank?.nameTh || p?.bank?.nameEn, p?.account?.number].filter(Boolean).join(' · ');
+  return [bankName(p), p?.account?.number].filter(Boolean).join(' · ');
 }
 
 function partyRow(label: string, p?: Party): Record<string, unknown> {
@@ -105,7 +105,7 @@ export function buildSlipFlex(result: ThunderVerifyResponse): Record<string, unk
 
   if (state === 'success') {
     if (amount) body.push(amountBlock(amount));
-    const date = fmtDate(raw?.transDate);
+    const date = fmtDate(raw?.date ?? raw?.transDate); // Thunder v2 / legacy dual-read
     if (date) body.push({ type: 'text', text: date, size: 'xs', color: MUTED });
     body.push({ ...SEP });
     body.push(partyRow('ผู้โอน', raw?.sender));

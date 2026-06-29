@@ -10,6 +10,12 @@ function toAllowedMedia(s: string): AllowedMedia {
   return (ALLOWED_MEDIA as readonly string[]).includes(s) ? (s as AllowedMedia) : 'image/jpeg';
 }
 
+export interface ThunderParty {
+  account?: { name?: { th?: string; en?: string }; number?: string };
+  // bank: Thunder v2 uses { id, name, short }; Remedy/legacy used { nameTh, nameEn } — read both
+  bank?: { id?: string; name?: string; short?: string; nameTh?: string; nameEn?: string };
+}
+
 export interface ThunderVerifyResponse {
   success: boolean;
   message?: string;
@@ -19,10 +25,11 @@ export interface ThunderVerifyResponse {
     isAccountMatched?: boolean;
     rawSlip?: {
       transRef?: string;
-      transDate?: string;
+      date?: string;       // Thunder v2 field name
+      transDate?: string;  // legacy/Remedy alias — dual-read
       amount?: { amount?: number; local?: { amount?: number } };
-      sender?: { account?: { name?: { th?: string; en?: string }; number?: string }; bank?: { nameTh?: string; nameEn?: string } };
-      receiver?: { account?: { name?: { th?: string; en?: string }; number?: string }; bank?: { nameTh?: string; nameEn?: string } };
+      sender?: ThunderParty;
+      receiver?: ThunderParty;
       [k: string]: unknown;
     };
     [k: string]: unknown;
