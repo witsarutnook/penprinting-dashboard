@@ -41,7 +41,7 @@ function stubDeps(over: Record<string, unknown> = {}) {
       blobToBase64: async () => ({ data: 'AAA', mediaType: 'image/jpeg' }),
       isSlipImage: async () => true,
       verifyBankSlipImage: async () => ({ success: true, data: { isDuplicate: false, isAccountMatched: true, rawSlip: { amount: { amount: 50 } } } }),
-      formatSlipReply: () => 'SLIP_OK',
+      buildSlipFlex: () => ({ type: 'flex', altText: 'SLIP_OK' }),
       loadOrder: async () => ({ order: { name: 'งานเอ' }, job: null, shipped: null, cancelled: null }),
       buildOrderFlex: () => ({ type: 'flex' }),
       anthropic: {} as never,
@@ -53,10 +53,10 @@ function stubDeps(over: Record<string, unknown> = {}) {
 }
 
 describe('handleInbound', () => {
-  it('verifies a slip image and replies', async () => {
+  it('verifies a slip image and replies with a flex card', async () => {
     const { replies, deps } = stubDeps();
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, deps as never);
-    expect(replies).toEqual(['SLIP_OK']);
+    expect(replies[0]).toMatchObject({ type: 'flex', altText: 'SLIP_OK' });
   });
   it('skips Thunder when image is NOT a slip', async () => {
     let thunderCalled = false;

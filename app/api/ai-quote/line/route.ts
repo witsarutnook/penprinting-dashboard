@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest, after } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildLineAdapter } from '@/lib/ai-quote/channels/line';
 import { handleInbound, type HandleDeps } from '@/lib/ai-quote/webhook-router';
-import { isSlipImage, verifyBankSlipImage, formatSlipReply } from '@/lib/ai-quote/slip';
+import { isSlipImage, verifyBankSlipImage } from '@/lib/ai-quote/slip';
+import { buildSlipFlex } from '@/lib/ai-quote/slip-flex';
 import { buildOrderFlex } from '@/lib/ai-quote/track-flex';
 import { loadOrder } from '@/lib/api';
 
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // isSlipImage: concrete type uses Anthropic, interface uses unknown — safe cast
           isSlipImage: isSlipImage as HandleDeps['isSlipImage'],
           verifyBankSlipImage,
-          formatSlipReply,
+          buildSlipFlex,
           // loadOrder: concrete type returns LoadOrderResponse, interface uses loose type — safe cast (via unknown)
           loadOrder: loadOrder as unknown as HandleDeps['loadOrder'],
           // buildOrderFlex: concrete type uses TrackState|null, interface uses unknown — safe cast
