@@ -3,26 +3,22 @@ import { describe, it, expect } from 'vitest';
 import { formatSlipReply } from '@/lib/ai-quote/slip';
 
 describe('formatSlipReply', () => {
-  it('confirms a valid slip with amount + sender', () => {
+  const EXPECTED = 'อัพเดทผลการตรวจสอบสลิป';
+  it('uses the generic altText for a valid slip', () => {
     const msg = formatSlipReply({ success: true, data: {
       isDuplicate: false, isAccountMatched: true,
       rawSlip: { amount: { amount: 1500 }, sender: { account: { name: { th: 'สมชาย ใจดี' } } } },
     } });
-    expect(msg).toContain('1,500');
-    expect(msg).toContain('สมชาย');
-    expect(msg).toMatch(/ได้รับสลิป|ขอบคุณ/);
+    expect(msg).toBe(EXPECTED);
   });
-  it('flags a duplicate slip', () => {
-    const msg = formatSlipReply({ success: true, data: { isDuplicate: true } });
-    expect(msg).toMatch(/เคยส่ง|ซ้ำ/);
+  it('uses the generic altText for a duplicate slip', () => {
+    expect(formatSlipReply({ success: true, data: { isDuplicate: true } })).toBe(EXPECTED);
   });
-  it('flags an account mismatch', () => {
-    const msg = formatSlipReply({ success: true, data: { isDuplicate: false, isAccountMatched: false } });
-    expect(msg).toMatch(/ไม่ตรง/);
+  it('uses the generic altText for an account mismatch', () => {
+    expect(formatSlipReply({ success: true, data: { isDuplicate: false, isAccountMatched: false } })).toBe(EXPECTED);
   });
-  it('handles an unreadable slip (SLIP_NOT_FOUND)', () => {
-    const msg = formatSlipReply({ success: false, error: { code: 'SLIP_NOT_FOUND', message: 'x' } });
-    expect(msg).toMatch(/อ่านสลิปไม่ได้|รบกวนส่งใหม่/);
+  it('uses the generic altText for an unreadable slip (SLIP_NOT_FOUND)', () => {
+    expect(formatSlipReply({ success: false, error: { code: 'SLIP_NOT_FOUND', message: 'x' } })).toBe(EXPECTED);
   });
 });
 
