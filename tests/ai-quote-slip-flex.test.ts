@@ -4,6 +4,7 @@ import { buildSlipFlex } from '@/lib/ai-quote/slip-flex';
 import { formatSlipReply } from '@/lib/ai-quote/slip';
 import type { ThunderVerifyResponse } from '@/lib/ai-quote/slip';
 
+// Real Thunder v2 shape (per document.thunder.in.th): date (not transDate) + bank.name (not bank.nameTh)
 const success: ThunderVerifyResponse = {
   success: true,
   data: {
@@ -11,10 +12,10 @@ const success: ThunderVerifyResponse = {
     isAccountMatched: true,
     rawSlip: {
       transRef: 'REF016180114150',
-      transDate: '2026-06-29T10:46:00+07:00',
+      date: '2026-06-29T12:05:00+07:00',
       amount: { amount: 10000 },
-      sender: { account: { name: { th: 'สมิง อ.' }, number: 'xxx-x-x513-7' }, bank: { nameTh: 'กสิกรไทย' } },
-      receiver: { account: { name: { th: 'บจก. เพ็ญพรินติ้ง' }, number: 'xxx-x-x360-3' }, bank: { nameTh: 'กสิกรไทย' } },
+      sender: { account: { name: { th: 'สมิง อ.' } }, bank: { id: '004', name: 'กสิกรไทย', short: 'KBANK' } },
+      receiver: { account: { name: { th: 'บจก. เพ็ญพรินติ้ง' } }, bank: { id: '004', name: 'กสิกรไทย', short: 'KBANK' } },
     },
   },
 };
@@ -40,7 +41,17 @@ describe('buildSlipFlex', () => {
     expect(s).toContain('สมิง');         // sender
     expect(s).toContain('เพ็ญพรินติ้ง');  // receiver
     expect(s).toContain('REF016180114150'); // transRef
-    expect(s).toContain('กสิกรไทย');     // bank
+    expect(s).toContain('กสิกรไทย');     // bank (from bank.name)
+    expect(s).toContain('12:05');        // transaction time (from date)
+  });
+
+  it('dual-read: also renders bank + date from the legacy Remedy shape (bank.nameTh / transDate)', () => {
+    const s = json(buildSlipFlex({ success: true, data: { isDuplicate: false, isAccountMatched: true, rawSlip: {
+      amount: { amount: 5 }, transDate: '2026-06-29T09:30:00+07:00',
+      sender: { account: { name: { th: 'ก' } }, bank: { nameTh: 'ไทยพาณิชย์' } },
+    } } }));
+    expect(s).toContain('ไทยพาณิชย์'); // bank.nameTh fallback
+    expect(s).toContain('09:30');      // transDate fallback
   });
 
   it('every state carries the Penprinting footer (not Thunder branding)', () => {
