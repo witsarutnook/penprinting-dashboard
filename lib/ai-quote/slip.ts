@@ -18,8 +18,11 @@ export interface ThunderVerifyResponse {
     isAmountMatched?: boolean;
     isAccountMatched?: boolean;
     rawSlip?: {
-      amount?: { amount?: number };
-      sender?: { account?: { name?: { th?: string; en?: string } } };
+      transRef?: string;
+      transDate?: string;
+      amount?: { amount?: number; local?: { amount?: number } };
+      sender?: { account?: { name?: { th?: string; en?: string }; number?: string }; bank?: { nameTh?: string; nameEn?: string } };
+      receiver?: { account?: { name?: { th?: string; en?: string }; number?: string }; bank?: { nameTh?: string; nameEn?: string } };
       [k: string]: unknown;
     };
     [k: string]: unknown;

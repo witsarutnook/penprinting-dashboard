@@ -23,7 +23,7 @@ export interface HandleDeps {
   blobToBase64: (b: Blob) => Promise<{ data: string; mediaType: string }>;
   isSlipImage: (b64: string, mediaType: string, d: { client: unknown; model: string }) => Promise<boolean>;
   verifyBankSlipImage: (image: Blob, opts?: { matchAccount?: boolean }) => Promise<ThunderVerifyResponse>;
-  formatSlipReply: (r: ThunderVerifyResponse) => string;
+  buildSlipFlex: (r: ThunderVerifyResponse) => Record<string, unknown>;
   loadOrder: (id: number) => Promise<{ order: unknown } & Record<string, unknown>>;
   buildOrderFlex: (orderId: string, state: unknown) => Record<string, unknown>;
   anthropic: unknown;
@@ -41,7 +41,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     const looksLikeSlip = await deps.isSlipImage(data, mediaType, { client: deps.anthropic, model: deps.visionModel });
     if (!looksLikeSlip) return; // ไม่ใช่สลิป → เงียบ (ไม่เปลือง Thunder quota)
     const result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
-    await deps.adapter.reply(m, deps.formatSlipReply(result));
+    await deps.adapter.reply(m, deps.buildSlipFlex(result));
     return;
   }
   if (route === 'track') {
