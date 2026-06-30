@@ -85,7 +85,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   if (route === 'groupid') {
     const id = m.groupId || m.roomId;
     const reply = id
-      ? `LINE Group ID:\n${id}\n\nนำ ID นี้ไปตั้งค่าระบบติดตามงานให้กลุ่มลูกค้าได้เลยครับ`
+      ? `LINE Group ID:\n${id}`
       : 'คำสั่ง /groupid ใช้ได้เฉพาะในกลุ่ม LINE เท่านั้นครับ\nกรุณาเชิญบอทเข้ากลุ่มแล้วพิมพ์ /groupid ในกลุ่มอีกครั้ง';
     await deps.adapter.reply(m, reply);
     return;
