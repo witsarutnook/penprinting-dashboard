@@ -29,6 +29,9 @@ export interface HandleDeps {
   anthropic: unknown;
   visionModel: string;
   aiEnabled: boolean;
+  // Optional best-effort metrics sink (one row per inbound slip image). Omitted
+  // in tests; wired to Postgres in the LINE route. Must never throw.
+  recordSlipCheck?: (ev: { channel: string; looksLikeSlip: boolean; result: ThunderVerifyResponse | null }) => Promise<void>;
 }
 
 /** Orchestrate one inbound message → side-effecting reply. Phase 1b-A handles
@@ -44,16 +47,20 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     const { data, mediaType } = await deps.blobToBase64(blob);
     const looksLikeSlip = await deps.isSlipImage(data, mediaType, { client: deps.anthropic, model: deps.visionModel });
     console.log('[ai-quote] slip pre-filter', { mediaType, looksLikeSlip });
-    if (!looksLikeSlip) return; // ไม่ใช่สลิป → เงียบ (ไม่เปลือง Thunder quota)
-    const result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
-    console.log('[ai-quote] thunder result', {
-      success: result.success,
-      isDuplicate: result.data?.isDuplicate,
-      isAccountMatched: result.data?.isAccountMatched,
-      error: result.error?.code,
-    });
-    await deps.adapter.reply(m, deps.buildSlipFlex(result));
-    console.log('[ai-quote] slip reply sent');
+    let result: ThunderVerifyResponse | null = null;
+    if (looksLikeSlip) {
+      result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
+      console.log('[ai-quote] thunder result', {
+        success: result.success,
+        isDuplicate: result.data?.isDuplicate,
+        isAccountMatched: result.data?.isAccountMatched,
+        error: result.error?.code,
+      });
+      await deps.adapter.reply(m, deps.buildSlipFlex(result));
+      console.log('[ai-quote] slip reply sent');
+    }
+    // record one metric row per image (pass or drop) — best-effort, never throws
+    await deps.recordSlipCheck?.({ channel: m.channel, looksLikeSlip, result });
     return;
   }
   if (route === 'track') {

@@ -388,9 +388,32 @@ export async function GET() {
     await sql`CREATE INDEX IF NOT EXISTS idx_ai_quotes_session ON ai_quotes(session_id)`;
     applied.push('idx_ai_quotes_session');
 
+    // ─── slip_checks (LINE OA slip-verify metrics) ──────────────────
+    // One row per inbound image to the LINE webhook. Lets us measure
+    // Thunder quota use: thunder_called=true rows == Thunder API calls.
+    // Vercel runtime logs retain only a short window, so persist here to
+    // report received-vs-slip counts over weeks. Written best-effort —
+    // a failure here never blocks the customer's reply.
+    await sql`
+      CREATE TABLE IF NOT EXISTS slip_checks (
+        id                 BIGSERIAL PRIMARY KEY,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        channel            TEXT,
+        looks_like_slip    BOOLEAN NOT NULL,
+        thunder_called     BOOLEAN NOT NULL,
+        thunder_success    BOOLEAN,
+        is_duplicate       BOOLEAN,
+        is_account_matched BOOLEAN,
+        amount             NUMERIC
+      )`;
+    applied.push('CREATE TABLE slip_checks');
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_slip_checks_created ON slip_checks(created_at DESC)`;
+    applied.push('idx_slip_checks_created');
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
-    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes']) {
+    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'slip_checks']) {
       try {
         const r = await sql.query(`SELECT COUNT(*)::int AS count FROM ${t}`);
         counts[t] = (r.rows[0] as { count?: number })?.count ?? 0;
