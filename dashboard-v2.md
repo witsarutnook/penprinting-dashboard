@@ -133,6 +133,9 @@ Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders
 | `/api/ai-quote` | POST | admin + sales | AI Quote chat — `{ sessionId?, message }` → Claude tool-use loop → reply + spec + price. **env-gated** (ANTHROPIC_API_KEY/QUOTE_API_URL/QUOTE_API_TOKEN; 500 ถ้าไม่ตั้ง) |
 | `/api/ai-quote/leads` | GET | admin + sales | List leads (จาก `ai_quote_sessions`) |
 | `/api/ai-quote/leads/[id]` | PATCH | admin + sales | Update lead status / claim (`assigned_to`) |
+| `/api/ai-quote/line` | POST | LINE (HMAC) | **LINE OA webhook (Phase 1b-A)** — verify signature → ack 200 → `after()`: รูป→Haiku pre-filter→Thunder slip-verify→Flex card · `track <id>`→order Flex · อื่นเงียบ (AI ปิด, `AI_QUOTE_LINE_ENABLED`). env-gated (`LINE_CHANNEL_SECRET`/`LINE_CHANNEL_TOKEN`/`THUNDER_API_KEY`) |
+| `/api/admin/slip-metrics` | GET | admin | Per-day rollup ของ `slip_checks` (images / thunder_calls=quota / filtered_out / slip_ok / duplicates / mismatches), Bangkok-day, 30 วัน |
+| `/api/admin/db-migrate` | GET | admin | Idempotent schema runner (`CREATE … IF NOT EXISTS` + counts) — รันหลัง deploy ที่เพิ่ม table/index ใหม่ |
 
 ---
 
@@ -227,6 +230,17 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - **Paper-name alias (2026-06-25 `a82ad4f`)**: แปลงชื่อกระดาษภาษาพูดก่อนเทียบ list — อาร์ทการ์ด 210/230 → **Art 210/230** · 300/350 → **Art Card 300/350** (stock แยก ราคาต่าง) · ปอนด์ {w} → Bond {w}. **hard-rule**: ลูกค้าระบุกระดาษที่อยู่ใน list = ใช้เลย ไม่ใช่ "กระดาษพิเศษ" แม้ต่างจาก default ("พิเศษ" = ไม่อยู่ใน list เท่านั้น). แก้เคส "ขก ราม" (ปกอาร์ทการ์ด 210 → Art 210 ตีราคาได้).
 - **Files**: `lib/ai-quote/{prompt,tools,run,db}.ts` · `app/api/ai-quote/route.ts` (+ `leads/`, `leads/[id]/`) · `app/quote-assistant/` · `app/quote-leads/` · Postgres `ai_quote_sessions` (lead store) + `ai_quotes` (db-migrate route).
 
+### AI Quote — LINE OA Phase 1b-A: webhook takeover (cutover 2026-06-30, PR #11/#12/#13)
+> Path 1 architecture: **dashboard ถือ LINE webhook เต็มตัว** (เลิกพึ่ง Thunder-webhook/Cloudflare Worker) → เรียก Thunder verify API เอง + `/track` เอง. channel-agnostic (`channel`+`channel_user_id`) → Messenger เสียบทีหลัง. **AI quote ยังปิด** (`AI_QUOTE_LINE_ENABLED` flag) — 1b-A ทำแค่ slip + track. ดู [`RUNBOOK-1b-a-cutover.md`](RUNBOOK-1b-a-cutover.md) (cutover done) + design `docs/superpowers/specs/2026-06-27-ai-quote-phase1b-line-webhook-takeover-design.md`.
+- **Webhook** (`app/api/ai-quote/line/route.ts`) — POST → verify HMAC-SHA256 (ผิด 401 · ไม่มี secret 500) → **ack 200 ทันที** → งานหนักใน `after()` → reply ผ่าน LINE API. เฉพาะ 1-on-1 (group/room ทิ้ง).
+- **Slip-verify** — รูปเข้า → **Haiku vision pre-filter** (`isSlipImage`, fail-safe=true) กันเปลือง Thunder quota (Thunder นับ **ทุก** request รวม non-slip) → ถ้าใช่ → `verifyBankSlipImage` (Thunder v2, `matchAccount:true`, `checkDuplicate:true`) → **Penprinting Flex card 4 สถานะ** (สำเร็จ+ยอด+ธนาคาร / ซ้ำ / ยอดไม่ตรงบัญชี / อ่านไม่ได้). port จาก Remedy `lib/thunder.ts`.
+- **Pre-filter tuning (debug บน prod 2026-06-29~30)**: เปิด→loosen→**remove ทั้งหมด** (สลิปจ่ายบิล KBank โดน drop ผิด)→**re-add** + แก้ prompt ให้นับ bill-payment/QR/PromptPay/top-up เป็นสลิป (lean-yes, drop เฉพาะ explicit "ไม่"). **Final: pre-filter เปิดอยู่** + recognize bill-payment. → §9 lesson.
+- **`/track <id>`** — `^/?track\s+\d{6,}` → `loadOrder(id)` → `buildOrderFlex` (port `buildOrderFlex_` Apps Script → TS) → reply Flex สถานะงาน. loadOrder-backed (Postgres).
+- **Metrics** (`2669ee8`) — table `slip_checks` (1 row/รูป, best-effort `recordSlipCheck` NEVER throws, เรียกหลัง reply) + `GET /api/admin/slip-metrics` วัด Thunder quota จริง (`thunder_called` rows == quota ใช้). **Migration applied 2026-06-30** (db-migrate ผ่านเบราว์เซอร์คุณนุ๊ก — slip-metrics 500→200).
+- **Diagnostic logging ค้าง 5 จุด** (`7d32666`) — `webhook-router.ts:41/49/53/60` + `slip.ts:105` → ถอดหลัง soak (backlog `LOG-1`).
+- **Rollback**: ชี้ LINE Webhook URL กลับค่าเดิม (ไม่ต้อง revert code — code อยู่ใน main แต่ไม่มีใครเรียกถ้า webhook ชี้ที่อื่น). gates เขียว Node 22 (227 tests ตอน 1b-A).
+- **Files**: `app/api/ai-quote/line/route.ts` · `lib/ai-quote/{webhook-router,slip,slip-metrics,track-flex,slip-flex}.ts` · `lib/ai-quote/channels/line.ts` · `app/api/admin/slip-metrics/route.ts` · Postgres `slip_checks`.
+
 ---
 
 ## 6. Roadmap (v2 phases)
@@ -320,12 +334,23 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | **Apps Script payload included audit_log on every page render** (2026-05-07 afternoon, `3cb4501`) | `loadAll()` always returned `recentAudit` for /board and friends even though only /analytics consumed it | Apps Script `loadAll(opts?: { audit?: boolean })` (load.ts) + api.ts switch threads `e.parameter.audit !== '0'`. Default unchanged for backwards compat. Vercel `lib/api.ts` `loadAll()` passes `audit=0` (saves 50-100KB per call); new `loadAllWithAudit()` for /analytics. |
 | **AI tool-use loop persisted empty-text turn → bricked session** (AI Quote Phase 1a audit H1, 2026-06-23, `902d70a`) | `runQuoteTurn` อาจ persist assistant turn ที่ `text=''` (ชน `MAX_TOOL_ROUNDS` ขณะ `tool_use` / tool-use-only block / `max_tokens` stop). Anthropic API **reject empty text content block** → ทุก message ถัดไปใน session 400 พังถาวร | Fallback non-empty reply ก่อน persist ใน `lib/ai-quote/run.ts`. +2 regression test (`tests/ai-quote-run.test.ts`). Guard: assistant content ที่ persist ต้องไม่ว่าง |
 | **calc env "ตั้งแล้ว" แต่ไม่ redeploy = ไม่ live** (AI Quote Phase 1a smoke, 2026-06-23, calc `fd4f755`) | smoke เจอ `/api/ai-quote` คืน 500 "QUOTE_API_TOKEN not configured" — calc มี env ตั้งแต่ 6/20 (All Environments) แต่ production deploy ล่าสุด = `3edcfe1` (6/17, **ก่อน** มี token) → runtime อ่านไม่เจอ. note 6/20 "calc QUOTE_API_TOKEN ตั้งแล้ว ✅" = unverified claim | push empty commit `fd4f755` → calc auto-deploy production สด → token live (curl probe 500→401). Lesson: env var = live ต่อเมื่อมี deploy ใหม่ **หลัง** ตั้ง — verify ด้วย probe per host ([[feedback_omise_secret_roll_vm_sync]] + [[feedback_audit_backlog_hypothesis]]) |
+| **Haiku slip pre-filter ตัดสลิปจ่ายบิลทิ้งเงียบ** (Phase 1b-A LINE, 2026-06-29~30, `e4a05b3`→`0139d31`) | สลิป KBank "จ่ายบิลสำเร็จ" → Haiku vision pre-filter ตัดสิน "ไม่ใช่การโอน" → return เงียบ ไม่เรียก Thunder → **ลูกค้าส่งสลิปจริงแต่ระบบไม่ตอบ**. แก้รอบแรกผิดทาง: **ถอด pre-filter ทั้งหมด** (`e4a05b3`, Thunder=sole authority) = ยอมจ่าย Thunder quota ทุกรูป (Thunder นับทุก request) | **Root cause = prompt ไม่ใช่ gate**. re-add pre-filter (`0139d31`) + แก้ prompt: นับ bill-payment/QR/PromptPay/top-up เป็นสลิป, lean-yes (drop เฉพาะ explicit "ไม่"). Lesson: cheap classifier gate หน้า paid API → tune **prompt** ก่อนถอด gate; การ miss = prompt bug ไม่ใช่เหตุให้ลบ gate ([[feedback_ai_quote_phase1b_thunder_prefilter]]). Metrics `slip_checks` (`2669ee8`) ตามดู `filtered_out` vs `thunder_calls` ว่าทูนถูก |
 
 ---
 
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### AI Quote LINE Phase 1b-A — webhook cutover + slip-verify iterate + slip_checks migration (2026-06-30) 📲
+
+> **Cutover เสร็จ + เก็บ doc gap.** session ก่อนหน้าทำ cutover + iterate ไปแล้วแต่ไม่ลง doc (NEXT-SESSION ค้างที่ "PR #11 รอ cutover"). main = [`a23496d`](https://github.com/witsarutnook/penprinting-dashboard/commit/a23496d).
+
+**Cutover (Path 1):** PR [#11](https://github.com/witsarutnook/penprinting-dashboard/pull/11) ([`c1fcbad`](https://github.com/witsarutnook/penprinting-dashboard/commit/c1fcbad)) merged + redeploy ([`209f53f`](https://github.com/witsarutnook/penprinting-dashboard/commit/209f53f)) → webhook `dashboard.penprinting.co/api/ai-quote/line` LIVE (probe 200). คุณนุ๊กตั้ง Thunder/LINE env + webhook URL ครบ (pending actions ใน RUNBOOK ปิดหมด). **PR [#12](https://github.com/witsarutnook/penprinting-dashboard/pull/12)** ([`627bfce`](https://github.com/witsarutnook/penprinting-dashboard/commit/627bfce)) slip-verify → Penprinting Flex card 4 สถานะ · **PR [#13](https://github.com/witsarutnook/penprinting-dashboard/pull/13)** ([`d68743d`](https://github.com/witsarutnook/penprinting-dashboard/commit/d68743d)) อ่าน Thunder v2 slip fields จริง (date, bank.name).
+
+**Slip pre-filter ดราม่า (debug บน prod ตรง main):** `7d32666` diagnostic logging → `d81c6e6` loosen → **`e4a05b3` remove Haiku pre-filter** (สลิปจ่ายบิล KBank โดน drop, Thunder=sole authority) → **`0139d31` re-add** (แก้ prompt นับ bill-payment/QR/PromptPay เป็นสลิป, lean-yes) → **`2669ee8` slip-check metrics** (`slip_checks` table + `GET /api/admin/slip-metrics`). Final = pre-filter เปิด + recognize bill-payment + metrics วัด quota.
+
+**Session นี้:** sync main + **รัน `slip_checks` migration** (db-migrate ผ่าน Chrome MCP เบราว์เซอร์คุณนุ๊ก — table ยังไม่ถูกสร้าง: slip-metrics **500→200**, applied "CREATE TABLE slip_checks"+idx, data เดิมครบ jobs 657/orders 421) + เขียน doc ปิด gap (NEXT-SESSION + §3/§5/§9/§10 + AUDIT-BACKLOG + RUNBOOK done). **เหลือ:** ถอด diagnostic logging 5 จุด (`LOG-1`) · ดู slip-metrics หลัง traffic 2-3 วัน · Phase 1b-B. **Lesson:** cheap classifier gate หน้า paid API → tune prompt ก่อนถอด gate ([[feedback_ai_quote_phase1b_thunder_prefilter]]).
 
 ### AI Quote — M5 IDOR resolved + 3 Low closed + housekeeping (2026-06-26) 🔒
 
