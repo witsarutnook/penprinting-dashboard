@@ -3,7 +3,7 @@ import 'server-only';
 import crypto from 'node:crypto';
 import type { ChannelAdapter, InboundMessage, QuickReply } from './types';
 
-interface LineSource { type?: string; userId?: string }
+interface LineSource { type?: string; userId?: string; groupId?: string; roomId?: string }
 interface LineMessage { type?: string; text?: string; id?: string }
 interface LineEvent {
   type?: string; replyToken?: string;
@@ -26,18 +26,45 @@ export function verifyLineSignature(rawBody: string, signature: string, secret: 
   return crypto.timingSafeEqual(got, expected);
 }
 
-/** Normalize a LINE webhook body → 1-on-1 text/image/postback messages.
- *  Ignores group/room sources and unsupported message types. Never throws. */
+/** Normalize a LINE webhook body → text/image/postback messages.
+ *  1-on-1 (user) sources get the full pipeline (slip/track/ai). Group/room sources
+ *  emit text only (carrying groupId/roomId) so the /groupid command can echo the id
+ *  for setting up customer tracking groups — images/postback in groups are ignored.
+ *  Unsupported message types (sticker/location/follow/...) are dropped. Never throws. */
 export function parseLineEvents(body: unknown): InboundMessage[] {
   const events = (body as { events?: unknown })?.events;
   if (!Array.isArray(events)) return [];
   const out: InboundMessage[] = [];
   for (const raw of events as LineEvent[]) {
     const src = raw?.source;
-    if (!src || src.type !== 'user' || !src.userId) continue;   // 1-on-1 only
+    if (!src) continue;
+    const isText = raw.type === 'message' && raw.message?.type === 'text' && typeof raw.message.text === 'string';
+
+    if (src.type === 'group' && src.groupId) {
+      if (isText) {
+        out.push({
+          channel: 'line', channelUserId: src.userId ?? '', kind: 'text',
+          text: raw.message!.text!, replyToken: raw.replyToken,
+          sourceType: 'group', groupId: src.groupId,
+        });
+      }
+      continue;   // group → text only (for /groupid)
+    }
+    if (src.type === 'room' && src.roomId) {
+      if (isText) {
+        out.push({
+          channel: 'line', channelUserId: src.userId ?? '', kind: 'text',
+          text: raw.message!.text!, replyToken: raw.replyToken,
+          sourceType: 'room', roomId: src.roomId,
+        });
+      }
+      continue;   // room → text only (for /groupid)
+    }
+
+    if (src.type !== 'user' || !src.userId) continue;   // 1-on-1 only beyond this point
     const base = { channel: 'line' as const, channelUserId: src.userId, replyToken: raw.replyToken };
-    if (raw.type === 'message' && raw.message?.type === 'text' && typeof raw.message.text === 'string') {
-      out.push({ ...base, kind: 'text', text: raw.message.text });
+    if (isText) {
+      out.push({ ...base, kind: 'text', text: raw.message!.text! });
     } else if (raw.type === 'message' && raw.message?.type === 'image' && raw.message.id) {
       out.push({ ...base, kind: 'image', imageMessageId: raw.message.id });
     } else if (raw.type === 'postback' && raw.postback?.data) {
@@ -108,7 +135,8 @@ export function buildLineAdapter(secret: string): ChannelAdapter {
       try {
         if (msg.replyToken) { await replyLine(msg.replyToken, message, qrs); return; }
       } catch { /* token หมด/ใช้แล้ว → push */ }
-      await pushLine(msg.channelUserId, message);
+      // group/room → push to the group/room id; 1-on-1 → push to the user id
+      await pushLine(msg.groupId || msg.roomId || msg.channelUserId, message);
     },
     push: (id, text) => pushLine(id, text),
   };
