@@ -58,15 +58,15 @@ describe('handleInbound', () => {
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, deps as never);
     expect(replies[0]).toMatchObject({ type: 'flex', altText: 'SLIP_OK' });
   });
-  it('always verifies every image via Thunder and replies, even when Thunder cannot read it', async () => {
+  it('skips Thunder when the pre-filter says the image is NOT a slip', async () => {
     let thunderCalled = false;
     const { replies, deps } = stubDeps({
-      isSlipImage: async () => false, // pre-filter no longer gates — must be ignored
+      isSlipImage: async () => false,
       verifyBankSlipImage: async () => { thunderCalled = true; return { success: false }; },
     });
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, deps as never);
-    expect(thunderCalled).toBe(true);        // Thunder is the sole authority now
-    expect(replies.length).toBe(1);          // replies with the "unreadable" card
+    expect(thunderCalled).toBe(false);
+    expect(replies.length).toBe(0); // เงียบ (ไม่ใช่สลิป → ประหยัด Thunder quota)
   });
   it('answers /track with a flex card', async () => {
     const { replies, deps } = stubDeps();
