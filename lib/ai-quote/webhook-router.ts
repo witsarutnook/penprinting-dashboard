@@ -3,12 +3,23 @@ import type { InboundMessage, ChannelAdapter } from './channels/types';
 import { isTrackCommand, extractOrderId } from './track-flex';
 import type { ThunderVerifyResponse } from './slip';
 
-export type Route = 'slip' | 'track' | 'ai' | 'enter-ai' | 'exit-ai' | 'ignore';
+export type Route = 'slip' | 'track' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'ignore';
+
+/** Match the group-id command — e.g. `/groupid`, `/group-id`, `/id` (leading slash
+ *  required, case-insensitive). Echoes the LINE group/room id so staff can register
+ *  a customer group for order tracking. */
+export function isGroupIdCommand(text: string): boolean {
+  return /^\/(group-?id|id)\s*$/i.test(text.trim());
+}
 
 /** Pure routing decision. Phase 1b-A passes aiEnabled=false (AI off): images→slip,
- *  /track→track, everything else→ignore. The 'ai'/'enter-ai'/'exit-ai' arms are
- *  exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total). */
+ *  /track→track, /groupid→groupid, everything else→ignore. The 'ai'/'enter-ai'/'exit-ai'
+ *  arms are exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total). */
 export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean }): Route {
+  // /groupid works anywhere (in groups it echoes the id; in 1-on-1 it says "groups only")
+  if (m.kind === 'text' && m.text && isGroupIdCommand(m.text)) return 'groupid';
+  // group/room sources only handle the group-id command — never slip/track/ai (avoid noise)
+  if (m.sourceType === 'group' || m.sourceType === 'room') return 'ignore';
   if (m.kind === 'image') return 'slip';
   if (m.kind === 'text' && m.text && isTrackCommand(m.text)) return 'track';
   if (!opts.aiEnabled) return 'ignore';
@@ -71,5 +82,13 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     await deps.adapter.reply(m, flex);
     return;
   }
-  // slip/track เท่านั้นใน 1b-A. ai/enter-ai/exit-ai → 1b-B.
+  if (route === 'groupid') {
+    const id = m.groupId || m.roomId;
+    const reply = id
+      ? `LINE Group ID:\n${id}\n\nนำ ID นี้ไปตั้งค่าระบบติดตามงานให้กลุ่มลูกค้าได้เลยครับ`
+      : 'คำสั่ง /groupid ใช้ได้เฉพาะในกลุ่ม LINE เท่านั้นครับ\nกรุณาเชิญบอทเข้ากลุ่มแล้วพิมพ์ /groupid ในกลุ่มอีกครั้ง';
+    await deps.adapter.reply(m, reply);
+    return;
+  }
+  // slip/track/groupid เท่านั้นใน 1b-A. ai/enter-ai/exit-ai → 1b-B.
 }

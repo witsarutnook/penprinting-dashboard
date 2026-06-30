@@ -199,6 +199,12 @@ calc.ts อยู่ใน repo `print-calculator-next` แต่ฟีเจอ
 - ⚠️ **reply token ของ LINE หมดอายุ ~1 นาที** — Claude ตอบเร็ว (~2-5 วิ) ปกติทัน แต่เผื่อช้า → fallback ใช้ push API
 - Cloudflare Worker = dumb fan-out — ไม่ต้องแตะ, routing ทำที่ Apps Script
 
+#### 🆔 คำสั่ง `/groupid` — ดึง LINE group id (ตั้งค่ากลุ่มติดตามงานกับลูกค้า)
+- พิมพ์ `/groupid` (หรือ `/group-id`, `/id`) **ในกลุ่ม LINE** → บอทตอบ group id กลับมาเพื่อนำไปผูกกับระบบติดตามงานของลูกค้ากลุ่มนั้น ([`webhook-router.ts` `isGroupIdCommand`](lib/ai-quote/webhook-router.ts))
+- `parseLineEvents` เดิม**ทิ้ง** event จาก group/room ทั้งหมด (1-on-1 เท่านั้น) — ตอนนี้ปล่อย **text จาก group/room ผ่าน** (พ่วง `groupId`/`roomId` + `sourceType`) แต่ในกลุ่ม router รับเฉพาะ `/groupid` เท่านั้น (รูป/`/track`/AI ในกลุ่ม → ignore กันสแปม) ([`channels/line.ts`](lib/ai-quote/channels/line.ts))
+- พิมพ์ `/groupid` ในแชต 1-1 → ตอบ "ใช้ได้เฉพาะในกลุ่ม"
+- ⚙️ **ต้องตั้งใน LINE Developers console**: เปิด "Allow bot to join group chats" + เชิญบอทเข้ากลุ่ม → webhook ถึงจะส่ง group event มา
+
 #### 🔒 Acceptance criterion — session ownership / IDOR (audit **M5**, gate ของ 1b)
 ใน Phase 1a ทุก caller = staff ภายใน (admin/sales) → `loadSession` แบบ shared inbox **เป็น design ที่ตั้งใจ ไม่ใช่ช่องโหว่**. IDOR จริงเกิด**เมื่อเปิด LINE** เพราะลูกค้าแต่ละคนถือ `sessionId` ของตัวเอง → ถ้าไม่ผูก owner ลูกค้า A อ่านบทสนทนา/ราคาของลูกค้า B ได้. **ต้องทำตอนสร้าง LINE identity ใน 1b** (ผูกก่อน ไม่ได้ — ยังไม่มี identity model):
 1. เซ็ต `line_user_id` ตอนสร้าง session ฝั่ง LINE (`channel='line'`) + เซ็ต `channel='line'`

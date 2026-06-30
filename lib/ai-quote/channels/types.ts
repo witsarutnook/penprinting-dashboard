@@ -17,6 +17,9 @@ export interface InboundMessage {
   imageMessageId?: string;      // kind==='image' (ใช้ดึง content)
   postbackData?: string;        // kind==='postback'
   replyToken?: string;          // LINE reply token (Messenger ไม่มี → push by id)
+  sourceType?: 'user' | 'group' | 'room';  // undefined = แชต 1-1 (user) — group/room เฉพาะคำสั่ง /groupid
+  groupId?: string;             // sourceType==='group' (สำหรับตั้งค่า track ให้กลุ่มลูกค้า)
+  roomId?: string;              // sourceType==='room'
 }
 
 export interface ChannelAdapter {

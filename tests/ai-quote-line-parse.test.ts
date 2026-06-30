@@ -36,11 +36,33 @@ describe('parseLineEvents', () => {
       postbackData: 'ai_quote_start', replyToken: 'rt3',
     }]);
   });
-  it('drops group/room events', () => {
+  it('parses group text (carries groupId for /groupid)', () => {
     const body = { events: [{
       type: 'message', replyToken: 'rt',
       source: { type: 'group', groupId: 'G1', userId: 'U1' },
-      message: { type: 'text', text: 'hi' },
+      message: { type: 'text', text: '/groupid' },
+    }] };
+    expect(parseLineEvents(body)).toEqual([{
+      channel: 'line', channelUserId: 'U1', kind: 'text',
+      text: '/groupid', replyToken: 'rt', sourceType: 'group', groupId: 'G1',
+    }]);
+  });
+  it('parses room text (carries roomId; userId optional)', () => {
+    const body = { events: [{
+      type: 'message', replyToken: 'rt',
+      source: { type: 'room', roomId: 'R1' },
+      message: { type: 'text', text: '/groupid' },
+    }] };
+    expect(parseLineEvents(body)).toEqual([{
+      channel: 'line', channelUserId: '', kind: 'text',
+      text: '/groupid', replyToken: 'rt', sourceType: 'room', roomId: 'R1',
+    }]);
+  });
+  it('drops non-text group events (images/postback stay ignored in groups)', () => {
+    const body = { events: [{
+      type: 'message', replyToken: 'rt',
+      source: { type: 'group', groupId: 'G1', userId: 'U1' },
+      message: { type: 'image', id: 'IMG1' },
     }] };
     expect(parseLineEvents(body)).toEqual([]);
   });

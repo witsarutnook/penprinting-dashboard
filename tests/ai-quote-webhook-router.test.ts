@@ -26,6 +26,18 @@ describe('routeInbound (Phase 1b-A, aiEnabled=false)', () => {
     const m: InboundMessage = { ...base, kind: 'text', text: 'ขอราคาใบปลิว' };
     expect(routeInbound(m, { aiEnabled: true })).toBe('ai');
   });
+  it('routes /groupid to groupid', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: '/groupid', sourceType: 'group', groupId: 'G1' };
+    expect(routeInbound(m, { aiEnabled: false })).toBe('groupid');
+  });
+  it('ignores non-command text from a group (no slip/track/ai noise in groups)', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: 'สวัสดีครับ', sourceType: 'group', groupId: 'G1' };
+    expect(routeInbound(m, { aiEnabled: true })).toBe('ignore');
+  });
+  it('ignores even a /track sent from a group', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: '/track 202606110', sourceType: 'group', groupId: 'G1' };
+    expect(routeInbound(m, { aiEnabled: false })).toBe('ignore');
+  });
 });
 
 function stubDeps(over: Record<string, unknown> = {}) {
@@ -97,5 +109,20 @@ describe('handleInbound', () => {
     const { replies, deps } = stubDeps();
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: 'สวัสดี', replyToken: 'rt' }, deps as never);
     expect(replies.length).toBe(0);
+  });
+  it('echoes the group id when /groupid is sent in a group', async () => {
+    const { replies, deps } = stubDeps();
+    await handleInbound(
+      { channel: 'line', channelUserId: 'U', kind: 'text', text: '/groupid', replyToken: 'rt', sourceType: 'group', groupId: 'Gabc123' },
+      deps as never,
+    );
+    expect(replies.length).toBe(1);
+    expect(replies[0]).toContain('Gabc123');
+  });
+  it('tells the user /groupid is group-only when sent in a 1-on-1 chat', async () => {
+    const { replies, deps } = stubDeps();
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/groupid', replyToken: 'rt' }, deps as never);
+    expect(replies.length).toBe(1);
+    expect(replies[0]).toContain('เฉพาะในกลุ่ม');
   });
 });
