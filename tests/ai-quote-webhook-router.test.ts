@@ -68,6 +68,21 @@ describe('handleInbound', () => {
     expect(thunderCalled).toBe(false);
     expect(replies.length).toBe(0); // เงียบ (ไม่ใช่สลิป → ประหยัด Thunder quota)
   });
+  it('records one metric row per image (pass → result, drop → null)', async () => {
+    const events: Array<{ looksLikeSlip: boolean; result: unknown }> = [];
+    const recordSlipCheck = async (ev: { channel: string; looksLikeSlip: boolean; result: unknown }) => { events.push(ev); };
+
+    const pass = stubDeps({ recordSlipCheck });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, pass.deps as never);
+
+    const drop = stubDeps({ recordSlipCheck, isSlipImage: async () => false });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, drop.deps as never);
+
+    expect(events.length).toBe(2);
+    expect(events[0]).toMatchObject({ looksLikeSlip: true });
+    expect(events[0].result).not.toBeNull();          // verified → Thunder result attached
+    expect(events[1]).toMatchObject({ looksLikeSlip: false, result: null }); // dropped → no Thunder call
+  });
   it('answers /track with a flex card', async () => {
     const { replies, deps } = stubDeps();
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track 202606110', replyToken: 'rt' }, deps as never);

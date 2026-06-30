@@ -5,6 +5,7 @@ import { buildLineAdapter } from '@/lib/ai-quote/channels/line';
 import { handleInbound, type HandleDeps } from '@/lib/ai-quote/webhook-router';
 import { isSlipImage, verifyBankSlipImage } from '@/lib/ai-quote/slip';
 import { buildSlipFlex } from '@/lib/ai-quote/slip-flex';
+import { recordSlipCheck } from '@/lib/ai-quote/slip-metrics';
 import { buildOrderFlex } from '@/lib/ai-quote/track-flex';
 import { loadOrder } from '@/lib/api';
 
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           loadOrder: loadOrder as unknown as HandleDeps['loadOrder'],
           // buildOrderFlex: concrete type uses TrackState|null, interface uses unknown — safe cast
           buildOrderFlex: buildOrderFlex as HandleDeps['buildOrderFlex'],
+          recordSlipCheck,
           anthropic,
           visionModel: VISION_MODEL,
           aiEnabled,
