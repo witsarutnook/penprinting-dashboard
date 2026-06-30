@@ -34,9 +34,9 @@ describe('routeInbound (Phase 1b-A, aiEnabled=false)', () => {
     const m: InboundMessage = { ...base, kind: 'text', text: 'สวัสดีครับ', sourceType: 'group', groupId: 'G1' };
     expect(routeInbound(m, { aiEnabled: true })).toBe('ignore');
   });
-  it('ignores even a /track sent from a group', () => {
+  it('routes /track sent from a group to track (customers track in their own group)', () => {
     const m: InboundMessage = { ...base, kind: 'text', text: '/track 202606110', sourceType: 'group', groupId: 'G1' };
-    expect(routeInbound(m, { aiEnabled: false })).toBe('ignore');
+    expect(routeInbound(m, { aiEnabled: false })).toBe('track');
   });
 });
 
@@ -109,6 +109,14 @@ describe('handleInbound', () => {
     const { replies, deps } = stubDeps();
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: 'สวัสดี', replyToken: 'rt' }, deps as never);
     expect(replies.length).toBe(0);
+  });
+  it('answers /track sent from a group with a flex card', async () => {
+    const { replies, deps } = stubDeps();
+    await handleInbound(
+      { channel: 'line', channelUserId: 'U', kind: 'text', text: '/track 202606110', replyToken: 'rt', sourceType: 'group', groupId: 'G1' },
+      deps as never,
+    );
+    expect(replies[0]).toMatchObject({ type: 'flex' });
   });
   it('echoes the group id when /groupid is sent in a group', async () => {
     const { replies, deps } = stubDeps();
