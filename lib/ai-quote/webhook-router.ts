@@ -38,10 +38,10 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   console.log('[ai-quote] inbound', { kind: m.kind, route });
   if (route === 'slip') {
     const blob = await deps.adapter.downloadImage(m);
-    const { data, mediaType } = await deps.blobToBase64(blob);
-    const looksLikeSlip = await deps.isSlipImage(data, mediaType, { client: deps.anthropic, model: deps.visionModel });
-    console.log('[ai-quote] slip pre-filter', { mediaType, looksLikeSlip });
-    if (!looksLikeSlip) return; // ไม่ใช่สลิป → เงียบ (ไม่เปลือง Thunder quota)
+    // No Haiku pre-filter: Thunder is the sole authority on whether the image is a
+    // readable slip. The cheap filter kept dropping REAL slips (e.g. KBank "จ่ายบิล"
+    // bill-payment slips Haiku judged "not a transfer"). Quota trade-off accepted —
+    // the feature's core requirement is "never miss a customer's slip".
     const result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
     console.log('[ai-quote] thunder result', {
       success: result.success,
