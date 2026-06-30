@@ -95,6 +95,7 @@ export async function isSlipImage(
     });
     const text = (res.content as Array<{ type: string; text?: string }>)
       .filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ').trim().toLowerCase();
+    console.log('[ai-quote] isSlipImage haiku answer', JSON.stringify(text));
     if (!text) return true; // empty/text-less response → fail-safe (don't drop a possible slip)
     return text.startsWith('yes') || text.startsWith('ใช่');
   } catch {
