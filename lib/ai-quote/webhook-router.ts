@@ -16,12 +16,13 @@ export function isGroupIdCommand(text: string): boolean {
  *  /track→track, /groupid→groupid, everything else→ignore. The 'ai'/'enter-ai'/'exit-ai'
  *  arms are exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total). */
 export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean }): Route {
-  // /groupid works anywhere (in groups it echoes the id; in 1-on-1 it says "groups only")
+  // Explicit commands work anywhere (1-on-1 and groups/rooms):
+  //   /groupid → echo the group id · /track <id> → status card (customers can track in their own group)
   if (m.kind === 'text' && m.text && isGroupIdCommand(m.text)) return 'groupid';
-  // group/room sources only handle the group-id command — never slip/track/ai (avoid noise)
+  if (m.kind === 'text' && m.text && isTrackCommand(m.text)) return 'track';
+  // Beyond commands, group/room sources are ignored — no slip/ai noise in shared chats
   if (m.sourceType === 'group' || m.sourceType === 'room') return 'ignore';
   if (m.kind === 'image') return 'slip';
-  if (m.kind === 'text' && m.text && isTrackCommand(m.text)) return 'track';
   if (!opts.aiEnabled) return 'ignore';
   if (m.kind === 'postback' && m.postbackData === 'ai_quote_start') return 'enter-ai';
   if (m.kind === 'text' && (m.text === 'คุยกับทีมงาน' || m.text === 'ออกจากโหมด AI')) return 'exit-ai';

@@ -28,9 +28,9 @@ export function verifyLineSignature(rawBody: string, signature: string, secret: 
 
 /** Normalize a LINE webhook body → text/image/postback messages.
  *  1-on-1 (user) sources get the full pipeline (slip/track/ai). Group/room sources
- *  emit text only (carrying groupId/roomId) so the /groupid command can echo the id
- *  for setting up customer tracking groups — images/postback in groups are ignored.
- *  Unsupported message types (sticker/location/follow/...) are dropped. Never throws. */
+ *  emit text only (carrying groupId/roomId) so explicit commands work in shared chats
+ *  (/groupid echoes the id, /track <id> shows a status card) — images/postback in
+ *  groups are ignored. Unsupported types (sticker/location/...) dropped. Never throws. */
 export function parseLineEvents(body: unknown): InboundMessage[] {
   const events = (body as { events?: unknown })?.events;
   if (!Array.isArray(events)) return [];
