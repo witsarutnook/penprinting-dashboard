@@ -64,22 +64,12 @@ export async function verifyBankSlipImage(
   catch { return { success: false, error: { code: 'INVALID_RESPONSE', message: `HTTP ${res.status}` } }; }
 }
 
-/** Thunder result → Thai customer reply. Priority: duplicate > account-mismatch
- *  > unreadable > success. */
-export function formatSlipReply(r: ThunderVerifyResponse): string {
-  if (r.success && r.data) {
-    if (r.data.isDuplicate) return 'สลิปนี้เคยส่งเข้ามาแล้วนะคะ 🙏 ถ้าเป็นการโอนใหม่ รบกวนแจ้งทีมงานเพิ่มเติมค่ะ';
-    if (r.data.isAccountMatched === false) return 'ยอดโอนนี้ดูไม่ตรงบัญชีของร้านค่ะ 🙏 รบกวนตรวจสอบเลขบัญชีปลายทางอีกครั้งนะคะ';
-    const amount = r.data.rawSlip?.amount?.amount;
-    const sender = r.data.rawSlip?.sender?.account?.name?.th;
-    const amountStr = typeof amount === 'number' ? amount.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : null;
-    let msg = 'ได้รับสลิปแล้วค่ะ ✅';
-    if (amountStr) msg += ` ยอด ${amountStr} บาท`;
-    if (sender) msg += ` จากคุณ${sender}`;
-    msg += ' — ขอบคุณค่ะ เดี๋ยวทีมงานตรวจสอบและดำเนินการต่อให้นะคะ 🙏';
-    return msg;
-  }
-  return 'ขออภัยค่ะ ระบบอ่านสลิปไม่ได้ 🙏 รบกวนส่งรูปสลิปใหม่ให้ชัดเจน หรือรอทีมงานตรวจสอบให้นะคะ';
+/** Thunder result → LINE notification/altText for the slip-verify Flex card.
+ *  Single generic line for every state — the Flex card itself carries the
+ *  per-state detail; this string is only the push-notification preview + the
+ *  fallback shown when a device can't render Flex. */
+export function formatSlipReply(_r: ThunderVerifyResponse): string {
+  return 'อัพเดทผลการตรวจสอบสลิป';
 }
 
 /** Cheap pre-filter: ask Haiku vision whether the image is a Thai bank/e-wallet

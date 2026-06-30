@@ -67,7 +67,7 @@ describe('buildSlipFlex', () => {
     const s = json(flex);
     expect(s).toContain('#faeeda');      // amber header bg
     expect(s).toMatch(/เคยส่ง|ซ้ำ/);
-    expect(flex.altText).toMatch(/เคยส่ง|ซ้ำ/);
+    expect(flex.altText).toBe('อัพเดทผลการตรวจสอบสลิป'); // generic notification altText
   });
 
   it('account mismatch: red header + does NOT reveal the wrong destination account', () => {
