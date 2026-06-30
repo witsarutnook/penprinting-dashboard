@@ -89,7 +89,12 @@ export async function isSlipImage(
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: toAllowedMedia(mediaType), data: imageBase64 } },
-          { type: 'text', text: 'รูปนี้เป็นสลิป/หลักฐานการโอนเงินของธนาคารไทยหรือ e-wallet ใช่ไหม ตอบแค่ "yes" หรือ "no" คำเดียว' },
+          { type: 'text', text: [
+            'คุณเป็นตัวกรองรูปก่อนส่งให้ระบบตรวจสลิปอัตโนมัติ',
+            'รูปนี้เป็น "สลิป/หลักฐานการโอนเงิน" ของธนาคารไทย, PromptPay, หรือ e-wallet (เช่น TrueMoney, ShopeePay) ใช่หรือไม่?',
+            'ให้นับว่าใช่ถ้ามีองค์ประกอบอย่าง ยอดเงิน/วันเวลา/เลขที่รายการ/ชื่อผู้โอน-ผู้รับ แม้รูปจะเบลอหรือถ่ายจอ',
+            'ตอบเป็นคำเดียว: "yes" หรือ "no" ถ้าไม่แน่ใจ ให้ตอบ "yes"',
+          ].join('\n') },
         ],
       }],
     });
@@ -97,7 +102,9 @@ export async function isSlipImage(
       .filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ').trim().toLowerCase();
     console.log('[ai-quote] isSlipImage haiku answer', JSON.stringify(text));
     if (!text) return true; // empty/text-less response → fail-safe (don't drop a possible slip)
-    return text.startsWith('yes') || text.startsWith('ใช่');
+    // fail-safe: pass everything EXCEPT an explicit refusal — keeps real slips
+    // (incl. "รูปนี้เป็นสลิป" / "น่าจะใช่") from being silently dropped.
+    return !(text.startsWith('no') || text.startsWith('ไม่'));
   } catch {
     return true; // fail-safe
   }
