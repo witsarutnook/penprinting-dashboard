@@ -3,6 +3,9 @@
 // (lines 286–590). JS→TS: added types, removed Logger.log, replaced Apps Script-only
 // Utilities.formatDate with Intl.DateTimeFormat (TZ-safe, Bangkok timezone).
 
+import { deriveTrackStatus } from '@/lib/track-status';
+import { getBangkokToday } from '@/lib/calendar';
+
 export interface TrackState {
   order: { name?: string; customer?: string; dateIn?: string; dateDue?: string; [k: string]: unknown };
   job: { dept?: string; date?: string; [k: string]: unknown } | null;
@@ -29,13 +32,20 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
     };
   }
 
-  const orderName   = state.order.name || '-';
-  const customer    = maskCustomer_(state.order.customer || '');
-  const dateIn      = cleanDate_(state.order.dateIn || '');
-  const dateDue     = cleanDate_(state.order.dateDue || '');
-  const isCancelled = state.cancelled !== null;
-  const isShipped   = state.shipped !== null;
-  const currentDept = state.job ? (state.job.dept || '') : '';
+  const orderName = state.order.name || '-';
+  const customer  = maskCustomer_(state.order.customer || '');
+  const dateIn    = cleanDate_(state.order.dateIn || '');
+  const dateDue   = cleanDate_(state.order.dateDue || '');
+
+  const st = deriveTrackStatus(
+    state.job as Record<string, unknown> | null,
+    state.shipped as Record<string, unknown> | null,
+    state.cancelled as Record<string, unknown> | null,
+    getBangkokToday(),
+  );
+  const isCancelled = st.kind === 'cancelled';
+  const isShipped   = st.kind === 'shipped';
+  const currentDept = st.currentDept || '';
 
   // ─── Status badge label + colors (mirror web logic exactly) ───
   let badgeLabel = 'รับใบสั่งงาน';
@@ -59,28 +69,16 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
     badgeBg = '#dbeafe'; badgeFg = '#1d4ed8';
   }
 
-  // ─── Days hint (override badge color if overdue) ───
+  // ─── Days hint (override badge color if overdue) — from deriveTrackStatus ───
   let daysHint = '';
-  if (state.job && !isCancelled && !isShipped) {
-    const due = state.job.date || '';
-    const parts = due.split('/');
-    if (parts.length === 3) {
-      const dt    = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-      // Build "today" from the Bangkok calendar date so both dt and today are server-local-midnight
-      // of their Bangkok dates — the subtraction cancels cleanly even on a UTC server (Vercel).
-      // (Apps Script ran in Bangkok TZ so this wasn't needed there; Node on Vercel runs UTC, where
-      //  new Date(); setHours(0,...) = UTC-midnight = 07:00 Bangkok → off-by-one 00:00–07:00 BKK.)
-      const nowBkk = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-');
-      const today = new Date(+nowBkk[0], +nowBkk[1] - 1, +nowBkk[2]);
-      const daysLeft = Math.floor((dt.getTime() - today.getTime()) / 86400000);
-      if (daysLeft < 0) {
-        daysHint = 'เลยกำหนด ' + Math.abs(daysLeft) + ' วัน';
-        badgeBg = '#fee2e2'; badgeFg = '#dc2626';
-      } else if (daysLeft === 0) {
-        daysHint = 'กำหนดส่งวันนี้';
-      } else {
-        daysHint = 'เหลืออีก ' + daysLeft + ' วัน';
-      }
+  if (st.kind === 'in_progress' && st.daysLeft != null) {
+    if (st.daysLeft < 0) {
+      daysHint = 'เลยกำหนด ' + Math.abs(st.daysLeft) + ' วัน';
+      badgeBg = '#fee2e2'; badgeFg = '#dc2626';
+    } else if (st.daysLeft === 0) {
+      daysHint = 'กำหนดส่งวันนี้';
+    } else {
+      daysHint = 'เหลืออีก ' + st.daysLeft + ' วัน';
     }
   }
 

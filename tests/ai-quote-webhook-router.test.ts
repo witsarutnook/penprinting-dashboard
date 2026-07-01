@@ -1,6 +1,6 @@
 // tests/ai-quote-webhook-router.test.ts
 import { describe, it, expect } from 'vitest';
-import { routeInbound, handleInbound } from '@/lib/ai-quote/webhook-router';
+import { routeInbound, handleInbound, parseTrackCommand } from '@/lib/ai-quote/webhook-router';
 import type { InboundMessage } from '@/lib/ai-quote/channels/types';
 
 const base = { channel: 'line' as const, channelUserId: 'U1', replyToken: 'rt' };
@@ -59,6 +59,9 @@ function stubDeps(over: Record<string, unknown> = {}) {
       anthropic: {} as never,
       visionModel: 'm',
       aiEnabled: false,
+      loadRegistrationByGroup: async () => ({ customers: ['บ.เอ'] }),
+      loadActiveJobsByCustomer: async () => [{ orderId: 100 }],
+      buildCustomerJobsFlex: () => ({ type: 'flex', altText: 'LIST' }),
       ...over,
     },
   };
@@ -132,5 +135,73 @@ describe('handleInbound', () => {
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/groupid', replyToken: 'rt' }, deps as never);
     expect(replies.length).toBe(1);
     expect(replies[0]).toContain('เฉพาะในกลุ่ม');
+  });
+});
+
+describe('parseTrackCommand', () => {
+  it('parses an order id (>=6 digits)', () => {
+    expect(parseTrackCommand('/track 202606110')).toEqual({ kind: 'order', id: '202606110' });
+  });
+  it('parses bare /track as a customer command with no keyword', () => {
+    expect(parseTrackCommand('/track')).toEqual({ kind: 'customer', keyword: undefined });
+  });
+  it('parses /track <name> as a customer keyword', () => {
+    expect(parseTrackCommand('/track โบรชัวร์')).toEqual({ kind: 'customer', keyword: 'โบรชัวร์' });
+  });
+  it('returns null for non-track text', () => {
+    expect(parseTrackCommand('สวัสดีครับ')).toBeNull();
+  });
+});
+
+describe('routeInbound — track-customer (group name search)', () => {
+  it('routes bare /track from a group to track-customer', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: '/track', sourceType: 'group', groupId: 'G1' };
+    expect(routeInbound(m, { aiEnabled: false })).toBe('track-customer');
+  });
+  it('routes /track <name> from a group to track-customer', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: '/track โบรชัวร์', sourceType: 'group', groupId: 'G1' };
+    expect(routeInbound(m, { aiEnabled: false })).toBe('track-customer');
+  });
+  it('keeps /track <id> as the order route even in a group', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: '/track 202606110', sourceType: 'group', groupId: 'G1' };
+    expect(routeInbound(m, { aiEnabled: false })).toBe('track');
+  });
+  it('ignores bare /track in a 1-on-1 chat (no group binding = no identity)', () => {
+    const m: InboundMessage = { ...base, kind: 'text', text: '/track' };
+    expect(routeInbound(m, { aiEnabled: false })).toBe('ignore');
+  });
+});
+
+describe('handleInbound — track-customer', () => {
+  it('guides the user when the group is not registered', async () => {
+    const { replies, deps } = stubDeps({ loadRegistrationByGroup: async () => null });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track', replyToken: 'rt', sourceType: 'group', groupId: 'Gx' }, deps as never);
+    expect(replies.length).toBe(1);
+    expect(String(replies[0])).toContain('ยังไม่ได้ลงทะเบียน');
+  });
+  it('answers a single active job with the full order card', async () => {
+    const { replies, deps } = stubDeps({
+      loadRegistrationByGroup: async () => ({ customers: ['บ.เอ'] }),
+      loadActiveJobsByCustomer: async () => [{ orderId: 100 }],
+    });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track', replyToken: 'rt', sourceType: 'group', groupId: 'G1' }, deps as never);
+    expect(replies[0]).toMatchObject({ type: 'flex' }); // buildOrderFlex stub
+  });
+  it('answers multiple active jobs with the summary bubble', async () => {
+    const { replies, deps } = stubDeps({
+      loadRegistrationByGroup: async () => ({ customers: ['บ.เอ'] }),
+      loadActiveJobsByCustomer: async () => [{ orderId: 100 }, { orderId: 101 }],
+      buildCustomerJobsFlex: () => ({ type: 'flex', altText: 'LIST' }),
+    });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track', replyToken: 'rt', sourceType: 'group', groupId: 'G1' }, deps as never);
+    expect(replies[0]).toMatchObject({ altText: 'LIST' });
+  });
+  it('replies empty-state when the customer has no active jobs', async () => {
+    const { replies, deps } = stubDeps({
+      loadRegistrationByGroup: async () => ({ customers: ['บ.เอ'] }),
+      loadActiveJobsByCustomer: async () => [],
+    });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track', replyToken: 'rt', sourceType: 'group', groupId: 'G1' }, deps as never);
+    expect(String(replies[0])).toContain('ไม่มีงาน');
   });
 });

@@ -241,6 +241,12 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 - **Rollback**: ชี้ LINE Webhook URL กลับค่าเดิม (ไม่ต้อง revert code — code อยู่ใน main แต่ไม่มีใครเรียกถ้า webhook ชี้ที่อื่น). gates เขียว Node 22 (227 tests ตอน 1b-A).
 - **Files**: `app/api/ai-quote/line/route.ts` · `lib/ai-quote/{webhook-router,slip,slip-metrics,track-flex,slip-flex}.ts` · `lib/ai-quote/channels/line.ts` · `app/api/admin/slip-metrics/route.ts` · Postgres `slip_checks`.
 
+### Track by Customer — ค้นงานด้วยชื่อลูกค้า (2026-07-01, PR #17)
+- **LINE (กลุ่มลูกค้า):** `/track` → งาน active ทั้งหมด · `/track <คำ>` กรอง (ชื่องาน+ลูกค้า) · `/track <เลข 6+>` = การ์ดเดิม (ไม่เปลี่ยน). Hybrid: กลุ่มผูกกับชุดชื่อลูกค้า (`customer_registrations.line_group_id`) เป็น boundary. adaptive reply (1→`buildOrderFlex`/หลาย→`buildCustomerJobsFlex`/0→text/unregistered→guide). route `track-customer` + `parseTrackCommand` ใน `lib/ai-quote/webhook-router.ts`
+- **Web:** `/track/c/[token]` (public, token = ความลับ 144-bit `randomBytes(18)`, rate-limited by ip+token, **ไม่อยู่ใน middleware matcher**) → รายการงาน active + ค้น (redact ราคา/spec เหมือน /track)
+- **Admin:** `/registrations` (admin only, ใน matcher) + `/api/registrations` (GET list / POST create) · `/api/registrations/[id]` (DELETE hard + audit_log) · `/api/registrations/customers` (distinct `raw->>'customer'`)
+- **Shared:** `lib/track-status.ts deriveTrackStatus` (pure — ใช้ร่วม track-flex + customer-track; track/lookup ยังไม่ใช้ = deferred) · `lib/customer-track.ts loadActiveJobsByCustomer(names[], {keyword})` · ตาราง `customer_registrations` (`customers text[]` = หลายชื่อ/ลูกค้า)
+
 ---
 
 ## 6. Roadmap (v2 phases)
@@ -341,6 +347,9 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### Track by Customer — LINE กลุ่มลูกค้า + web tokenized link (2026-07-01) 🔎 [PR #17, รอ merge]
+ลูกค้าเช็คงาน active ทั้งหมดของตัวเอง: **LINE** `/track` ในกลุ่มที่ผูกลูกค้า (Hybrid group-bound + keyword filter, adaptive 1→การ์ดเต็ม/หลาย→bubble สรุป) · **web** `/track/c/[token]` (public, token 144-bit) · **admin** `/registrations` (ผูก group id + ชื่อลูกค้า[] → gen token). ตาราง `customer_registrations` + shared `deriveTrackStatus` (track-flex refactor ใช้ร่วม) + `loadActiveJobsByCustomer`. subagent-driven + final opus review = yes-with-minor (array-param verified ปลอดภัย · audit_log fixed · track/lookup refactor deferred โดยตั้งใจ). 278 tests (+51). ยังไม่ deploy (รอ merge + db-migrate).
 
 ### AI Quote LINE Phase 1b-A — webhook cutover + slip-verify iterate + slip_checks migration (2026-06-30) 📲
 
