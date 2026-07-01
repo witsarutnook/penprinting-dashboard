@@ -411,9 +411,31 @@ export async function GET() {
     await sql`CREATE INDEX IF NOT EXISTS idx_slip_checks_created ON slip_checks(created_at DESC)`;
     applied.push('idx_slip_checks_created');
 
+    // ─── customer_registrations (LINE group / web token → customer name set) ───
+    // ผูก identity (กลุ่ม LINE ของลูกค้า หรือลิงก์ web เฉพาะตัว) เข้ากับชุดชื่อลูกค้า
+    // ที่ตรงกับ orders.raw->>'customer' — ใช้ค้นงาน active ทั้งหมดของลูกค้ารายนั้น.
+    await sql`
+      CREATE TABLE IF NOT EXISTS customer_registrations (
+        id            SERIAL PRIMARY KEY,
+        customers     TEXT[]      NOT NULL,
+        line_group_id TEXT        UNIQUE,
+        web_token     TEXT        NOT NULL UNIQUE,
+        note          TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by    TEXT
+      )`;
+    applied.push('CREATE TABLE customer_registrations');
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_custreg_group ON customer_registrations(line_group_id)`;
+    applied.push('idx_custreg_group');
+
+    // กัน seq scan ตอน query orders by customer (loadActiveJobsByCustomer)
+    await sql`CREATE INDEX IF NOT EXISTS idx_orders_customer_norm ON orders (LOWER(TRIM(raw->>'customer')))`;
+    applied.push('idx_orders_customer_norm');
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
-    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'slip_checks']) {
+    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'slip_checks', 'customer_registrations']) {
       try {
         const r = await sql.query(`SELECT COUNT(*)::int AS count FROM ${t}`);
         counts[t] = (r.rows[0] as { count?: number })?.count ?? 0;
