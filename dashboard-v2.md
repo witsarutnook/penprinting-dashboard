@@ -348,8 +348,8 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### Track by Customer — LINE กลุ่มลูกค้า + web tokenized link (2026-07-01) 🔎 [PR #17, รอ merge]
-ลูกค้าเช็คงาน active ทั้งหมดของตัวเอง: **LINE** `/track` ในกลุ่มที่ผูกลูกค้า (Hybrid group-bound + keyword filter, adaptive 1→การ์ดเต็ม/หลาย→bubble สรุป) · **web** `/track/c/[token]` (public, token 144-bit) · **admin** `/registrations` (ผูก group id + ชื่อลูกค้า[] → gen token). ตาราง `customer_registrations` + shared `deriveTrackStatus` (track-flex refactor ใช้ร่วม) + `loadActiveJobsByCustomer`. subagent-driven + final opus review = yes-with-minor (array-param verified ปลอดภัย · audit_log fixed · track/lookup refactor deferred โดยตั้งใจ). 278 tests (+51). ยังไม่ deploy (รอ merge + db-migrate).
+### Track by Customer — LINE กลุ่มลูกค้า + web tokenized link (2026-07-01) 🔎 (merged `5d9971e`, SHIPPED live)
+ลูกค้าเช็คงาน active ทั้งหมดของตัวเอง: **LINE** `/track` ในกลุ่มที่ผูกลูกค้า (Hybrid group-bound + keyword filter, adaptive 1→การ์ดเต็ม/หลาย→bubble สรุป) · **web** `/track/c/[token]` (public, token 144-bit) · **admin** `/registrations` (ผูก group id + ชื่อลูกค้า[] → gen token). ตาราง `customer_registrations` + shared `deriveTrackStatus` (track-flex refactor ใช้ร่วม) + `loadActiveJobsByCustomer`. subagent-driven + final opus review = yes-with-minor (array-param verified ปลอดภัย · audit_log fixed · track/lookup refactor deferred โดยตั้งใจ). 278 tests (+51). **Live-verified prod:** db-migrate applied (table+2 index) · registration #1 `รัฐกุล` (audit ทำงาน) · web `/track/c/<token>` = 6 งาน active จริง (**array-bind พิสูจน์บน prod**, daysHint/sort/TZ ถูก) · LINE smoke OK · nav link `/registrations` admin (`0a052a0`).
 
 ### AI Quote LINE Phase 1b-A — webhook cutover + slip-verify iterate + slip_checks migration (2026-06-30) 📲
 
