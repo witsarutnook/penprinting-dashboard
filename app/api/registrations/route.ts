@@ -2,6 +2,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
 import { listRegistrations, createRegistration } from '@/lib/registrations';
+import { appendAuditToPostgres } from '@/lib/postgres-write';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const reg = await createRegistration({ customers, lineGroupId, note, createdBy: `${session.role}:${session.user}` });
+    await appendAuditToPostgres({
+      action: 'createRegistration',
+      role: session.role,
+      user: session.user,
+      targetId: reg.id,
+      summary: `ลงทะเบียน track ลูกค้า: ${customers.join(', ')}${lineGroupId ? ` (กลุ่ม ${lineGroupId})` : ''}`,
+    });
     return NextResponse.json({ registration: reg });
   } catch (err) {
     // line_group_id UNIQUE violation → กลุ่มนี้ถูกผูกไว้แล้ว
