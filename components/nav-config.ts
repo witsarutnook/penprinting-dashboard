@@ -21,6 +21,7 @@ import {
   IconAlertCircle,
   IconSparkles,
   IconClipboardList,
+  IconUsers,
 } from '@/lib/icons';
 
 type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
@@ -69,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/shipped', label: 'จัดส่งแล้ว', icon: IconTruck },
       { href: '/cancelled', label: 'รายการยกเลิก', icon: IconAlertCircle, adminOnly: true },
       { href: '/archive', label: 'ค้นข้อมูลเก่า', icon: IconFolderOpen, adminOnly: true },
+      { href: '/registrations', label: 'ลงทะเบียนลูกค้า (Track)', icon: IconUsers, adminOnly: true },
     ],
   },
 ];
