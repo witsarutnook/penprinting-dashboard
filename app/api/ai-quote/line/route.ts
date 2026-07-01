@@ -53,6 +53,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           loadOrder: loadOrder as unknown as HandleDeps['loadOrder'],
           // buildOrderFlex: concrete type uses TrackState|null, interface uses unknown — safe cast
           buildOrderFlex: buildOrderFlex as HandleDeps['buildOrderFlex'],
+          // track-customer (group name search) — not yet wired; stub until its own task lands
+          loadRegistrationByGroup: async () => { throw new Error('loadRegistrationByGroup: not implemented yet'); },
+          loadActiveJobsByCustomer: async () => { throw new Error('loadActiveJobsByCustomer: not implemented yet'); },
+          buildCustomerJobsFlex: () => { throw new Error('buildCustomerJobsFlex: not implemented yet'); },
           recordSlipCheck,
           anthropic,
           visionModel: VISION_MODEL,
