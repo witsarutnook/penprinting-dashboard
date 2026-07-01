@@ -8,6 +8,9 @@ import { buildSlipFlex } from '@/lib/ai-quote/slip-flex';
 import { recordSlipCheck } from '@/lib/ai-quote/slip-metrics';
 import { buildOrderFlex } from '@/lib/ai-quote/track-flex';
 import { loadOrder } from '@/lib/api';
+import { loadActiveJobsByCustomer } from '@/lib/customer-track';
+import { loadRegistrationByGroup } from '@/lib/registrations';
+import { buildCustomerJobsFlex } from '@/lib/ai-quote/customer-jobs-flex';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,10 +56,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           loadOrder: loadOrder as unknown as HandleDeps['loadOrder'],
           // buildOrderFlex: concrete type uses TrackState|null, interface uses unknown — safe cast
           buildOrderFlex: buildOrderFlex as HandleDeps['buildOrderFlex'],
-          // track-customer (group name search) — not yet wired; stub until its own task lands
-          loadRegistrationByGroup: async () => { throw new Error('loadRegistrationByGroup: not implemented yet'); },
-          loadActiveJobsByCustomer: async () => { throw new Error('loadActiveJobsByCustomer: not implemented yet'); },
-          buildCustomerJobsFlex: () => { throw new Error('buildCustomerJobsFlex: not implemented yet'); },
+          // track-customer (group name search) — Postgres-backed; loose casts mirror loadOrder/buildOrderFlex above
+          loadRegistrationByGroup: loadRegistrationByGroup as unknown as HandleDeps['loadRegistrationByGroup'],
+          loadActiveJobsByCustomer: loadActiveJobsByCustomer as unknown as HandleDeps['loadActiveJobsByCustomer'],
+          buildCustomerJobsFlex: buildCustomerJobsFlex as unknown as HandleDeps['buildCustomerJobsFlex'],
           recordSlipCheck,
           anthropic,
           visionModel: VISION_MODEL,
