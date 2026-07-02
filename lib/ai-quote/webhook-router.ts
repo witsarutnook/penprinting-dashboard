@@ -72,7 +72,6 @@ export interface HandleDeps {
  *  slip + track; 'ai'/'enter-ai'/'exit-ai' routes are no-ops until 1b-B wires them. */
 export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promise<void> {
   const route = routeInbound(m, { aiEnabled: deps.aiEnabled });
-  console.log('[ai-quote] inbound', { kind: m.kind, route });
   if (route === 'slip') {
     const blob = await deps.adapter.downloadImage(m);
     // Cheap Haiku pre-filter to spare Thunder quota (customers send many non-slip
@@ -80,18 +79,10 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     // image, and the prompt explicitly counts bill-payment/QR/top-up slips as slips.
     const { data, mediaType } = await deps.blobToBase64(blob);
     const looksLikeSlip = await deps.isSlipImage(data, mediaType, { client: deps.anthropic, model: deps.visionModel });
-    console.log('[ai-quote] slip pre-filter', { mediaType, looksLikeSlip });
     let result: ThunderVerifyResponse | null = null;
     if (looksLikeSlip) {
       result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
-      console.log('[ai-quote] thunder result', {
-        success: result.success,
-        isDuplicate: result.data?.isDuplicate,
-        isAccountMatched: result.data?.isAccountMatched,
-        error: result.error?.code,
-      });
       await deps.adapter.reply(m, deps.buildSlipFlex(result));
-      console.log('[ai-quote] slip reply sent');
     }
     // record one metric row per image (pass or drop) — best-effort, never throws
     await deps.recordSlipCheck?.({ channel: m.channel, looksLikeSlip, result });

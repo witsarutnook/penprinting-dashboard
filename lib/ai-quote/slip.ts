@@ -102,7 +102,6 @@ export async function isSlipImage(
     });
     const text = (res.content as Array<{ type: string; text?: string }>)
       .filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ').trim().toLowerCase();
-    console.log('[ai-quote] isSlipImage haiku answer', JSON.stringify(text));
     if (!text) return true; // empty/text-less response → fail-safe (don't drop a possible slip)
     // fail-safe: pass everything EXCEPT an explicit refusal — keeps real slips
     // (incl. "รูปนี้เป็นสลิป" / "น่าจะใช่") from being silently dropped.
