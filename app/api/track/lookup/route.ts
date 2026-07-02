@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import { loadOrder, AppsScriptError } from '@/lib/api';
-import { displayDate } from '@/lib/jobs';
-import { DEPT_LABELS, STAFF, type Dept } from '@/lib/board';
-import { computeUrgency, getBangkokToday, type Urgency } from '@/lib/calendar';
-import { parseDateDMY } from '@/lib/analytics';
+import { getBangkokToday } from '@/lib/calendar';
 import type { Job, Shipped, Cancelled } from '@/lib/types';
+import { buildTrackResult } from '@/lib/track-result';
 import { checkRateLimit, peekRateLimit, recordFailure } from '@/lib/rate-limit';
 
 // Public route — no auth, no Node-specific deps. Run on Vercel's Edge
@@ -70,47 +68,6 @@ function timingSafeStringEqual(a: string, b: string): boolean {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
-}
-
-function maskName(name: string): string {
-  const s = (name || '').trim();
-  if (!s) return '-';
-  if (s.length <= 2) return s;
-  return s.slice(0, 2) + '•'.repeat(Math.max(1, s.length - 2));
-}
-
-interface TrackResult {
-  orderId: number;
-  name: string;
-  customerMasked: string;
-  dateIn: string;
-  dateDue: string;
-  status: 'cancelled' | 'shipped' | 'in_progress' | 'received';
-  /** Status pill label — e.g. "อยู่ระหว่างพิมพ์", "จัดส่งเรียบร้อยแล้ว". */
-  statusLabel: string;
-  step: string;             // "กราฟิก", "พิมพ์", "หลังพิมพ์/จัดส่ง", "ยกเลิก", "จัดส่งแล้ว"
-  /** Current dept of the active job — drives the 6-step progress UI on
-   *  the client. null when received-but-no-job-yet, shipped, or cancelled. */
-  currentDept: 'graphic' | 'print' | 'post' | null;
-  /** True when job is in the shipping queue (dept='post' AND staff='ship').
-   *  Client uses this to highlight step 5 ("สินค้าพร้อมรับ") as the active
-   *  step instead of step 4 (post-press) — without this flag the timeline
-   *  would stall at "ขั้นตอนหลังพิมพ์" even after the job moves to ship. */
-  awaitingShipment: boolean;
-  daysHint: string;         // "เหลือ Xว", "ส่งวันนี้", "เกิน Xว"
-  urgencyKey: Urgency | 'shipped' | 'cancelled' | 'received';
-  shippedDate?: string;
-  cancelReason?: string;
-}
-
-function deptStepLabel(dept: string, staff: string): string {
-  const d = (DEPT_LABELS as Record<string, string>)[dept] || dept;
-  // Mask staff to first 2 chars to keep names somewhat private
-  const def = (STAFF as Record<string, Array<{ id: string; name: string }>>)[dept]?.find(
-    (s) => s.id === staff,
-  );
-  const staffName = def ? def.name : staff;
-  return `${d} (${maskName(staffName)})`;
 }
 
 export async function POST(req: Request) {
@@ -218,97 +175,14 @@ export async function POST(req: Request) {
   // loadOrder returns the SINGLE most recent matching row per state. The
   // legacy loadAll path used .find() which has the same single-row semantics,
   // so behavior is preserved.
-  const jobMatch = lookup.job as unknown as Job | null;
-  const shippedMatch = lookup.shipped as unknown as Shipped | null;
-  const cancelledMatch = lookup.cancelled as unknown as Cancelled | null;
+  const job = lookup.job as unknown as Job | null;
+  const shipped = lookup.shipped as unknown as Shipped | null;
+  const cancelled = lookup.cancelled as unknown as Cancelled | null;
 
-  // Status label = current step name, matching WP wording exactly so the
-  // 6-step progress bar on the client is consistent with the badge.
-  const STATUS_BY_DEPT: Record<string, string> = {
-    graphic: 'กราฟิกกำลังดำเนินการ',
-    print:   'อยู่ระหว่างพิมพ์',
-    post:    'ขั้นตอนหลังพิมพ์',
-  };
-
-  let status: TrackResult['status'];
-  let statusLabel = '';
-  let step = '';
-  let daysHint = '';
-  let urgencyKey: TrackResult['urgencyKey'] = 'received';
-  let currentDept: TrackResult['currentDept'] = null;
-  let awaitingShipment = false;
-
-  if (cancelledMatch) {
-    status = 'cancelled';
-    statusLabel = 'ยกเลิก';
-    step = 'ยกเลิก';
-    urgencyKey = 'cancelled';
-  } else if (shippedMatch) {
-    status = 'shipped';
-    statusLabel = 'จัดส่งเรียบร้อยแล้ว';
-    step = 'จัดส่งแล้ว';
-    urgencyKey = 'shipped';
-  } else if (jobMatch) {
-    status = 'in_progress';
-    const dept = String(jobMatch.dept || '');
-    currentDept = (dept === 'graphic' || dept === 'print' || dept === 'post') ? dept : null;
-    if (currentDept) {
-      // Standard happy path — known dept drives both badge + 6-step UI.
-      step = deptStepLabel(jobMatch.dept, jobMatch.staff);
-      statusLabel = STATUS_BY_DEPT[dept];
-      // staff='ship' is a sub-state of dept='post' (the shipping queue).
-      // Surface it to the client so the timeline advances past post-press
-      // and the badge matches what the customer sees on step 5.
-      if (currentDept === 'post' && String(jobMatch.staff || '') === 'ship') {
-        awaitingShipment = true;
-        statusLabel = 'สินค้าพร้อมรับ';
-      }
-      const due = parseDateDMY(jobMatch.date);
-      const today = getBangkokToday();
-      const u = computeUrgency(due, today);
-      urgencyKey = u;
-      if (due) {
-        const days = Math.floor((due.getTime() - today.getTime()) / 86400000);
-        if (days < 0) daysHint = `เลยกำหนด ${Math.abs(days)} วัน`;
-        else if (days === 0) daysHint = 'กำหนดส่งวันนี้';
-        else daysHint = `เหลืออีก ${days} วัน`;
-      }
-    } else {
-      // Auditor M4 (2026-05-08): job.dept is empty/unknown (e.g. archive
-      // ingestion oddity, manual Sheet edit). Don't show "overdue" red
-      // alongside an empty 6-step timeline — the customer would see a
-      // contradiction (urgent + nothing-in-progress). Force a benign
-      // "received" state so badge + steps stay internally consistent.
-      step = 'รับใบสั่งงาน';
-      statusLabel = 'รับใบสั่งงานแล้ว';
-      urgencyKey = 'received';
-    }
-  } else {
-    status = 'received';
-    statusLabel = 'รับใบสั่งงานแล้ว';
-    step = 'รับใบสั่งงาน';
-    urgencyKey = 'received';
-  }
-
-  const result: TrackResult = {
-    orderId: Number(order.id),
-    name: String(order.name || '-'),
-    customerMasked: maskName(String(order.customer || '')),
-    dateIn: displayDate(order.dateIn),
-    dateDue: displayDate(order.dateDue),
-    status,
-    statusLabel,
-    step,
-    currentDept,
-    awaitingShipment,
-    daysHint,
-    urgencyKey,
-    shippedDate: shippedMatch ? displayDate(shippedMatch.shippedDate) : undefined,
-    cancelReason: cancelledMatch ? String(cancelledMatch.reason || '') : undefined,
-  };
+  // Status/step/label + redaction. The semantic core (dept, awaiting shipment,
+  // days left) comes from deriveTrackStatus — the same source the LINE Flex
+  // card and the customer job list use, so all three surfaces agree.
+  const result = buildTrackResult(order, job, shipped, cancelled, getBangkokToday());
 
   return respond({ ok: true, result });
 }
-
-// Allow Dept import to satisfy ts; suppress unused complaints
-void (null as Dept | null);
