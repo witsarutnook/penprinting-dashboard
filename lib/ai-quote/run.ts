@@ -4,7 +4,12 @@ import type { ConversationTurn, ProductType, QuoteSpec, ComputeResult } from './
 import { COMPUTE_QUOTE_TOOL, type ComputeQuoteInput, type ComputeQuoteOutcome } from './tools';
 
 const MAX_TOOL_ROUNDS = 6;     // safety cap on the agentic loop
-const MAX_TOKENS = 2048;       // short staff-facing replies
+// Replies are short, but Sonnet 5 runs adaptive thinking by default (thinking
+// is unset below) and those thinking tokens count against max_tokens. 2048 risked
+// truncating mid-thought → an empty text turn → the retry fallback. 4096 leaves
+// room for thinking + a tool call + the reply; still well under the streaming
+// threshold. (Haiku 4.5, which doesn't think by default, was fine at 2048.)
+const MAX_TOKENS = 4096;
 
 export interface RunQuoteTurnInput {
   history: ConversationTurn[]; // prior turns (user/assistant text)

@@ -12,7 +12,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const MODEL = 'claude-haiku-4-5';
+// Sonnet 5 for the quote engine (was Haiku 4.5, swapped 2026-07-02). Haiku
+// over-clarified — asked redundant questions and lost to soft defaults, which
+// took repeated hard-rule patches; Sonnet 5 follows the assume-and-disclose
+// spec faithfully (preview smoke 4/4, incl. the cover-color case that needed
+// 3 Haiku patches). NOTE: Sonnet 5 runs adaptive thinking by default when
+// `thinking` is unset (Haiku didn't) — MAX_TOKENS in run.ts leaves it room.
+const MODEL = 'claude-sonnet-5';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const session = await requireSession(['admin', 'sales']);
