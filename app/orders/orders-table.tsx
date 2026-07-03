@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -66,7 +66,12 @@ interface Props {
  *  500 rows. Without this, a row-click on /orders feels noticeably laggy. */
 export function OrdersTable({ rows, role, perPage = 20, page = 1 }: Props) {
   const [activeId, setActiveId] = useState<number | null>(null);
-  const active = rows.find((r) => r.id === activeId) || null;
+  // Memoize the active-row lookup — it's an O(n) scan of the full filtered
+  // set that otherwise re-runs on every render (including parent delta polls).
+  const active = useMemo(
+    () => rows.find((r) => r.id === activeId) || null,
+    [rows, activeId],
+  );
   const onRowClick = useCallback((id: number) => setActiveId(id), []);
   // Clamp the requested page against the current filtered total so users
   // who narrow the filter while sitting on page 5 don't render a blank

@@ -1,6 +1,35 @@
 import 'server-only';
+import { unstable_cache } from 'next/cache';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
+import { LOAD_ALL_TAG } from '@/lib/api';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
+
+/** Shipped/cancelled order-id sets for the /orders list view — a full
+ *  snapshot (not delta): small, and a hard-deleted row (e.g. /restore
+ *  pulling a row back out of cancelled) must simply drop out. Cached 15s +
+ *  tag-invalidated on every job write (they all call
+ *  `revalidateTag(LOAD_ALL_TAG)`), so N tabs polling coalesce to one DISTINCT
+ *  scan per window instead of one scan per tab per poll (PERF-M1). */
+const loadOrderIdSetsCached = unstable_cache(
+  async (): Promise<{ shippedOrderIds: number[]; cancelledOrderIds: number[] }> => {
+    const [shippedR, cancelledR] = await Promise.all([
+      sql<{ order_id: number | string }>`
+        SELECT DISTINCT order_id FROM shipped
+        WHERE order_id IS NOT NULL ORDER BY order_id
+      `,
+      sql<{ order_id: number | string }>`
+        SELECT DISTINCT order_id FROM cancelled
+        WHERE order_id IS NOT NULL ORDER BY order_id
+      `,
+    ]);
+    return {
+      shippedOrderIds: shippedR.rows.map((r) => Number(r.order_id)),
+      cancelledOrderIds: cancelledR.rows.map((r) => Number(r.order_id)),
+    };
+  },
+  ['board-order-id-sets'],
+  { tags: [LOAD_ALL_TAG], revalidate: 15 },
+);
 
 /**
  * Board delta loader — drives client-driven /board, /calendar, /orders,
@@ -95,24 +124,12 @@ export async function loadBoardDelta(
   // ordering would create a write-loss window equal to query latency.
   const serverTime = new Date().toISOString();
 
-  // shipped/cancelled orderId sets — fetched in parallel with the main delta
-  // when requested. Always a FULL read: the sets are tiny and a hard-deleted
-  // row (e.g. restore removing a cancelled row) drops out without needing an
-  // updated_at delta or a tombstone column. Skipped when fullLists is set —
-  // those orderIds can be derived from the full rows client-side.
+  // shipped/cancelled orderId sets — cached full snapshot, fetched in
+  // parallel with the main delta when requested (see loadOrderIdSetsCached
+  // above). Skipped when fullLists is set — those orderIds are derived from
+  // the full rows client-side.
   const wantOrderIds = !!opts.lists && !opts.fullLists;
-  const orderIdsP = wantOrderIds
-    ? Promise.all([
-        sql<{ order_id: number | string }>`
-          SELECT DISTINCT order_id FROM shipped
-          WHERE order_id IS NOT NULL ORDER BY order_id
-        `,
-        sql<{ order_id: number | string }>`
-          SELECT DISTINCT order_id FROM cancelled
-          WHERE order_id IS NOT NULL ORDER BY order_id
-        `,
-      ])
-    : null;
+  const orderIdsP = wantOrderIds ? loadOrderIdSetsCached() : null;
 
   // Full shipped/cancelled rows + their current PK ID set for delete detection.
   // Bootstrap (since=null) returns the full tables; incremental returns only
@@ -181,9 +198,9 @@ export async function loadBoardDelta(
   const delta: BoardDelta = { jobs, orders, deletedJobIds, serverTime };
 
   if (orderIdsP) {
-    const [shippedR, cancelledR] = await orderIdsP;
-    delta.shippedOrderIds = shippedR.rows.map((r) => Number(r.order_id));
-    delta.cancelledOrderIds = cancelledR.rows.map((r) => Number(r.order_id));
+    const sets = await orderIdsP;
+    delta.shippedOrderIds = sets.shippedOrderIds;
+    delta.cancelledOrderIds = sets.cancelledOrderIds;
   }
 
   if (fullListsP) {
