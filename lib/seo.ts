@@ -20,6 +20,17 @@ export const defaultMetadata: Metadata = {
     template: `%s | ${SITE_CONFIG.shortName}`,
   },
   description: SITE_CONFIG.description,
+  // iPad/iOS home-screen install — declare a standalone web app so iOS
+  // treats the home-screen icon as a real installed app and gives it a
+  // persistent storage container. Without this the clip had an unstable
+  // cookie jar that iOS evicted on app-switch → staff got bounced to
+  // /login every time they left and came back. Pairs with app/manifest.ts.
+  // `capable: true` emits <meta name="apple-mobile-web-app-capable" ...>.
+  appleWebApp: {
+    capable: true,
+    title: SITE_CONFIG.shortName,
+    statusBarStyle: 'default',
+  },
   // Internal app — keep out of search index
   robots: {
     index: false,
