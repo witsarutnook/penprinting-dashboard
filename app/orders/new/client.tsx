@@ -15,8 +15,8 @@ interface RecentOrder {
  *  After save the user is redirected to the Kanban.
  *
  *  When a `prefill` rawData is passed (duplicate flow via ?from=ID), the
- *  OrderForm is rendered with `initialPrefill`, which fills spec fields
- *  but resets dates / id / customer / name. */
+ *  OrderForm is rendered with `initialPrefill`, which carries over the full
+ *  spec including the job name + customer and only resets the dates. */
 export function OrderEntryClient({
   defaultOrderer, templates = [], prefill = null, recentOrders = [],
 }: {

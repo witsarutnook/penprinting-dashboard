@@ -62,7 +62,16 @@ export default async function NewOrderPage(props: { searchParams: Promise<Search
         const raw = (src.rawData && typeof src.rawData === 'object'
           ? src.rawData
           : (src.details || {})) as Record<string, unknown>;
-        prefillFromOrder = raw;
+        // Carry the canonical name + customer over the rawData copy — the
+        // duplicate flow reads them via orderFormFromRaw, but the rawData
+        // snapshot can be stale if the source order was renamed after
+        // creation (same reason the edit path overrides with OrderSummary
+        // fields). Keeps "สั่งซ้ำ" showing the order's current name/customer.
+        prefillFromOrder = {
+          ...raw,
+          name: String(src.name || ''),
+          customer: String(src.customer || ''),
+        };
         prefillSourceName = String(src.name || '');
       }
     }

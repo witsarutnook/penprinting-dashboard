@@ -35,9 +35,9 @@ interface OrderFormProps {
   templates?: Template[];
   /** Whether the user can manage (save/delete) templates — admin + sales. */
   canManageTemplates?: boolean;
-  /** Duplicate-flow prefill — rawData of another order. Spec fields are
-   *  populated but dates / customer / name are cleared so the user fills
-   *  fresh values for the new order. Mirrors WP duplicateOrder(). */
+  /** Duplicate-flow prefill — rawData of another order. The full spec
+   *  including the job name + customer is carried over; only the dates reset
+   *  so the user picks a fresh due date. Mirrors WP duplicateOrder(). */
   initialPrefill?: Record<string, unknown> | null;
   /** Recent orders for the "ดึงงานล่าสุดของลูกค้านี้" button + customer
    *  autocomplete history. Slim shape — rawData is fetched on demand from
@@ -187,11 +187,13 @@ export function OrderForm({
     initializedIdRef.current = identity;
 
     if (!initial && initialPrefill) {
-      // Duplicate flow — populate from another order's rawData but clear
-      // identifying fields so user fills fresh values.
+      // Duplicate flow ("สั่งซ้ำ") — carry over the FULL spec including the
+      // job name + customer (a repeat is the same job for the same client).
+      // Only the dates reset so the user picks a fresh due date. Mirrors WP
+      // duplicateOrder() (which restores name/customer and clears only the
+      // due date). If the source order is still an active job, submit trips
+      // the "พบใบสั่งงานคล้ายกัน" warning by design — the user confirms.
       const next = orderFormFromRaw(initialPrefill, defaultOrderer);
-      next.name = '';
-      next.customer = '';
       next.dateIn = bangkokTodayISO();
       next.dateDue = '';
       setData(next);
