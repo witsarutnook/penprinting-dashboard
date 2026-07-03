@@ -3,7 +3,12 @@ import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { loadAll } from '@/lib/api';
+import {
+  loadOrder,
+  loadOrderFormTemplates,
+  loadRecentOrdersSlim,
+  type RecentOrderSlim,
+} from '@/lib/api';
 import type { Template } from '@/lib/types';
 import { OrderEntryClient } from './client';
 
@@ -34,46 +39,42 @@ export default async function NewOrderPage(props: { searchParams: Promise<Search
   // The full rawData is fetched on demand via /api/orders/raw/[id] when the
   // user clicks "ดึงงานล่าสุด" — keeps page payload small (M2 from auditor).
   let templates: Template[] = [];
-  let recentOrders: Array<{
-    id: number; name: string; customer: string; hasRawData: boolean;
-  }> = [];
+  let recentOrders: RecentOrderSlim[] = [];
   let prefillFromOrder: Record<string, unknown> | null = null;
   let prefillSourceName: string | null = null;
   try {
-    const data = await loadAll();
-    templates = data.templates || [];
+    // Slim bootstrap (PERF-H1) — three targeted, coalesced reads instead of a
+    // full loadAll() snapshot: the template list, a slim recent-orders list
+    // (id/name/customer/hasRawData for autocomplete + "ดึงงานล่าสุด"), and —
+    // only for the duplicate flow — the ONE source order's rawData. Avoids
+    // pulling every order's full rawData through loadAll just to slim it.
+    const fromId = searchParams.from ? Number(searchParams.from) : NaN;
+    const [tpls, recent, srcResp] = await Promise.all([
+      loadOrderFormTemplates(),
+      loadRecentOrdersSlim(),
+      Number.isFinite(fromId)
+        ? loadOrder(fromId, { orderOnly: true })
+        : Promise.resolve(null),
+    ]);
+    templates = tpls;
+    recentOrders = recent;
 
-    recentOrders = [...data.orders]
-      .sort((a, b) => Number(b.id) - Number(a.id))
-      .slice(0, 1000)
-      .map((o) => ({
-        id: Number(o.id),
-        name: String(o.name || ''),
-        customer: String(o.customer || ''),
-        hasRawData: !!(o.rawData && typeof o.rawData === 'object'),
-      }));
-
-    if (searchParams.from) {
-      const fromId = Number(searchParams.from);
-      const src = Number.isFinite(fromId)
-        ? data.orders.find((o) => Number(o.id) === fromId)
-        : undefined;
-      if (src) {
-        const raw = (src.rawData && typeof src.rawData === 'object'
-          ? src.rawData
-          : (src.details || {})) as Record<string, unknown>;
-        // Carry the canonical name + customer over the rawData copy — the
-        // duplicate flow reads them via orderFormFromRaw, but the rawData
-        // snapshot can be stale if the source order was renamed after
-        // creation (same reason the edit path overrides with OrderSummary
-        // fields). Keeps "สั่งซ้ำ" showing the order's current name/customer.
-        prefillFromOrder = {
-          ...raw,
-          name: String(src.name || ''),
-          customer: String(src.customer || ''),
-        };
-        prefillSourceName = String(src.name || '');
-      }
+    const src = srcResp?.order ?? null;
+    if (src) {
+      const raw = (src.rawData && typeof src.rawData === 'object'
+        ? src.rawData
+        : (src.details || {})) as Record<string, unknown>;
+      // Carry the canonical name + customer over the rawData copy — the
+      // duplicate flow reads them via orderFormFromRaw, but the rawData
+      // snapshot can be stale if the source order was renamed after creation
+      // (same reason the edit path overrides with OrderSummary fields). Keeps
+      // "สั่งซ้ำ" showing the order's current name/customer.
+      prefillFromOrder = {
+        ...raw,
+        name: String(src.name || ''),
+        customer: String(src.customer || ''),
+      };
+      prefillSourceName = String(src.name || '');
     }
   } catch {
     // ignore — show form without templates / prefill

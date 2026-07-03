@@ -1,6 +1,6 @@
 import 'server-only';
 import { unstable_cache } from 'next/cache';
-import type { LoadAllResponse, Order } from './types';
+import type { LoadAllResponse, Order, Template } from './types';
 
 /**
  * Apps Script client — narrowly used post-§12 by `/archive` only.
@@ -81,6 +81,73 @@ export async function loadAll(): Promise<LoadAllResponse> {
  *  /analytics for monthly-report breakdowns by dept. */
 export async function loadAllWithAudit(): Promise<LoadAllResponse> {
   return loadAllCached(true);
+}
+
+export interface RecentOrderSlim {
+  id: number;
+  name: string;
+  customer: string;
+  hasRawData: boolean;
+}
+
+/** Slim recent-orders list for the /orders/new bootstrap. The order-entry
+ *  form's customer autocomplete + "ดึงงานล่าสุด"/duplicate helpers only need
+ *  id + name + customer (+ whether a rawData spec snapshot exists). Projecting
+ *  those fields at the DB — instead of pulling every order's full rawData
+ *  through loadAll() just to slim it in JS — keeps the page's Postgres
+ *  transfer flat as the orders table grows (PERF-H1). LIMIT 1000 mirrors the
+ *  previous `.slice(0, 1000)`; ORDER BY id DESC mirrors the previous JS sort.
+ *  Coalesced + tag-invalidated on LOAD_ALL_TAG like loadAllCached. */
+const loadRecentOrdersSlimCached = unstable_cache(
+  async (): Promise<RecentOrderSlim[]> => {
+    const { sql } = await import('@/lib/postgres');
+    const r = await sql<{
+      id: number | string;
+      name: string | null;
+      customer: string | null;
+      has_raw: boolean;
+    }>`
+      SELECT id,
+             raw->>'name'                             AS name,
+             raw->>'customer'                         AS customer,
+             jsonb_typeof(raw->'rawData') = 'object'  AS has_raw
+      FROM orders
+      ORDER BY id DESC
+      LIMIT 1000
+    `;
+    return r.rows.map((o) => ({
+      id: Number(o.id),
+      name: String(o.name || ''),
+      customer: String(o.customer || ''),
+      hasRawData: !!o.has_raw,
+    }));
+  },
+  ['recent-orders-slim'],
+  { tags: [LOAD_ALL_TAG], revalidate: 15 },
+);
+
+/** See loadRecentOrdersSlimCached. */
+export async function loadRecentOrdersSlim(): Promise<RecentOrderSlim[]> {
+  return loadRecentOrdersSlimCached();
+}
+
+/** Job templates for the order-entry form's template dropdown. Small table;
+ *  cached + tag-invalidated on the same LOAD_ALL_TAG loadAll uses, so
+ *  freshness after a template save matches the previous loadAll()-based
+ *  bootstrap exactly. */
+const loadOrderFormTemplatesCached = unstable_cache(
+  async (): Promise<Template[]> => {
+    const { sql } = await import('@/lib/postgres');
+    const r = await sql<{ raw: Template }>`SELECT raw FROM templates ORDER BY id`;
+    return r.rows.map((t) => t.raw);
+  },
+  ['order-form-templates'],
+  { tags: [LOAD_ALL_TAG], revalidate: 15 },
+);
+
+/** See loadOrderFormTemplatesCached. */
+export async function loadOrderFormTemplates(): Promise<Template[]> {
+  return loadOrderFormTemplatesCached();
 }
 
 /** Postgres-only single-order lookup with its active jobs. Used by write
