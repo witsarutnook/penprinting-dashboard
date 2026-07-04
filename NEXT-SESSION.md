@@ -6,9 +6,12 @@
 >
 > **Follow-up (2026-07-04, same session)** ([`8ed3997`](https://github.com/witsarutnook/penprinting-dashboard/commit/8ed3997)): คุณนุ๊กถาม flow slip + ขอ 2 tweak. **(ตอบ)** slip **ไม่ได้ส่งตรงทุกรูปให้ Thunder** — มี Haiku vision pre-filter (`isSlipImage`) ก่อน: รูปเข้า→Haiku ตัดสิน "ดูเป็นสลิปมั้ย"→**ถ้า yes** ส่ง Thunder verify + ตอบ Flex / **ถ้า no** เงียบ (gate err-toward-yes, ประหยัด quota; นี่คือ filter 59% ที่ verify วันนี้). รูปที่คุณนุ๊กเจอ = ใบเสนอราคา Penprinting (มีเลขบัญชีท้ายใบ → Haiku ผ่าน gate → Thunder ยืนยันไม่ได้ → unreadable card). **(2 tweak)** slip unreadable Flex message → "ระบบไม่สามารถยืนยันสลิปได้ / รบกวนส่งรูปสลิปใหม่ให้ชัดเจน / หรือรอทีมงานตรวจสอบอีกครั้ง" (3 บรรทัด `\n`, header label 'อ่านสลิปไม่ได้' คงเดิม) · เพิ่มหน่วย **'ห่อ'** ใน `QTY_UNITS` order form (ระหว่าง ถุง/ชิ้น). Gates เขียว (294 tests). Live หลัง Vercel deploy.
 >
+> **Brainstorm (2026-07-04, same session) — Phase 1b-B DESIGNED ✅ spec committed, execution รอ:** คุณนุ๊กสั่ง "brainstorm ไว้รอก่อน" → superpowers brainstorming flow ครบ, design approved. **Spec: [docs/superpowers/specs/2026-07-04-ai-quote-phase1b-b-line-customer-design.md](docs/superpowers/specs/2026-07-04-ai-quote-phase1b-b-line-customer-design.md)**. Decisions: **D1** opt-in mode (rich menu + keyword, idle 30min lazy-expiry, ไม่มี cron) · **D2** นอกโหมด hint+ปุ่ม 1-แตะ conservative ≤1/user/24h (OA มีพนักงานตอบเอง — ห้ามแทรก) · **D3** escalation 4 triggers (ขอคุยกับคน/นอกขอบเขต/วน4รอบ = Type A `escalated` + ลูกค้าจะสั่ง = Type B `กำลังติดตาม`) → push Flex กลุ่มพนักงาน + /quote-leads, ออกโหมดทุก trigger · **D4** model = Sonnet 5 engine เดิม + Haiku gates, **zero model change** (เช็ค claude-api skill: Opus 1.7×/Fable 3.3× แพงเกินงาน, Sonnet intro ถึง 31 ส.ค.). ใหม่: ตาราง `ai_quote_line_modes` + customer prompt variant + escalation-push + M5 owner-check (`line_user_id` bind+check, 404 on mismatch) + rate limit 30/ชม. **Execute session หน้า: อ่าน spec → `superpowers:writing-plans` → execute. Gate = คุณนุ๊กตั้ง `LINE_STAFF_GROUP_ID` env (หา id ด้วย `/groupid` ในกลุ่มพนักงาน) + redeploy; rich menu ค่อยตั้งจังหวะ 2 (soft launch keyword-only ก่อน).**
+>
 > ## ⏳ Pending (2026-07-04)
-> 1. **(optional) เฝ้า perf จริง** — bootstrap payload เล็กลง 78% ควรเห็น board/orders โหลดไวขึ้นบน mobile/3G. ไม่มี action, สังเกตเฉยๆ
-> 2. **(carryover) slip-metrics + Sonnet 5 cost** — ยัง soak; ดู `/api/admin/slip-metrics` เรื่อยๆ + Anthropic console cost
+> 1. **Phase 1b-B execute** — spec พร้อม (ดู entry ด้านบน); รอคุณนุ๊กตั้ง `LINE_STAFF_GROUP_ID` + สั่งเริ่ม
+> 2. **(optional) เฝ้า perf จริง** — bootstrap payload เล็กลง 78% ควรเห็น board/orders โหลดไวขึ้นบน mobile/3G. ไม่มี action, สังเกตเฉยๆ
+> 3. **(carryover) slip-metrics + Sonnet 5 cost** — ยัง soak; ดู `/api/admin/slip-metrics` เรื่อยๆ + Anthropic console cost
 >
 > ---
 >
