@@ -206,28 +206,51 @@ export function OrderForm({
       return;
     }
     if (initial) {
-      const raw = initial.rawData || {};
-      const next = orderFormFromRaw(raw, initial.orderer || defaultOrderer);
-      // Override header from canonical OrderSummary fields (rawData might be stale)
-      next.name = initial.name || '';
-      next.customer = initial.customer || '';
-      next.dateIn = dmyToISOInput(initial.dateIn);
-      next.dateDue = dmyToISOInput(initial.dateDue);
-      next.orderer = initial.orderer || defaultOrderer;
-      // Trust orderFormFromRaw's read of assignStaff + forwardPrint from
-      // rawData (both fields can be set together — graphic does the work
-      // first, then forwards to the assigned print staff after). Only
-      // fall back to the orders-sheet top-level columns when rawData is
-      // empty (legacy orders saved before the dual-field flow existed).
-      if (!next.assignStaff && !next.forwardPrint) {
-        if (initial.assignDept === 'print') {
-          next.forwardPrint = initial.assignStaff || '';
-        } else {
-          next.assignStaff = initial.assignStaff || '';
+      // Header fields come from the canonical OrderSummary (top-level, always
+      // present). The spec fields come from rawData — which is NULL on the
+      // slim board-delta path (PERF-H2/M2, i.e. editing from a board card).
+      // Apply the header immediately, then lazy-fetch the spec and re-apply.
+      // Full orders (the /orders edit page) carry rawData inline → no fetch.
+      const applyInitial = (rawSpec: Record<string, unknown>) => {
+        const next = orderFormFromRaw(rawSpec, initial.orderer || defaultOrderer);
+        // Override header from canonical OrderSummary fields (rawData might be stale)
+        next.name = initial.name || '';
+        next.customer = initial.customer || '';
+        next.dateIn = dmyToISOInput(initial.dateIn);
+        next.dateDue = dmyToISOInput(initial.dateDue);
+        next.orderer = initial.orderer || defaultOrderer;
+        // Trust orderFormFromRaw's read of assignStaff + forwardPrint from
+        // rawData (both fields can be set together — graphic does the work
+        // first, then forwards to the assigned print staff after). Only
+        // fall back to the orders-sheet top-level columns when rawData is
+        // empty (legacy orders saved before the dual-field flow existed).
+        if (!next.assignStaff && !next.forwardPrint) {
+          if (initial.assignDept === 'print') {
+            next.forwardPrint = initial.assignStaff || '';
+          } else {
+            next.assignStaff = initial.assignStaff || '';
+          }
         }
+        setData(next);
+        setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
+      };
+
+      const inlineRaw = initial.rawData;
+      if (inlineRaw && Object.keys(inlineRaw).length > 0) {
+        applyInitial(inlineRaw);
+      } else {
+        applyInitial({}); // instant header; spec fields fill in after the fetch
+        const fetchId = initial.id;
+        fetch(`/api/orders/raw/${fetchId}`)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .then((payload) => {
+            // Ignore if the form moved to a different order while fetching.
+            if (initializedIdRef.current !== fetchId) return;
+            const rawSpec = (payload?.rawData as Record<string, unknown>) || {};
+            if (Object.keys(rawSpec).length > 0) applyInitial(rawSpec);
+          })
+          .catch(() => { /* keep the header-only form; user can still edit + save */ });
       }
-      setData(next);
-      setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
     } else {
       setData(emptyOrderForm(defaultOrderer));
       setExtraBills(false);

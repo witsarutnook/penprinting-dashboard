@@ -82,6 +82,24 @@ describe('computeOrdersList', () => {
     expect(r.rows.map((x) => x.id)).toEqual([1]);
   });
 
+  it('surfaces pin from the top-level slim field (not from rawData)', () => {
+    // PERF-H2/M2: the slim board-delta loader projects `pin` to the top level
+    // so the /orders row can show it without shipping the full rawData spec.
+    const r = computeOrdersList(
+      { orders: [order(1, { pin: '4821' })], jobs: [job(50, 1)], shippedOrderIds: [], cancelledOrderIds: [] },
+      noFilter,
+    );
+    expect(r.rows[0].pin).toBe('4821');
+  });
+
+  it('leaves row.rawData null so the detail modal lazy-fetches the full spec', () => {
+    const r = computeOrdersList(
+      { orders: [order(1, { pin: '4821' })], jobs: [job(50, 1)], shippedOrderIds: [], cancelledOrderIds: [] },
+      noFilter,
+    );
+    expect(r.rows[0].rawData).toBeNull();
+  });
+
   it('groups jobs with the same orderId+name into a duplicate group', () => {
     const r = computeOrdersList(
       {

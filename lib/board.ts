@@ -70,9 +70,16 @@ export interface OrderSummary {
   assignStaff: string;
   orderer: string;
   status: string;
-  /** Parsed details JSON (form fields) — passed through as-is */
+  /** Whether the order has a non-empty spec — projected by the slim
+   *  board-delta loader (PERF-H2/M2). Drives the card's "สเปคงาน" tab
+   *  visibility without shipping the blob. */
+  hasSpec?: boolean;
+  /** Parsed details JSON (form fields). NULL on the slim board-delta path
+   *  (PERF-H2/M2) — the detail modal + edit form lazy-fetch the full spec
+   *  via /api/orders/raw/[id]. Populated only by server-side full loads. */
   details: Record<string, unknown> | null;
-  /** Raw form snapshot — carries `orderType: 'photobook' | 'normal'` */
+  /** Raw form snapshot — carries `orderType: 'photobook' | 'normal'`.
+   *  NULL on the slim path (see `details`). */
   rawData: Record<string, unknown> | null;
 }
 
@@ -202,6 +209,7 @@ export function computeBoard(
           assignStaff: String(order.assignStaff || ''),
           orderer: String(order.orderer || ''),
           status: String(order.status || ''),
+          hasSpec: !!order.hasSpec,
           details: (order.details && typeof order.details === 'object')
             ? (order.details as Record<string, unknown>)
             : null,

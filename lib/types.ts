@@ -12,6 +12,13 @@ export interface Order {
   assignStaff: string;
   orderer: string;
   status: string;
+  /** PIN projected from rawData/details by the SLIM board-delta loader
+   *  (PERF-H2/M2) so the /orders row can show it without the full spec. */
+  pin?: string;
+  /** Whether the order carries a non-empty rawData/details spec — projected
+   *  by the slim loader so the board card can decide whether to show the
+   *  "สเปคงาน" tab without shipping the blob. */
+  hasSpec?: boolean;
   details?: Record<string, unknown>;
   rawData?: Record<string, unknown>;
 }

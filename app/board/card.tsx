@@ -590,12 +590,12 @@ function arePropsEqual(prev: CardProps, next: CardProps): boolean {
   }
   // Order is a nested object. Top-level card render only references
   // `job.order.orderer` (in inline JobForm defaults) and DetailContent
-  // (mount-on-open) reads order.customer/orderer/details. JSON.stringify
-  // on the full order was burning ~10KB × 50 cards × every auto-sync
-  // tick — replaced with primitive field compare on the keys actually
-  // consumed in render, plus a reference check on `details` (Phase 2
-  // updateOrder always replaces the order object so the ref check fires
-  // on real edits). (Auditor PERF-C1 finding, 2026-05-12.)
+  // (mount-on-open) reads order.customer/orderer + the projected `hasSpec`
+  // flag (the spec itself is lazy-fetched, PERF-H2/M2). JSON.stringify on
+  // the full order was burning ~10KB × 50 cards × every auto-sync tick —
+  // replaced with primitive field compare on the keys actually consumed in
+  // render. `hasSpec` flips when a spec is added/emptied → re-render so the
+  // "สเปคงาน" tab appears/disappears. (Auditor PERF-C1 finding, 2026-05-12.)
   const ao = a.order;
   const bo = b.order;
   if (ao !== bo) {
@@ -605,7 +605,7 @@ function arePropsEqual(prev: CardProps, next: CardProps): boolean {
       ao.orderer !== bo.orderer ||
       ao.name !== bo.name ||
       ao.dateDue !== bo.dateDue ||
-      ao.details !== bo.details
+      ao.hasSpec !== bo.hasSpec
     ) return false;
   }
   return true;
@@ -1025,11 +1025,43 @@ function DetailContent({
   const staffDef = STAFF[dept]?.find((s) => s.id === job.staff);
   const staffName = staffDef?.name || job.staff;
   const cowork = parseCoworkArray(job.cowork);
-  const hasSpec = !!(
-    (job.order?.details && Object.keys(job.order.details).length > 0) ||
-    cowork.length > 0
-  );
+  // PERF-H2/M2: the board delta ships a SLIM order (no spec blob). `hasSpec`
+  // now reads the projected flag; the spec itself is lazy-fetched below.
+  const hasSpec = !!(job.order?.hasSpec || cowork.length > 0);
   const urgencyColor = URGENCY_COLORS[job.urgency];
+
+  // Lazy-fetch the full spec on modal open (only when the order actually has
+  // one). Mirrors the /orders detail modal — /api/orders/raw/[id] returns the
+  // merged rawData that buildSpecSections curates.
+  const [spec, setSpec] = useState<Record<string, unknown> | null>(null);
+  const [specLoading, setSpecLoading] = useState(false);
+  const [specError, setSpecError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!job.orderId || !job.order?.hasSpec) {
+      setSpec(null);
+      setSpecError(null);
+      setSpecLoading(false);
+      return;
+    }
+    setSpec(null);
+    setSpecError(null);
+    setSpecLoading(true);
+    let cancelled = false;
+    fetch(`/api/orders/raw/${job.orderId}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => {
+        if (cancelled) return;
+        setSpec((data?.rawData as Record<string, unknown>) || {});
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSpecError(err instanceof Error ? err.message : 'โหลดสเปคงานไม่ได้');
+      })
+      .finally(() => {
+        if (!cancelled) setSpecLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [job.orderId, job.order?.hasSpec]);
 
   return (
     <div className="flex flex-col max-h-[90vh]">
@@ -1131,23 +1163,26 @@ function DetailContent({
         {tab === 'spec' && (
           <>
             {(() => {
-              const details = job.order?.details;
-              const raw = (job.order?.rawData ?? null) as Record<string, unknown> | null;
-              const isPhotobook =
-                String(raw?.orderType || details?.orderType || '') === 'photobook';
-              const pbItemsRaw = (Array.isArray(details?.photobook)
-                ? details!.photobook
-                : Array.isArray(details?.photobookItems)
-                  ? details!.photobookItems
-                  : Array.isArray(raw?.photobook)
-                    ? raw!.photobook
-                    : Array.isArray(raw?.photobookItems)
-                      ? raw!.photobookItems
-                      : []) as unknown[];
+              // PERF-H2/M2: spec is lazy-fetched (merged rawData). Same object
+              // feeds photobook detection + buildSpecSections (via DetailsTable),
+              // mirroring the /orders detail modal.
+              if (specLoading) {
+                return <p className="text-sm text-stone-400 text-center py-4">กำลังโหลดสเปคงาน…</p>;
+              }
+              if (specError) {
+                return <p className="text-sm text-red-500 text-center py-4">{specError}</p>;
+              }
+              const raw = spec;
+              const isPhotobook = String(raw?.orderType || '') === 'photobook';
+              const pbItemsRaw = (Array.isArray(raw?.photobook)
+                ? raw!.photobook
+                : Array.isArray(raw?.photobookItems)
+                  ? raw!.photobookItems
+                  : []) as unknown[];
               const photobookItems: PhotobookItemShape[] = pbItemsRaw
                 .filter((x) => x && typeof x === 'object')
                 .map((x) => x as PhotobookItemShape);
-              const hasDetails = !!details && Object.keys(details).length > 0;
+              const hasDetails = !!raw && Object.keys(raw).length > 0;
               if (!hasDetails && photobookItems.length === 0) {
                 return <p className="text-sm text-stone-400 text-center py-4">ไม่มีสเปคงาน</p>;
               }
@@ -1162,7 +1197,7 @@ function DetailContent({
                   )}
                   {hasDetails && (
                     <Section title="รายละเอียดงาน">
-                      <DetailsTable details={details!} isPhotobook={isPhotobook} />
+                      <DetailsTable details={raw!} isPhotobook={isPhotobook} />
                     </Section>
                   )}
                 </>

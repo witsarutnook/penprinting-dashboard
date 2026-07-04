@@ -215,4 +215,32 @@ describe('loadBoardDelta', () => {
       expect(cancelledIncr).toBeDefined();
     });
   });
+
+  // PERF-H2/M2: board/orders delta must NOT ship the heavy `rawData`/`details`
+  // spec blobs on every order. The list + board only display top-level fields
+  // plus `pin` (shown in the /orders row) and `hasSpec` (drives the board
+  // card's "สเปคงาน" tab visibility). The full spec is lazy-fetched via
+  // /api/orders/raw/[id] when a detail modal or edit form opens.
+  describe('slim orders payload (PERF-H2/M2)', () => {
+    it('bootstrap: orders query strips rawData/details and projects pin + hasSpec', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null);
+      const ordersCall = callsContaining('FROM orders')[0];
+      expect(ordersCall.text).toContain("- 'rawData'");
+      expect(ordersCall.text).toContain("- 'details'");
+      expect(ordersCall.text).toContain('pin');
+      expect(ordersCall.text).toContain('hasSpec');
+    });
+
+    it('incremental: orders query also ships the slim projection', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      queueResult({ rows: [], rowCount: 0 }); // tombstones
+      await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'));
+      const ordersCall = callsContaining('FROM orders')[0];
+      expect(ordersCall.text).toContain("- 'rawData'");
+      expect(ordersCall.text).toContain('hasSpec');
+    });
+  });
 });

@@ -113,19 +113,15 @@ export function computeOrdersList(
       orderStatusLabel = 'สั่งแล้ว'; orderStatusClass = 'bg-sky-50 text-sky-700'; normalised = 'sent';
     }
 
-    // Pull PIN from order rawData (if present) — surfaced in detail modal.
-    const rawData = (o.rawData && typeof o.rawData === 'object'
-      ? o.rawData as Record<string, unknown>
-      : {});
-    const detailsRecord = (o.details && typeof o.details === 'object'
-      ? o.details as Record<string, unknown>
-      : {});
-    const pin = String(rawData.pin || detailsRecord.pin || '');
-
-    // Merge rawData ⊕ details so the modal sees the full spec inline.
-    // rawData wins on key collisions — the v2 OrderForm writes there first;
-    // details is a legacy / fallback shape.
-    const inlineRaw: Record<string, unknown> = { ...detailsRecord, ...rawData };
+    // PERF-H2/M2: orders arrive SLIM (no rawData/details blob). `pin` is
+    // projected to the top level by the board-delta loader; fall back to the
+    // spec blobs only if a full order is ever passed (server-only callers).
+    const pin = String(
+      o.pin
+      ?? (o.rawData && typeof o.rawData === 'object' ? (o.rawData as Record<string, unknown>).pin : undefined)
+      ?? (o.details && typeof o.details === 'object' ? (o.details as Record<string, unknown>).pin : undefined)
+      ?? '',
+    );
 
     return {
       id: Number(o.id),
@@ -142,7 +138,9 @@ export function computeOrdersList(
       jobUrgency,
       jobUrgencyLabel,
       isOrphan,
-      rawData: Object.keys(inlineRaw).length > 0 ? inlineRaw : null,
+      // Never inline the spec into the list row (PERF-H2/M2) — the detail
+      // modal lazy-fetches it via /api/orders/raw/[id] on open.
+      rawData: null,
     };
   });
 

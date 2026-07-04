@@ -166,7 +166,23 @@ export async function loadBoardDelta(
   if (!since) {
     const [jobsR, ordersR] = await Promise.all([
       sql<{ raw: Job }>`SELECT raw FROM jobs WHERE phase2_deleted_at IS NULL ORDER BY id`,
-      sql<{ raw: Order }>`SELECT raw FROM orders ORDER BY id DESC`,
+      // PERF-H2/M2: ship a SLIM order — strip the heavy `rawData`/`details`
+      // spec blobs (the board/orders list never renders them inline; the
+      // detail modal + edit form lazy-fetch via /api/orders/raw/[id]). Keep
+      // every top-level display field, and re-project the two derived fields
+      // the list/board DO need: `pin` (shown in the /orders row) and
+      // `hasSpec` (drives the board card's "สเปคงาน" tab visibility).
+      sql<{ raw: Order }>`
+        SELECT (raw - 'rawData' - 'details')
+          || jsonb_build_object(
+               'pin', COALESCE(raw #>> '{rawData,pin}', raw #>> '{details,pin}'),
+               'hasSpec', (
+                 COALESCE(raw->'rawData', '{}'::jsonb) <> '{}'::jsonb
+                 OR COALESCE(raw->'details', '{}'::jsonb) <> '{}'::jsonb
+               )
+             ) AS raw
+        FROM orders ORDER BY id DESC
+      `,
     ]);
     jobs = jobsR.rows.map((r) => r.raw);
     orders = ordersR.rows.map((r) => r.raw);
@@ -180,8 +196,17 @@ export async function loadBoardDelta(
           AND phase2_deleted_at IS NULL
         ORDER BY id
       `,
+      // Same slim projection as the bootstrap branch (PERF-H2/M2) — see above.
       sql<{ raw: Order }>`
-        SELECT raw FROM orders
+        SELECT (raw - 'rawData' - 'details')
+          || jsonb_build_object(
+               'pin', COALESCE(raw #>> '{rawData,pin}', raw #>> '{details,pin}'),
+               'hasSpec', (
+                 COALESCE(raw->'rawData', '{}'::jsonb) <> '{}'::jsonb
+                 OR COALESCE(raw->'details', '{}'::jsonb) <> '{}'::jsonb
+               )
+             ) AS raw
+        FROM orders
         WHERE updated_at > ${sinceIso}
         ORDER BY id DESC
       `,
