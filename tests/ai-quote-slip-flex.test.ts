@@ -82,7 +82,7 @@ describe('buildSlipFlex', () => {
     const flex = buildSlipFlex({ success: false, error: { code: 'SLIP_NOT_FOUND', message: 'x' } });
     const s = json(flex);
     expect(s).toContain('#f1efe8');      // gray header bg
-    expect(s).toMatch(/อ่านสลิป|ส่ง.*ใหม่/);
+    expect(s).toMatch(/ยืนยันสลิป|ส่ง.*ใหม่/);
     expect(flex.type).toBe('flex');
   });
 

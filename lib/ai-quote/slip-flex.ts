@@ -123,7 +123,7 @@ export function buildSlipFlex(result: ThunderVerifyResponse): Record<string, unk
     // D4: never expose the mistaken destination account — just tell the customer to recheck
     body.push(notice('ยอดนี้ดูไม่ตรงบัญชีของร้านค่ะ 🙏 รบกวนตรวจสอบเลขบัญชีปลายทางอีกครั้งนะคะ'));
   } else {
-    body.push(notice('ระบบอ่านสลิปไม่ออกค่ะ 🙏 รบกวนส่งรูปสลิปใหม่ให้ชัดเจน หรือรอทีมงานตรวจสอบให้นะคะ'));
+    body.push(notice('ระบบไม่สามารถยืนยันสลิปได้\nรบกวนส่งรูปสลิปใหม่ให้ชัดเจน\nหรือรอทีมงานตรวจสอบอีกครั้ง'));
   }
 
   return {
