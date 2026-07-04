@@ -4,6 +4,10 @@ import { loadBoardDelta, BoardDeltaError } from '@/lib/board-delta';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
+// Per-session, per-cursor polling endpoint — never statically optimize or cache.
+// requireSession() reads cookies so this is already dynamic; declared explicitly
+// to match the session-gated route convention (ai-quote / registrations / track).
+export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/board/delta?since=<iso>
@@ -46,7 +50,8 @@ export async function GET(req: Request) {
 
   try {
     const delta = await loadBoardDelta(since, { lists: wantLists, fullLists: wantFullLists });
-    return NextResponse.json(delta);
+    // Cursor-specific, per-session payload — must not be cached by browser/CDN/proxy.
+    return NextResponse.json(delta, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const status = err instanceof BoardDeltaError ? 503 : 500;
     return NextResponse.json(
