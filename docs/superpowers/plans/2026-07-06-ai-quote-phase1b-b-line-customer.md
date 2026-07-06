@@ -75,7 +75,7 @@ git checkout -b feat/ai-quote-phase1b-b-line-customer
         channel_user_id  TEXT PRIMARY KEY,
         entered_at       TIMESTAMPTZ,
         last_activity_at TIMESTAMPTZ,
-        session_id       BIGINT,
+        session_id       INTEGER REFERENCES ai_quote_sessions(id) ON DELETE SET NULL,
         rounds_no_quote  INT NOT NULL DEFAULT 0,
         last_hint_at     TIMESTAMPTZ
       )`;
@@ -1400,7 +1400,7 @@ import { runQuoteTurn, sanitizeHistory } from '@/lib/ai-quote/run';
 import { runComputeQuote } from '@/lib/ai-quote/tools';
 import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
 import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
-import { loadSession, createLineSession, saveConversation, saveQuote, countQuotes, updateLead } from '@/lib/ai-quote/db';
+import { loadSession, createLineSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from '@/lib/ai-quote/db';
 import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed } from '@/lib/ai-quote/line-mode';
 import { getLineProfile, pushLine } from '@/lib/ai-quote/channels/line';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -1445,6 +1445,7 @@ function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken:
     saveConversation,
     saveQuote,
     countQuotes,
+    loadLastQuote,
     updateLeadStatus: (sessionId, status) => updateLead(sessionId, { leadStatus: status }),
     runTurn: (history, userMessage) =>
       runQuoteTurn(
