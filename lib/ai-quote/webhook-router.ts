@@ -2,6 +2,15 @@
 import type { InboundMessage, ChannelAdapter } from './channels/types';
 import { extractOrderId } from './track-flex';
 import type { ThunderVerifyResponse } from './slip';
+import type { ConversationTurn } from './types';
+import type { RunQuoteTurnOutput, ProducedQuote } from './run';
+import type { LineModeRow } from './line-mode';
+import type { EscalationFlexInput } from './escalation-flex';
+import {
+  detectHumanRequest, detectOrderIntent, detectCustomerEscalation,
+  ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, INTRO_TEXT, EXIT_TEXT, HINT_TEXT,
+  HINT_QUICK_REPLY, RATE_LIMIT_TEXT, ERROR_TEXT, type TriggerType,
+} from './customer-triggers';
 
 export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'ignore';
 
@@ -82,10 +91,40 @@ export interface HandleDeps {
   // Optional best-effort metrics sink (one row per inbound slip image). Omitted
   // in tests; wired to Postgres in the LINE route. Must never throw.
   recordSlipCheck?: (ev: { channel: string; looksLikeSlip: boolean; result: ThunderVerifyResponse | null }) => Promise<void>;
+  // 1b-B customer AI arms — absent = flag off / env missing (1b-A behaviour).
+  aiCustomer?: CustomerAiDeps;
+}
+
+/** Side-effecting deps for the 1b-B customer AI arms — everything injectable
+ *  so handleInbound stays pure-testable. Pure helpers (trigger detectors,
+ *  canned copy) are imported directly, not injected. Absent (undefined) when
+ *  AI_QUOTE_LINE_ENABLED is off or QUOTE_API env is missing → 1b-A behaviour. */
+export interface CustomerAiDeps {
+  loadMode: (uid: string) => Promise<LineModeRow | null>;
+  enterMode: (uid: string) => Promise<void>;
+  touchMode: (uid: string, patch: { sessionId?: number | null; roundsNoQuote?: number | null }) => Promise<void>;
+  exitMode: (uid: string) => Promise<void>;
+  markHintSent: (uid: string) => Promise<void>;
+  modeActive: (lastActivityAt: string | null, nowMs: number) => boolean;
+  hintAllowed: (lastHintAt: string | null, nowMs: number) => boolean;
+  hintEnabled: boolean;
+  /** true = ผ่าน (30 msg/hr per line_user_id — spec §6). */
+  checkRateLimit: (uid: string) => Promise<boolean>;
+  /** Owner-checked load (M5): null on mismatch — caller starts fresh. */
+  loadSessionForUser: (id: number, uid: string) => Promise<{ conversation: ConversationTurn[]; customerName: string | null } | null>;
+  createSessionForUser: (uid: string) => Promise<{ id: number; customerName: string | null }>;
+  saveConversation: (id: number, conversation: ConversationTurn[]) => Promise<void>;
+  saveQuote: (sessionId: number, q: ProducedQuote) => Promise<number>;
+  countQuotes: (sessionId: number) => Promise<number>;
+  updateLeadStatus: (sessionId: number, status: 'escalated' | 'กำลังติดตาม') => Promise<void>;
+  runTurn: (history: ConversationTurn[], userMessage: string) => Promise<RunQuoteTurnOutput>;
+  buildEscalationFlex: (input: EscalationFlexInput) => Record<string, unknown>;
+  /** null = LINE_STAFF_GROUP_ID unset → escalation continues, push skipped (logged). */
+  pushStaff: ((message: object) => Promise<void>) | null;
 }
 
 /** Orchestrate one inbound message → side-effecting reply. Phase 1b-A handles
- *  slip + track; 'ai'/'enter-ai'/'exit-ai' routes are no-ops until 1b-B wires them. */
+ *  slip + track; 1b-B wires the customer AI arms via deps.aiCustomer (absent = 1b-A behaviour). */
 export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promise<void> {
   const route = routeInbound(m, { aiEnabled: deps.aiEnabled });
   if (route === 'slip') {
@@ -144,5 +183,129 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     await deps.adapter.reply(m, reply);
     return;
   }
-  // slip/track/groupid เท่านั้นใน 1b-A. ai/enter-ai/exit-ai → 1b-B.
+  // ── Phase 1b-B: customer AI arms (LINE 1-1 only — groups never reach here) ──
+  if (route !== 'enter-ai' && route !== 'exit-ai' && route !== 'ai') return;
+  const ai = deps.aiCustomer;
+  if (!ai) return;   // flag ON but deps not wired (missing env) → 1b-A behaviour
+  const uid = m.channelUserId;
+  const now = Date.now();
+
+  if (route === 'enter-ai') {
+    await ai.enterMode(uid);
+    await deps.adapter.reply(m, INTRO_TEXT);
+    return;
+  }
+
+  const mode = await ai.loadMode(uid);
+  const active = mode !== null && ai.modeActive(mode.lastActivityAt, now);
+
+  if (route === 'exit-ai') {
+    if (active) {
+      await ai.exitMode(uid);
+      await deps.adapter.reply(m, EXIT_TEXT);
+    }
+    // นอกโหมด "จบ"/"ออก" เป็นคำคุยปกติ — เงียบ (พนักงานตอบเอง, ห้ามแทรก)
+    return;
+  }
+
+  // route === 'ai'
+  if (!active) {
+    // นอกโหมด (spec §2): hint ≤1/user/24h + ปุ่มเข้าโหมด 1 แตะ. Sub-flag ปิดได้
+    // ช่วง soft launch. Gate เก็บใน DB (ไม่ใช้ KV — fail-open จะ spam แชตพนักงาน).
+    if (!ai.hintEnabled) return;
+    if (mode && !ai.hintAllowed(mode.lastHintAt, now)) return;
+    await ai.markHintSent(uid);
+    await deps.adapter.reply(m, HINT_TEXT, [HINT_QUICK_REPLY]);
+    return;
+  }
+
+  if (!(await ai.checkRateLimit(uid))) {
+    await ai.touchMode(uid, {});
+    await deps.adapter.reply(m, RATE_LIMIT_TEXT);
+    return;
+  }
+
+  // Load (owner-checked, M5) or create the LINE-channel session. A mismatch
+  // returns null and we start fresh — indistinguishable from not-found.
+  let sessionId = mode!.sessionId;
+  let conversation: ConversationTurn[] = [];
+  let customerName: string | null = null;
+  if (sessionId) {
+    const sess = await ai.loadSessionForUser(sessionId, uid);
+    if (sess) { conversation = sess.conversation; customerName = sess.customerName; }
+    else sessionId = null;
+  }
+  if (!sessionId) {
+    const created = await ai.createSessionForUser(uid);
+    sessionId = created.id;
+    customerName = created.customerName;
+  }
+
+  const text = m.text!;
+  const sid = sessionId;
+  const escalate = async (
+    trigger: TriggerType, conv: ConversationTurn[], replyText: string,
+    lastQuote: { productType: string; unitPrice: number } | null,
+  ) => {
+    await ai.saveConversation(sid, conv);
+    await ai.updateLeadStatus(sid, trigger === 'order_intent' ? 'กำลังติดตาม' : 'escalated');
+    if (ai.pushStaff) {
+      try {
+        await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, lineUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
+      } catch (err) {
+        console.error('[ai-quote/line] escalation push failed:', err instanceof Error ? err.message : err);
+      }
+    } else {
+      console.error(`[ai-quote/line] LINE_STAFF_GROUP_ID unset — escalation NOT pushed (lead #${sid})`);
+    }
+    await ai.exitMode(uid);
+    await deps.adapter.reply(m, replyText);
+  };
+
+  // ① ขอคุยกับคน — ไม่เรียก engine (ไม่เผา token กับข้อความที่ขอ hand-off)
+  if (detectHumanRequest(text)) {
+    await escalate('human',
+      [...conversation, { role: 'user', text }, { role: 'assistant', text: CUSTOMER_REPLY.human }],
+      CUSTOMER_REPLY.human, null);
+    return;
+  }
+  // ④ ลูกค้ายืนยันจะสั่ง (Type B) — ต้องมีราคาแล้วเท่านั้น ไม่งั้นปล่อยให้ engine ตีราคาก่อน
+  if (detectOrderIntent(text) && (await ai.countQuotes(sid)) > 0) {
+    await escalate('order_intent',
+      [...conversation, { role: 'user', text }, { role: 'assistant', text: CUSTOMER_REPLY.order_intent }],
+      CUSTOMER_REPLY.order_intent, null);
+    return;
+  }
+
+  let out: RunQuoteTurnOutput;
+  try {
+    out = await ai.runTurn(conversation, text);
+  } catch (err) {
+    console.error('[ai-quote/line] engine turn failed:', err instanceof Error ? err.message : err);
+    await ai.touchMode(uid, { sessionId: sid });
+    await deps.adapter.reply(m, ERROR_TEXT);
+    return;
+  }
+  for (const q of out.quotes) await ai.saveQuote(sid, q);
+  const last = out.quotes[out.quotes.length - 1];
+  const lastQuote = last ? { productType: last.productType, unitPrice: last.unitPrice } : null;
+
+  // ② model hand-off (นอกขอบเขต/กระดาษพิเศษ/ขอส่วนลด) — ใช้ข้อความ model เอง.
+  // ใช้ detector วลี pin ของ customer flow ไม่ใช่ out.escalated (heuristic ฝั่ง
+  // staff กว้างเกิน — disclaimer ลูกค้ามีคำ "ทีมงาน" ทุกใบราคา).
+  if (detectCustomerEscalation(out.quotes.length, out.reply)) {
+    await escalate('out_of_scope', out.newHistory, out.reply, null);
+    return;
+  }
+  // ③ วนหลายรอบไม่ได้ราคา — แทน reply ของ model ด้วยข้อความส่งต่อ
+  const rounds = out.quotes.length > 0 ? 0 : mode!.roundsNoQuote + 1;
+  if (out.quotes.length === 0 && rounds >= ROUNDS_NO_QUOTE_LIMIT) {
+    const conv: ConversationTurn[] = [...out.newHistory.slice(0, -1), { role: 'assistant', text: CUSTOMER_REPLY.rounds }];
+    await escalate('rounds', conv, CUSTOMER_REPLY.rounds, lastQuote);
+    return;
+  }
+
+  await ai.saveConversation(sid, out.newHistory);
+  await ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds });
+  await deps.adapter.reply(m, out.reply);
 }
