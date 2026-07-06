@@ -433,9 +433,31 @@ export async function GET() {
     await sql`CREATE INDEX IF NOT EXISTS idx_orders_customer_norm ON orders (LOWER(TRIM(raw->>'customer')))`;
     applied.push('idx_orders_customer_norm');
 
+    // ─── ai_quote_line_modes (Phase 1b-B — LINE customer AI-quote mode) ───
+    // 1 row per LINE user. Mode fields are nullable — NULL last_activity_at
+    // = not in mode; the same row carries the 24h out-of-mode hint gate
+    // (last_hint_at), which must survive mode exits. Expiry is lazy (no
+    // cron): modeActive() in lib/ai-quote/line-mode.ts checks the 30-min
+    // idle window on the next inbound message.
+    await sql`
+      CREATE TABLE IF NOT EXISTS ai_quote_line_modes (
+        channel_user_id  TEXT PRIMARY KEY,
+        entered_at       TIMESTAMPTZ,
+        last_activity_at TIMESTAMPTZ,
+        session_id       INTEGER REFERENCES ai_quote_sessions(id) ON DELETE SET NULL,
+        rounds_no_quote  INT NOT NULL DEFAULT 0,
+        last_hint_at     TIMESTAMPTZ
+      )`;
+    applied.push('CREATE TABLE ai_quote_line_modes');
+
+    // M5 owner binding: LINE-channel sessions store their webhook-verified
+    // owner; loadSession({ lineUserId }) filters on it (mismatch → not found).
+    await sql`ALTER TABLE ai_quote_sessions ADD COLUMN IF NOT EXISTS line_user_id TEXT`;
+    applied.push('ai_quote_sessions.line_user_id column');
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
-    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'slip_checks', 'customer_registrations']) {
+    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'slip_checks', 'customer_registrations', 'ai_quote_line_modes']) {
       try {
         const r = await sql.query(`SELECT COUNT(*)::int AS count FROM ${t}`);
         counts[t] = (r.rows[0] as { count?: number })?.count ?? 0;
