@@ -175,6 +175,11 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                             ⚠ ต้องประเมินเอง
                           </span>
                         )}
+                        {l.channel === 'line' && (
+                          <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                            LINE
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-stone-400">{l.customerContact || '—'}</div>
                     </td>
