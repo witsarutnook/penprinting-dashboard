@@ -89,11 +89,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (messages.length === 0) return NextResponse.json({ ok: true });
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  // AI arms need the quote backend — flag ON without QUOTE_API env degrades
-  // safely to 1b-A behaviour (slip/track only).
+  // AI arms need the quote backend + Anthropic key — flag ON with any env
+  // missing degrades safely to 1b-A behaviour (slip/track only), mirroring
+  // the staff route's guard instead of throwing inside after().
   const quoteUrl = process.env.QUOTE_API_URL;
   const quoteToken = process.env.QUOTE_API_TOKEN;
-  const aiEnabled = process.env.AI_QUOTE_LINE_ENABLED === 'true' && !!quoteUrl && !!quoteToken;
+  const aiEnabled = process.env.AI_QUOTE_LINE_ENABLED === 'true'
+    && !!quoteUrl && !!quoteToken && !!process.env.ANTHROPIC_API_KEY;
 
   // ตอบ 200 ทันที → ทำงานหนัก (Haiku/Thunder/lookup) ใน after() แล้ว reply via API
   after(async () => {
