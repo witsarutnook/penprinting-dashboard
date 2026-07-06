@@ -4,7 +4,7 @@ import { resetMockPostgres, queueResult, findCallContaining, sqlCalls } from './
 
 vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 
-import { loadSession, createLineSession, countQuotes } from '@/lib/ai-quote/db';
+import { loadSession, createLineSession, countQuotes, loadLastQuote } from '@/lib/ai-quote/db';
 
 describe('loadSession owner-check (M5 — 1b-B §5)', () => {
   beforeEach(() => resetMockPostgres());
@@ -44,5 +44,11 @@ describe('createLineSession / countQuotes', () => {
     queueResult({ rows: [{ count: 3 }], rowCount: 1 });
     expect(await countQuotes(9)).toBe(3);
     expect(await countQuotes(9)).toBe(0);   // queue exhausted → default empty
+  });
+  it('loadLastQuote returns the newest quote or null when none', async () => {
+    queueResult({ rows: [{ product_type: 'brochure', unit_price: '4.78' }], rowCount: 1 });
+    expect(await loadLastQuote(9)).toEqual({ productType: 'brochure', unitPrice: 4.78 });
+    expect(await loadLastQuote(9)).toBeNull();   // queue empty → no rows
+    expect(findCallContaining('ORDER BY id DESC LIMIT 1')).toBeDefined();
   });
 });

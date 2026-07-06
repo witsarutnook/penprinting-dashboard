@@ -257,6 +257,7 @@ function stubAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
     saveConversation: async () => { calls.push('save-conv'); },
     saveQuote: async () => { calls.push('save-quote'); return 1; },
     countQuotes: async () => 0,
+    loadLastQuote: async () => null,
     updateLeadStatus: async (_id: number, status: string) => { calls.push('status:' + status); },
     runTurn: async () => ({ reply: 'ราคา ~5.00 บ./ชิ้น ยังไม่รวม VAT 7% — ราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ', quotes: [QUOTE], escalated: false, newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'y' }] }),
     buildEscalationFlex: () => ({ type: 'flex', altText: 'ESCALATE' }),
@@ -414,5 +415,17 @@ describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
     await handleInbound(text1on1('ขอคุยกับพนักงานค่ะ'), deps as never);
     expect(calls).toContain('status:escalated');
     expect(replies.length).toBe(1);
+  });
+  it('④ passes the last persisted quote to the staff card (ราคา AI ถ้ามี)', async () => {
+    const flexInputs: unknown[] = [];
+    const { ai, calls } = stubAi({
+      countQuotes: async () => 1,
+      loadLastQuote: async () => ({ productType: 'brochure', unitPrice: 4.78 }),
+      buildEscalationFlex: (input: unknown) => { flexInputs.push(input); return { type: 'flex', altText: 'ESCALATE' }; },
+    });
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สั่งเลยค่ะ'), deps as never);
+    expect(calls).toContain('push-staff');
+    expect(flexInputs[0]).toMatchObject({ trigger: 'order_intent', lastQuote: { unitPrice: 4.78 } });
   });
 });

@@ -116,6 +116,8 @@ export interface CustomerAiDeps {
   saveConversation: (id: number, conversation: ConversationTurn[]) => Promise<void>;
   saveQuote: (sessionId: number, q: ProducedQuote) => Promise<number>;
   countQuotes: (sessionId: number) => Promise<number>;
+  /** Latest persisted quote for the escalation Flex ("ราคา AI ถ้ามี") — null when none. */
+  loadLastQuote: (sessionId: number) => Promise<{ productType: string; unitPrice: number } | null>;
   updateLeadStatus: (sessionId: number, status: 'escalated' | 'กำลังติดตาม') => Promise<void>;
   runTurn: (history: ConversationTurn[], userMessage: string) => Promise<RunQuoteTurnOutput>;
   buildEscalationFlex: (input: EscalationFlexInput) => Record<string, unknown>;
@@ -243,12 +245,13 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
 
   const text = m.text!;
   const sid = sessionId;
-  const escalate = async (
-    trigger: TriggerType, conv: ConversationTurn[], replyText: string,
-    lastQuote: { productType: string; unitPrice: number } | null,
-  ) => {
+  const escalate = async (trigger: TriggerType, conv: ConversationTurn[], replyText: string) => {
     await ai.saveConversation(sid, conv);
     await ai.updateLeadStatus(sid, trigger === 'order_intent' ? 'กำลังติดตาม' : 'escalated');
+    // ราคา AI ถ้ามี (spec §4) — best-effort จาก DB: quotes ของ turn นี้ถูก save
+    // ก่อนถึง trigger ②③ แล้ว ส่วน ①④ ใช้ของ turn ก่อนหน้า. Fail = การ์ดไม่มีราคา.
+    let lastQuote: { productType: string; unitPrice: number } | null = null;
+    try { lastQuote = await ai.loadLastQuote(sid); } catch { /* best-effort */ }
     if (ai.pushStaff) {
       try {
         await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, lineUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
@@ -266,14 +269,14 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   if (detectHumanRequest(text)) {
     await escalate('human',
       [...conversation, { role: 'user', text }, { role: 'assistant', text: CUSTOMER_REPLY.human }],
-      CUSTOMER_REPLY.human, null);
+      CUSTOMER_REPLY.human);
     return;
   }
   // ④ ลูกค้ายืนยันจะสั่ง (Type B) — ต้องมีราคาแล้วเท่านั้น ไม่งั้นปล่อยให้ engine ตีราคาก่อน
   if (detectOrderIntent(text) && (await ai.countQuotes(sid)) > 0) {
     await escalate('order_intent',
       [...conversation, { role: 'user', text }, { role: 'assistant', text: CUSTOMER_REPLY.order_intent }],
-      CUSTOMER_REPLY.order_intent, null);
+      CUSTOMER_REPLY.order_intent);
     return;
   }
 
@@ -286,22 +289,23 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     await deps.adapter.reply(m, ERROR_TEXT);
     return;
   }
+  // Note: not idempotent under LINE redelivery — a mid-loop throw persists the
+  // earlier quotes and a retried webhook can double-insert. Accepted (same
+  // soft-state posture as roundsNoQuote; quotes are display-only history).
   for (const q of out.quotes) await ai.saveQuote(sid, q);
-  const last = out.quotes[out.quotes.length - 1];
-  const lastQuote = last ? { productType: last.productType, unitPrice: last.unitPrice } : null;
 
   // ② model hand-off (นอกขอบเขต/กระดาษพิเศษ/ขอส่วนลด) — ใช้ข้อความ model เอง.
   // ใช้ detector วลี pin ของ customer flow ไม่ใช่ out.escalated (heuristic ฝั่ง
   // staff กว้างเกิน — disclaimer ลูกค้ามีคำ "ทีมงาน" ทุกใบราคา).
   if (detectCustomerEscalation(out.quotes.length, out.reply)) {
-    await escalate('out_of_scope', out.newHistory, out.reply, null);
+    await escalate('out_of_scope', out.newHistory, out.reply);
     return;
   }
   // ③ วนหลายรอบไม่ได้ราคา — แทน reply ของ model ด้วยข้อความส่งต่อ
   const rounds = out.quotes.length > 0 ? 0 : mode!.roundsNoQuote + 1;
   if (out.quotes.length === 0 && rounds >= ROUNDS_NO_QUOTE_LIMIT) {
     const conv: ConversationTurn[] = [...out.newHistory.slice(0, -1), { role: 'assistant', text: CUSTOMER_REPLY.rounds }];
-    await escalate('rounds', conv, CUSTOMER_REPLY.rounds, lastQuote);
+    await escalate('rounds', conv, CUSTOMER_REPLY.rounds);
     return;
   }
 

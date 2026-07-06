@@ -165,3 +165,14 @@ export async function countQuotes(sessionId: number): Promise<number> {
   const { rows } = await sql`SELECT COUNT(*)::int AS count FROM ai_quotes WHERE session_id = ${sessionId}`;
   return Number((rows[0] as { count?: number } | undefined)?.count) || 0;
 }
+
+/** Latest persisted quote of a session (escalation Flex "ราคา AI ถ้ามี" — spec §4).
+ *  Null when the session has no quotes yet. */
+export async function loadLastQuote(sessionId: number): Promise<{ productType: string; unitPrice: number } | null> {
+  const { rows } = await sql`
+    SELECT product_type, unit_price FROM ai_quotes
+     WHERE session_id = ${sessionId} ORDER BY id DESC LIMIT 1`;
+  if (!rows[0]) return null;
+  const r = rows[0] as { product_type?: string; unit_price?: unknown };
+  return { productType: String(r.product_type), unitPrice: Number(r.unit_price) };
+}
