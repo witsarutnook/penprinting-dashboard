@@ -205,3 +205,227 @@ describe('handleInbound — track-customer', () => {
     expect(String(replies[0])).toContain('ไม่มีงาน');
   });
 });
+
+describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
+  const on = { aiEnabled: true };
+  it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI', 'ขอราคาai', ' ขอราคา '])('enter keyword: %s → enter-ai', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
+  });
+  it.each(['จบ', 'ออก', 'ออกจากโหมด AI'])('exit keyword: %s → exit-ai', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('exit-ai');
+  });
+  it('a broader ขอราคา sentence is NOT an enter keyword (goes to ai/hint path)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคาโบรชัวร์ 1000 ใบ' }, on)).toBe('ai');
+  });
+  it('คุยกับทีมงาน is no longer an exit keyword — it is an ai turn (trigger ①)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'คุยกับทีมงาน' }, on)).toBe('ai');
+  });
+  it('keywords are inert when AI is disabled (1b-A regression)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคา' }, { aiEnabled: false })).toBe('ignore');
+    expect(routeInbound({ ...base, kind: 'text', text: 'ออก' }, { aiEnabled: false })).toBe('ignore');
+  });
+  it('enter keyword in a group is still ignored (no AI in shared chats)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคา', sourceType: 'group', groupId: 'G1' }, on)).toBe('ignore');
+  });
+  it('/track and slip keep priority over AI inside the mode (router order unchanged)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: '/track 202606110' }, on)).toBe('track');
+    expect(routeInbound({ ...base, kind: 'image', imageMessageId: 'i' }, on)).toBe('slip');
+  });
+});
+
+// ─── 1b-B: customer AI arms ───
+import type { CustomerAiDeps } from '@/lib/ai-quote/webhook-router';
+
+const ACTIVE_MODE = { channelUserId: 'U1', enteredAt: 't', lastActivityAt: 't', sessionId: 7, roundsNoQuote: 0, lastHintAt: null };
+const QUOTE = { productType: 'brochure' as const, spec: {}, result: { unitPrice: 5 }, unitPrice: 5 };
+
+function stubAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
+  const calls: string[] = [];
+  const pushed: unknown[] = [];
+  const ai = {
+    loadMode: async () => ACTIVE_MODE,
+    enterMode: async () => { calls.push('enter'); },
+    touchMode: async () => { calls.push('touch'); },
+    exitMode: async () => { calls.push('exit'); },
+    markHintSent: async () => { calls.push('hint-sent'); },
+    modeActive: () => true,
+    hintAllowed: () => true,
+    hintEnabled: true,
+    checkRateLimit: async () => true,
+    loadSessionForUser: async () => ({ conversation: [], customerName: 'คุณเอ' }),
+    createSessionForUser: async () => ({ id: 7, customerName: null }),
+    saveConversation: async () => { calls.push('save-conv'); },
+    saveQuote: async () => { calls.push('save-quote'); return 1; },
+    countQuotes: async () => 0,
+    loadLastQuote: async () => null,
+    updateLeadStatus: async (_id: number, status: string) => { calls.push('status:' + status); },
+    runTurn: async () => ({ reply: 'ราคา ~5.00 บ./ชิ้น ยังไม่รวม VAT 7% — ราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ', quotes: [QUOTE], escalated: false, newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'y' }] }),
+    buildEscalationFlex: () => ({ type: 'flex', altText: 'ESCALATE' }),
+    pushStaff: async (msg: object) => { calls.push('push-staff'); pushed.push(msg); },
+    ...over,
+  } as unknown as CustomerAiDeps;
+  return { ai, calls, pushed };
+}
+
+const text1on1 = (text: string): InboundMessage => ({ channel: 'line', channelUserId: 'U1', kind: 'text', text, replyToken: 'rt' });
+
+describe('handleInbound — 1b-B mode lifecycle', () => {
+  it('enter-ai keyword enters the mode and sends the intro', async () => {
+    const { ai, calls } = stubAi();
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI'), deps as never);
+    expect(calls).toContain('enter');
+    expect(String(replies[0])).toContain('ประเมินราคาอัตโนมัติ');
+  });
+  it('exit keyword in-mode exits and confirms', async () => {
+    const { ai, calls } = stubAi();
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ออก'), deps as never);
+    expect(calls).toContain('exit');
+    expect(String(replies[0])).toContain('ออกจากโหมด');
+  });
+  it('exit keyword out-of-mode is silent (normal chat word — staff answers)', async () => {
+    const { ai, calls } = stubAi({ modeActive: () => false });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ออก'), deps as never);
+    expect(calls).not.toContain('exit');
+    expect(replies.length).toBe(0);
+  });
+  it('out-of-mode text → hint + quick-reply, gate marked', async () => {
+    const { ai, calls } = stubAi({ modeActive: () => false, loadMode: async () => null });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สวัสดีค่ะ สนใจงานพิมพ์'), deps as never);
+    expect(calls).toContain('hint-sent');
+    expect(String(replies[0])).toContain('ทีมงาน');
+  });
+  it('hint is silent inside the 24h gate', async () => {
+    const { ai, calls } = stubAi({ modeActive: () => false, hintAllowed: () => false });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สวัสดีค่ะ'), deps as never);
+    expect(calls).not.toContain('hint-sent');
+    expect(replies.length).toBe(0);
+  });
+  it('hint is silent when hintEnabled=false (soft launch)', async () => {
+    const { ai, calls } = stubAi({ modeActive: () => false, hintEnabled: false });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สวัสดีค่ะ'), deps as never);
+    expect(calls).not.toContain('hint-sent');
+    expect(replies.length).toBe(0);
+  });
+  it('in-mode text runs the engine, saves, touches, replies', async () => {
+    const { ai, calls } = stubAi();
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000 ใบ'), deps as never);
+    expect(calls).toEqual(expect.arrayContaining(['save-quote', 'save-conv', 'touch']));
+    expect(String(replies[0])).toContain('5.00');
+  });
+  it('rate-limited turn declines politely without calling the engine', async () => {
+    let engineCalled = false;
+    const { ai } = stubAi({ checkRateLimit: async () => false, runTurn: async () => { engineCalled = true; throw new Error('no'); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000'), deps as never);
+    expect(engineCalled).toBe(false);
+    expect(String(replies[0])).toContain('ถี่เกินไป');
+  });
+  it('engine failure replies the error text (customer never gets silence)', async () => {
+    const { ai } = stubAi({ runTurn: async () => { throw new Error('calc 500'); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000'), deps as never);
+    expect(String(replies[0])).toContain('ขัดข้อง');
+  });
+  it('owner mismatch on the linked session falls back to a fresh session (M5)', async () => {
+    const created: number[] = [];
+    const { ai } = stubAi({
+      loadSessionForUser: async () => null,   // channel/owner mismatch → null
+      createSessionForUser: async () => { created.push(1); return { id: 99, customerName: null }; },
+    });
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000'), deps as never);
+    expect(created.length).toBe(1);
+  });
+  it('aiEnabled but aiCustomer missing (env not wired) stays silent — 1b-A behaviour', async () => {
+    const { replies, deps } = stubDeps({ aiEnabled: true });
+    await handleInbound(text1on1('โบรชัวร์ 1000'), deps as never);
+    expect(replies.length).toBe(0);
+  });
+});
+
+describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
+  it('① human request: escalates without an engine call, exits mode', async () => {
+    let engineCalled = false;
+    const { ai, calls } = stubAi({ runTurn: async () => { engineCalled = true; throw new Error('no'); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอคุยกับพนักงานค่ะ'), deps as never);
+    expect(engineCalled).toBe(false);
+    expect(calls).toEqual(expect.arrayContaining(['status:escalated', 'push-staff', 'exit', 'save-conv']));
+    expect(String(replies[0])).toContain('ส่งต่อทีมงาน');
+  });
+  it('④ order intent with an existing quote: Type B → กำลังติดตาม', async () => {
+    const { ai, calls } = stubAi({ countQuotes: async () => 1 });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สั่งเลยค่ะ'), deps as never);
+    expect(calls).toContain('status:กำลังติดตาม');
+    expect(calls).toContain('exit');
+    expect(String(replies[0])).toContain('ทีมขาย');
+  });
+  it('④ order intent WITHOUT a quote goes to the engine instead (must quote first)', async () => {
+    let engineCalled = false;
+    const { ai, calls } = stubAi({
+      countQuotes: async () => 0,
+      runTurn: async () => { engineCalled = true; return { reply: 'ขอทราบจำนวนค่ะ', quotes: [], escalated: false, newHistory: [] }; },
+    });
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สั่งเลยค่ะ'), deps as never);
+    expect(engineCalled).toBe(true);
+    expect(calls).not.toContain('status:กำลังติดตาม');
+  });
+  it("② model hand-off (ส่งต่อทีมงาน, no quote): escalates with the model's own reply", async () => {
+    const { ai, calls } = stubAi({
+      runTurn: async () => ({ reply: 'งานกล่องขอส่งต่อทีมงานประเมินให้นะคะ', quotes: [], escalated: true, newHistory: [] }),
+    });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('กล่องใส่สินค้า 500 ใบ'), deps as never);
+    expect(calls).toEqual(expect.arrayContaining(['status:escalated', 'push-staff', 'exit']));
+    expect(String(replies[0])).toContain('ส่งต่อทีมงาน');
+  });
+  it('③ 4th no-quote round escalates with the fixed reply', async () => {
+    const { ai, calls } = stubAi({
+      loadMode: async () => ({ ...ACTIVE_MODE, roundsNoQuote: 3 }),
+      runTurn: async () => ({ reply: 'ขอทราบจำนวนหน้าค่ะ', quotes: [], escalated: false, newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'ขอทราบจำนวนหน้าค่ะ' }] }),
+    });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('หนังสือ'), deps as never);
+    expect(calls).toContain('status:escalated');
+    expect(String(replies[0])).toContain('ทีมงาน');
+  });
+  it('a successful quote resets the round counter (no escalation at rounds=3)', async () => {
+    const touched: unknown[] = [];
+    const { ai, calls } = stubAi({
+      loadMode: async () => ({ ...ACTIVE_MODE, roundsNoQuote: 3 }),
+      touchMode: async (_uid: string, patch: unknown) => { touched.push(patch); },
+    });
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000 ใบ'), deps as never);
+    expect(calls).not.toContain('status:escalated');
+    expect(touched[0]).toMatchObject({ roundsNoQuote: 0 });
+  });
+  it('missing pushStaff (LINE_STAFF_GROUP_ID unset) still escalates + replies (degraded)', async () => {
+    const { ai, calls } = stubAi({ pushStaff: null });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอคุยกับพนักงานค่ะ'), deps as never);
+    expect(calls).toContain('status:escalated');
+    expect(replies.length).toBe(1);
+  });
+  it('④ passes the last persisted quote to the staff card (ราคา AI ถ้ามี)', async () => {
+    const flexInputs: unknown[] = [];
+    const { ai, calls } = stubAi({
+      countQuotes: async () => 1,
+      loadLastQuote: async () => ({ productType: 'brochure', unitPrice: 4.78 }),
+      buildEscalationFlex: (input: unknown) => { flexInputs.push(input); return { type: 'flex', altText: 'ESCALATE' }; },
+    });
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สั่งเลยค่ะ'), deps as never);
+    expect(calls).toContain('push-staff');
+    expect(flexInputs[0]).toMatchObject({ trigger: 'order_intent', lastQuote: { unitPrice: 4.78 } });
+  });
+});

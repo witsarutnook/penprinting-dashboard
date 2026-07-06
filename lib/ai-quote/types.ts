@@ -42,6 +42,8 @@ export interface ConversationTurn {
 export interface AiQuoteSession {
   id: number;
   channel: 'dashboard' | 'line';
+  /** LINE owner binding (M5) — non-null only for channel='line' sessions. */
+  lineUserId: string | null;
   conversation: ConversationTurn[];
   extractedSpec: QuoteSpec | null;
   customerName: string | null;
