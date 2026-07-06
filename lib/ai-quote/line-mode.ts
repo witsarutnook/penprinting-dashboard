@@ -36,14 +36,22 @@ export function hintAllowed(lastHintAt: string | null, nowMs: number): boolean {
   return nowMs - t > HINT_GATE_HOURS * 3_600_000;
 }
 
+/** pg-types parses TIMESTAMPTZ into a JS Date by default; a custom parser or
+ *  driver swap could hand us a string instead. Normalize to ISO so
+ *  modeActive/hintAllowed always Date.parse a well-formed value. */
+function toIso(v: unknown): string | null {
+  if (v == null) return null;
+  return v instanceof Date ? v.toISOString() : String(v);
+}
+
 function rowToMode(r: Record<string, unknown>): LineModeRow {
   return {
     channelUserId: String(r.channel_user_id),
-    enteredAt: r.entered_at == null ? null : String(r.entered_at),
-    lastActivityAt: r.last_activity_at == null ? null : String(r.last_activity_at),
+    enteredAt: toIso(r.entered_at),
+    lastActivityAt: toIso(r.last_activity_at),
     sessionId: r.session_id == null ? null : Number(r.session_id),
     roundsNoQuote: Number(r.rounds_no_quote) || 0,
-    lastHintAt: r.last_hint_at == null ? null : String(r.last_hint_at),
+    lastHintAt: toIso(r.last_hint_at),
   };
 }
 
@@ -63,7 +71,10 @@ export async function enterLineMode(channelUserId: string): Promise<void> {
 }
 
 /** Refresh the idle window after a handled turn; optionally link the session
- *  and update the no-quote round counter (omit a field to leave it as-is). */
+ *  and update the no-quote round counter (omit a field to leave it as-is).
+ *  Note: roundsNoQuote is caller-computed (read→compute→write); concurrent
+ *  webhook deliveries can lose an increment. Acceptable — it's a soft counter
+ *  that at worst delays escalation trigger ③ by one round. */
 export async function touchLineMode(
   channelUserId: string,
   patch: { sessionId?: number | null; roundsNoQuote?: number | null },

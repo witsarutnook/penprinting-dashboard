@@ -50,6 +50,7 @@ describe('mode DB fns (query shape pins)', () => {
     const call = findCallContaining('ON CONFLICT (channel_user_id)');
     expect(call?.text).toContain('rounds_no_quote = 0');
     expect(call?.text).not.toContain('last_hint_at');
+    expect(call?.text).not.toContain('session_id');   // re-entry keeps the linked session
   });
   it('exitLineMode nulls mode fields but keeps last_hint_at', async () => {
     await exitLineMode('U1');
