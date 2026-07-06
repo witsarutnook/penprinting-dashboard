@@ -146,6 +146,7 @@ export function BulkActionsBar({ jobs, isAdmin }: Props) {
         <select
           value={target}
           onChange={(e) => setTarget(e.target.value)}
+          aria-label="เลือกปลายทางส่งต่องานที่เลือก"
           disabled={commonTargets.length === 0}
           className="flex-grow min-w-[180px] px-3 py-1.5 border border-stone-200 rounded-lg text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50 disabled:bg-stone-50"
         >

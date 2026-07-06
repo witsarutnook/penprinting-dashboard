@@ -52,6 +52,7 @@ export function SearchBox() {
         type="search"
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        aria-label="ค้นหางาน"
         placeholder="ค้นหา ชื่องาน / ลูกค้า / id..."
         className="w-full pl-9 pr-9 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
       />
