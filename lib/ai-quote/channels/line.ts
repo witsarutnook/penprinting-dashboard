@@ -95,6 +95,21 @@ export async function downloadLineImage(messageId: string): Promise<Blob> {
   return res.blob();
 }
 
+/** Best-effort LINE profile lookup (display name for lead cards / escalation
+ *  Flex). Returns null on ANY failure — must never block the reply path. */
+export async function getLineProfile(userId: string): Promise<{ displayName: string } | null> {
+  try {
+    const res = await fetch(`${LINE_API}/profile/${userId}`, {
+      headers: { Authorization: `Bearer ${token()}` },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { displayName?: string };
+    return body.displayName ? { displayName: body.displayName } : null;
+  } catch {
+    return null;
+  }
+}
+
 function quickReplyPayload(qrs?: QuickReply[]) {
   if (!qrs?.length) return undefined;
   return { items: qrs.map((q) => ({ type: 'action', action: { type: 'message', label: q.label, text: q.text } })) };
