@@ -205,3 +205,30 @@ describe('handleInbound — track-customer', () => {
     expect(String(replies[0])).toContain('ไม่มีงาน');
   });
 });
+
+describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
+  const on = { aiEnabled: true };
+  it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI', 'ขอราคาai', ' ขอราคา '])('enter keyword: %s → enter-ai', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
+  });
+  it.each(['จบ', 'ออก', 'ออกจากโหมด AI'])('exit keyword: %s → exit-ai', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('exit-ai');
+  });
+  it('a broader ขอราคา sentence is NOT an enter keyword (goes to ai/hint path)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคาโบรชัวร์ 1000 ใบ' }, on)).toBe('ai');
+  });
+  it('คุยกับทีมงาน is no longer an exit keyword — it is an ai turn (trigger ①)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'คุยกับทีมงาน' }, on)).toBe('ai');
+  });
+  it('keywords are inert when AI is disabled (1b-A regression)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคา' }, { aiEnabled: false })).toBe('ignore');
+    expect(routeInbound({ ...base, kind: 'text', text: 'ออก' }, { aiEnabled: false })).toBe('ignore');
+  });
+  it('enter keyword in a group is still ignored (no AI in shared chats)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคา', sourceType: 'group', groupId: 'G1' }, on)).toBe('ignore');
+  });
+  it('/track and slip keep priority over AI inside the mode (router order unchanged)', () => {
+    expect(routeInbound({ ...base, kind: 'text', text: '/track 202606110' }, on)).toBe('track');
+    expect(routeInbound({ ...base, kind: 'image', imageMessageId: 'i' }, on)).toBe('slip');
+  });
+});

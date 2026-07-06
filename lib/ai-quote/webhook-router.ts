@@ -27,6 +27,19 @@ export function parseTrackCommand(text: string):
   return null;
 }
 
+/** Mode entry keywords (spec §1 — exact-ish; a broad "ราคา..." sentence must
+ *  NOT enter the mode, it collides with normal staff conversation). */
+export function isEnterAiKeyword(text: string): boolean {
+  return /^(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim());
+}
+
+/** Mode exit keywords (spec §1). "คุยกับทีมงาน" is deliberately NOT here —
+ *  in-mode it is escalation trigger ① (hand-off with a staff push), not a
+ *  silent exit. */
+export function isExitAiKeyword(text: string): boolean {
+  return /^(จบ|ออก|ออกจากโหมด\s*ai)$/i.test(text.trim());
+}
+
 /** Pure routing decision. Phase 1b-A passes aiEnabled=false (AI off): images→slip,
  *  /track→track, /groupid→groupid, everything else→ignore. The 'ai'/'enter-ai'/'exit-ai'
  *  arms are exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total). */
@@ -44,8 +57,11 @@ export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean }): R
   if (m.kind === 'image') return 'slip';
   if (!opts.aiEnabled) return 'ignore';
   if (m.kind === 'postback' && m.postbackData === 'ai_quote_start') return 'enter-ai';
-  if (m.kind === 'text' && (m.text === 'คุยกับทีมงาน' || m.text === 'ออกจากโหมด AI')) return 'exit-ai';
-  if (m.kind === 'text' && m.text) return 'ai';
+  if (m.kind === 'text' && m.text) {
+    if (isEnterAiKeyword(m.text)) return 'enter-ai';
+    if (isExitAiKeyword(m.text)) return 'exit-ai';
+    return 'ai';
+  }
   return 'ignore';
 }
 
