@@ -61,7 +61,10 @@ export const HINT_TEXT =
   'ทีมงานจะตอบกลับโดยเร็วค่ะ 🙏\n' +
   'หรือถ้าต้องการราคาประเมินทันที กดปุ่มด้านล่างให้ AI ช่วยคิดราคาได้เลยค่ะ (โบรชัวร์ · หนังสือ · สมุด)';
 
-export const HINT_QUICK_REPLY = { label: '🤖 เริ่มขอราคา AI', text: 'ขอราคา AI' };
+// ⚠️ TEST-ONLY (soft-launch 2026-07-07): text carries the "/" entry command so
+// the hint button matches isEnterAiKeyword. REVERT with webhook-router.ts →
+// 'ขอราคา AI'.
+export const HINT_QUICK_REPLY = { label: '🤖 เริ่มขอราคา AI', text: '/ขอราคา AI' };
 
 export const RATE_LIMIT_TEXT =
   'ขออภัยค่ะ มีการใช้งานถี่เกินไป รบกวนรอสักครู่ หรือรอทีมงานติดต่อกลับนะคะ 🙏';

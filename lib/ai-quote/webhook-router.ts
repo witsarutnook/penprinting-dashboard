@@ -37,9 +37,15 @@ export function parseTrackCommand(text: string):
 }
 
 /** Mode entry keywords (spec §1 — exact-ish; a broad "ราคา..." sentence must
- *  NOT enter the mode, it collides with normal staff conversation). */
+ *  NOT enter the mode, it collides with normal staff conversation).
+ *
+ *  ⚠️ TEST-ONLY (soft-launch 2026-07-07): require a leading "/" so real
+ *  customers typing a bare "ขอราคา"/"ตีราคา" on the live OA cannot fall into
+ *  AI mode by accident — only testers who know the "/ขอราคา AI" command enter.
+ *  REVERT after soft launch: drop the "\/" prefix (→ `^(ขอราคา|ตีราคา)…`) and
+ *  restore HINT_QUICK_REPLY.text to "ขอราคา AI" in customer-triggers.ts. */
 export function isEnterAiKeyword(text: string): boolean {
-  return /^(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim());
+  return /^\/(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim());
 }
 
 /** Mode exit keywords (spec §1). "คุยกับทีมงาน" is deliberately NOT here —

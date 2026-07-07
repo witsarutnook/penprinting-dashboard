@@ -55,7 +55,7 @@ describe('canned copy', () => {
     expect(INTRO_TEXT).toContain('ออก');
   });
   it('hint quick-reply sends an enter keyword', () => {
-    expect(HINT_QUICK_REPLY.text).toBe('ขอราคา AI');
+    expect(HINT_QUICK_REPLY.text).toBe('/ขอราคา AI');
     expect(HINT_TEXT).toContain('ทีมงาน');
   });
 });

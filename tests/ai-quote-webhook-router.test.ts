@@ -208,8 +208,12 @@ describe('handleInbound — track-customer', () => {
 
 describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
   const on = { aiEnabled: true };
-  it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI', 'ขอราคาai', ' ขอราคา '])('enter keyword: %s → enter-ai', (t) => {
+  it.each(['/ขอราคา', '/ตีราคา', '/ขอราคา AI', '/ขอราคาai', ' /ขอราคา '])('enter keyword: %s → enter-ai', (t) => {
     expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
+  });
+  // TEST-ONLY soft-launch: bare keyword (no leading "/") must NOT enter the mode.
+  it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI'])('bare keyword: %s → ai (not enter)', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('ai');
   });
   it.each(['จบ', 'ออก', 'ออกจากโหมด AI'])('exit keyword: %s → exit-ai', (t) => {
     expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('exit-ai');
@@ -221,11 +225,11 @@ describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
     expect(routeInbound({ ...base, kind: 'text', text: 'คุยกับทีมงาน' }, on)).toBe('ai');
   });
   it('keywords are inert when AI is disabled (1b-A regression)', () => {
-    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคา' }, { aiEnabled: false })).toBe('ignore');
+    expect(routeInbound({ ...base, kind: 'text', text: '/ขอราคา' }, { aiEnabled: false })).toBe('ignore');
     expect(routeInbound({ ...base, kind: 'text', text: 'ออก' }, { aiEnabled: false })).toBe('ignore');
   });
   it('enter keyword in a group is still ignored (no AI in shared chats)', () => {
-    expect(routeInbound({ ...base, kind: 'text', text: 'ขอราคา', sourceType: 'group', groupId: 'G1' }, on)).toBe('ignore');
+    expect(routeInbound({ ...base, kind: 'text', text: '/ขอราคา', sourceType: 'group', groupId: 'G1' }, on)).toBe('ignore');
   });
   it('/track and slip keep priority over AI inside the mode (router order unchanged)', () => {
     expect(routeInbound({ ...base, kind: 'text', text: '/track 202606110' }, on)).toBe('track');
@@ -273,7 +277,7 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
   it('enter-ai keyword enters the mode and sends the intro', async () => {
     const { ai, calls } = stubAi();
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
-    await handleInbound(text1on1('ขอราคา AI'), deps as never);
+    await handleInbound(text1on1('/ขอราคา AI'), deps as never);
     expect(calls).toContain('enter');
     expect(String(replies[0])).toContain('ประเมินราคาอัตโนมัติ');
   });
