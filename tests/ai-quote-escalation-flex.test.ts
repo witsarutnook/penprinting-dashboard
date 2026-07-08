@@ -5,7 +5,8 @@ import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
 const base = {
   trigger: 'human' as const,
   customerName: 'คุณเอ',
-  lineUserId: 'U123',
+  channel: 'line' as const,
+  channelUserId: 'U123',
   lastUserText: 'ขอคุยกับพนักงานค่ะ',
   lastQuote: null,
   sessionId: 42,
@@ -36,5 +37,20 @@ describe('buildEscalationFlex (1b-B §4)', () => {
     const s = JSON.stringify(f);
     expect(s).toContain('dashboard.penprinting.co/quote-leads');
     expect(s).toContain('…');
+  });
+  it('messenger escalation carries a "ช่องทาง" row pointing staff to Page inbox', () => {
+    const flex = buildEscalationFlex({
+      trigger: 'human', customerName: 'John D', channel: 'messenger', channelUserId: '24680',
+      lastUserText: 'ขอคุยกับทีมงาน', lastQuote: null, sessionId: 42,
+    });
+    expect(JSON.stringify(flex)).toContain('ช่องทาง');
+    expect(JSON.stringify(flex)).toContain('Messenger');
+  });
+  it('line escalation has NO channel row (zero visual change vs 1b-B)', () => {
+    const flex = buildEscalationFlex({
+      trigger: 'human', customerName: null, channel: 'line', channelUserId: 'U1',
+      lastUserText: 'x', lastQuote: null, sessionId: 1,
+    });
+    expect(JSON.stringify(flex)).not.toContain('ช่องทาง');
   });
 });

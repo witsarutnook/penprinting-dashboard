@@ -41,8 +41,10 @@ export interface ConversationTurn {
 
 export interface AiQuoteSession {
   id: number;
-  channel: 'dashboard' | 'line';
-  /** LINE owner binding (M5) — non-null only for channel='line' sessions. */
+  channel: 'dashboard' | 'line' | 'messenger';
+  /** Channel-scoped owner binding (M5) — LINE userId หรือ Messenger PSID;
+   *  non-null เฉพาะ chat channels. ชื่อ column `line_user_id` เป็น historical
+   *  (1b-B) — ไม่ rename กลางอากาศ (spec 1c §2). */
   lineUserId: string | null;
   conversation: ConversationTurn[];
   extractedSpec: QuoteSpec | null;

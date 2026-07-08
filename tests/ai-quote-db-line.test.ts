@@ -9,19 +9,20 @@ import { loadSession, createLineSession, countQuotes, loadLastQuote } from '@/li
 describe('loadSession owner-check (M5 — 1b-B §5)', () => {
   beforeEach(() => resetMockPostgres());
 
-  it('with lineUserId filters on channel=line AND line_user_id', async () => {
+  it('with channelUserId filters on channel=line AND line_user_id', async () => {
     queueResult({ rows: [], rowCount: 0 });
-    await loadSession(7, { lineUserId: 'U-A' });
+    await loadSession(7, { channel: 'line', channelUserId: 'U-A' });
     const call = sqlCalls[0];
-    expect(call.text).toContain("channel = 'line'");
+    expect(call.text).toContain('channel =');
+    expect(call.values).toContain('line');
     expect(call.text).toContain('line_user_id =');
     expect(call.values).toContain('U-A');
   });
   it('returns null on owner mismatch (empty result — never leaks existence)', async () => {
     queueResult({ rows: [], rowCount: 0 });
-    expect(await loadSession(7, { lineUserId: 'U-B' })).toBeNull();
+    expect(await loadSession(7, { channel: 'line', channelUserId: 'U-B' })).toBeNull();
   });
-  it('without lineUserId keeps the channel-only scope (staff route unchanged)', async () => {
+  it('without channelUserId keeps the channel-only scope (staff route unchanged)', async () => {
     queueResult({ rows: [], rowCount: 0 });
     await loadSession(7, { channel: 'dashboard' });
     expect(sqlCalls[0].text).not.toContain('line_user_id');

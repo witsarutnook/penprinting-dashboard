@@ -451,7 +451,7 @@ export async function GET() {
     applied.push('CREATE TABLE ai_quote_line_modes');
 
     // M5 owner binding: LINE-channel sessions store their webhook-verified
-    // owner; loadSession({ lineUserId }) filters on it (mismatch → not found).
+    // owner; loadSession({ channel, channelUserId }) filters on it (mismatch → not found).
     await sql`ALTER TABLE ai_quote_sessions ADD COLUMN IF NOT EXISTS line_user_id TEXT`;
     applied.push('ai_quote_sessions.line_user_id column');
 

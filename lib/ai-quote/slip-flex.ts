@@ -2,12 +2,14 @@
 // Slip-verify result → LINE Flex card (Penprinting theme). Pure + total: never throws,
 // every field access is null-safe. altText reuses formatSlipReply (notification + fallback
 // text when a device can't render Flex). Mirrors the buildOrderFlex pattern in track-flex.ts.
+// Also exports the shared classify/format helpers (classifySlipState, fmtAmount, fmtDate,
+// partyName, bankName) consumed by slip-messenger.ts so both channels render identical copy.
 import { formatSlipReply, type ThunderVerifyResponse, type ThunderParty } from './slip';
 
-type State = 'success' | 'duplicate' | 'mismatch' | 'unreadable';
+export type SlipState = 'success' | 'duplicate' | 'mismatch' | 'unreadable';
 
 // status header colors — Penprinting palette, NOT Thunder branding
-const HEADER: Record<State, { bg: string; fg: string; label: string }> = {
+const HEADER: Record<SlipState, { bg: string; fg: string; label: string }> = {
   success:    { bg: '#e1f5ee', fg: '#0f6e56', label: '✅ สลิปถูกต้อง' },
   duplicate:  { bg: '#faeeda', fg: '#854f0b', label: '⚠️ สลิปนี้เคยส่งแล้ว' },
   mismatch:   { bg: '#fcebeb', fg: '#a32d2d', label: '❌ บัญชีปลายทางไม่ตรง' },
@@ -22,7 +24,7 @@ const SEP = { type: 'separator', margin: 'md', color: '#eceae4' } as const;
 type Party = ThunderParty;
 
 /** Mirror formatSlipReply priority exactly so the card + its altText always agree. */
-function classify(r: ThunderVerifyResponse): State {
+export function classifySlipState(r: ThunderVerifyResponse): SlipState {
   if (r.success && r.data) {
     if (r.data.isDuplicate) return 'duplicate';
     if (r.data.isAccountMatched === false) return 'mismatch';
@@ -31,12 +33,12 @@ function classify(r: ThunderVerifyResponse): State {
   return 'unreadable';
 }
 
-function fmtAmount(n?: number): string | null {
+export function fmtAmount(n?: number): string | null {
   if (typeof n !== 'number' || !isFinite(n)) return null;
   return '฿' + n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtDate(iso?: string): string | null {
+export function fmtDate(iso?: string): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (isNaN(d.getTime())) return null;
@@ -45,10 +47,10 @@ function fmtDate(iso?: string): string | null {
   return date + ' · ' + time + ' น.';
 }
 
-function partyName(p?: Party): string {
+export function partyName(p?: Party): string {
   return p?.account?.name?.th || p?.account?.name?.en || '-';
 }
-function bankName(p?: Party): string | undefined {
+export function bankName(p?: Party): string | undefined {
   return p?.bank?.name || p?.bank?.nameTh || p?.bank?.nameEn; // Thunder v2 / legacy dual-read
 }
 function partySub(p?: Party): string {
@@ -97,7 +99,7 @@ function notice(text: string): Record<string, unknown> {
 /** Build the LINE Flex message for a slip-verify result. Returns a complete
  *  `{ type:'flex', altText, contents:{ type:'bubble' } }` ready to pass to reply(). */
 export function buildSlipFlex(result: ThunderVerifyResponse): Record<string, unknown> {
-  const state = classify(result);
+  const state = classifySlipState(result);
   const h = HEADER[state];
   const raw = result.data?.rawSlip;
   const amount = fmtAmount(raw?.amount?.amount);

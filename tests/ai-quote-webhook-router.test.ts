@@ -433,3 +433,27 @@ describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
     expect(flexInputs[0]).toMatchObject({ trigger: 'order_intent', lastQuote: { unitPrice: 4.78 } });
   });
 });
+
+describe('routeInbound (Messenger — trackEnabled=false, spec 1c §1)', () => {
+  const msgr = { channel: 'messenger' as const, channelUserId: 'PSID1' };
+  it('routes images to slip', () => {
+    const m: InboundMessage = { ...msgr, kind: 'image', imageMessageId: 'https://cdn.fb/x.jpg' };
+    expect(routeInbound(m, { aiEnabled: false, trackEnabled: false })).toBe('slip');
+  });
+  it('track-shaped text becomes ordinary ai text (no /track on Messenger)', () => {
+    const m: InboundMessage = { ...msgr, kind: 'text', text: '/track 202606110' };
+    expect(routeInbound(m, { aiEnabled: true, trackEnabled: false })).toBe('ai');
+  });
+  it('groupid command is ignored when AI off (no /groupid on Messenger)', () => {
+    const m: InboundMessage = { ...msgr, kind: 'text', text: '/groupid' };
+    expect(routeInbound(m, { aiEnabled: false, trackEnabled: false })).toBe('ignore');
+  });
+  it('postback ai_quote_start still enters the mode', () => {
+    const m: InboundMessage = { ...msgr, kind: 'postback', postbackData: 'ai_quote_start' };
+    expect(routeInbound(m, { aiEnabled: true, trackEnabled: false })).toBe('enter-ai');
+  });
+  it('trackEnabled omitted defaults to true (LINE routing unchanged)', () => {
+    const m: InboundMessage = { channel: 'line', channelUserId: 'U1', kind: 'text', text: '/track 202606110' };
+    expect(routeInbound(m, { aiEnabled: true })).toBe('track');
+  });
+});

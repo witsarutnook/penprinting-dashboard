@@ -180,6 +180,11 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                             LINE
                           </span>
                         )}
+                        {l.channel === 'messenger' && (
+                          <span className="inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-blue-200">
+                            Messenger
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-stone-400">{l.customerContact || '—'}</div>
                     </td>

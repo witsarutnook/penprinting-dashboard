@@ -57,12 +57,15 @@ export function isExitAiKeyword(text: string): boolean {
 
 /** Pure routing decision. Phase 1b-A passes aiEnabled=false (AI off): images→slip,
  *  /track→track, /groupid→groupid, everything else→ignore. The 'ai'/'enter-ai'/'exit-ai'
- *  arms are exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total). */
-export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean }): Route {
+ *  arms are exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total).
+ *  trackEnabled (default true = LINE) gates the command arms — Messenger (1c D1)
+ *  passes false: track/groupid text falls through as ordinary text (ai arm / ignore). */
+export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean; trackEnabled?: boolean }): Route {
+  const trackEnabled = opts.trackEnabled ?? true;
   // Explicit commands work anywhere (1-on-1 and groups/rooms):
   //   /groupid → echo the group id · /track <id> → status card (customers can track in their own group)
-  if (m.kind === 'text' && m.text && isGroupIdCommand(m.text)) return 'groupid';
-  if (m.kind === 'text' && m.text) {
+  if (trackEnabled && m.kind === 'text' && m.text && isGroupIdCommand(m.text)) return 'groupid';
+  if (trackEnabled && m.kind === 'text' && m.text) {
     const cmd = parseTrackCommand(m.text);
     if (cmd?.kind === 'order') return 'track';                                  // /track <id> — anywhere
     if (cmd?.kind === 'customer' && (m.sourceType === 'group' || m.sourceType === 'room')) return 'track-customer';
@@ -94,6 +97,8 @@ export interface HandleDeps {
   anthropic: unknown;
   visionModel: string;
   aiEnabled: boolean;
+  /** false = ปิด track/groupid command arms (Messenger — spec 1c D1). Default true (LINE). */
+  trackEnabled?: boolean;
   // Optional best-effort metrics sink (one row per inbound slip image). Omitted
   // in tests; wired to Postgres in the LINE route. Must never throw.
   recordSlipCheck?: (ev: { channel: string; looksLikeSlip: boolean; result: ThunderVerifyResponse | null }) => Promise<void>;
@@ -134,7 +139,7 @@ export interface CustomerAiDeps {
 /** Orchestrate one inbound message → side-effecting reply. Phase 1b-A handles
  *  slip + track; 1b-B wires the customer AI arms via deps.aiCustomer (absent = 1b-A behaviour). */
 export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promise<void> {
-  const route = routeInbound(m, { aiEnabled: deps.aiEnabled });
+  const route = routeInbound(m, { aiEnabled: deps.aiEnabled, trackEnabled: deps.trackEnabled });
   if (route === 'slip') {
     const blob = await deps.adapter.downloadImage(m);
     // Cheap Haiku pre-filter to spare Thunder quota (customers send many non-slip
@@ -260,12 +265,12 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     try { lastQuote = await ai.loadLastQuote(sid); } catch { /* best-effort */ }
     if (ai.pushStaff) {
       try {
-        await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, lineUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
+        await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, channel: m.channel, channelUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
       } catch (err) {
-        console.error('[ai-quote/line] escalation push failed:', err instanceof Error ? err.message : err);
+        console.error(`[ai-quote/${m.channel}] escalation push failed:`, err instanceof Error ? err.message : err);
       }
     } else {
-      console.error(`[ai-quote/line] LINE_STAFF_GROUP_ID unset — escalation NOT pushed (lead #${sid})`);
+      console.error(`[ai-quote/${m.channel}] LINE_STAFF_GROUP_ID unset — escalation NOT pushed (lead #${sid})`);
     }
     await ai.exitMode(uid);
     await deps.adapter.reply(m, replyText);
@@ -290,7 +295,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   try {
     out = await ai.runTurn(conversation, text);
   } catch (err) {
-    console.error('[ai-quote/line] engine turn failed:', err instanceof Error ? err.message : err);
+    console.error(`[ai-quote/${m.channel}] engine turn failed:`, err instanceof Error ? err.message : err);
     await ai.touchMode(uid, { sessionId: sid });
     await deps.adapter.reply(m, ERROR_TEXT);
     return;

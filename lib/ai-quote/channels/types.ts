@@ -14,7 +14,7 @@ export interface InboundMessage {
   channelUserId: string;        // LINE userId / FB PSID — verified จาก webhook
   kind: InboundKind;
   text?: string;                // kind==='text'
-  imageMessageId?: string;      // kind==='image' (ใช้ดึง content)
+  imageMessageId?: string;      // kind==='image' — LINE: message id (content API) / Messenger: attachment CDN URL
   postbackData?: string;        // kind==='postback'
   replyToken?: string;          // LINE reply token (Messenger ไม่มี → push by id)
   sourceType?: 'user' | 'group' | 'room';  // undefined = แชต 1-1 (user) — group/room เฉพาะคำสั่ง /groupid

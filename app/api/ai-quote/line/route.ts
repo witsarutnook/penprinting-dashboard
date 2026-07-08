@@ -43,7 +43,7 @@ function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken:
     hintEnabled: process.env.AI_QUOTE_LINE_HINT_ENABLED === 'true',
     checkRateLimit: async (uid) => (await checkRateLimit(`ai-quote-line:${uid}`, AI_RATE_LIMIT)).ok,
     loadSessionForUser: async (id, uid) => {
-      const s = await loadSession(id, { lineUserId: uid });
+      const s = await loadSession(id, { channel: 'line', channelUserId: uid });
       return s ? { conversation: s.conversation, customerName: s.customerName } : null;
     },
     createSessionForUser: async (uid) => {
