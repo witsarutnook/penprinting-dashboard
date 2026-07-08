@@ -2,6 +2,8 @@
 // Slip-verify result → LINE Flex card (Penprinting theme). Pure + total: never throws,
 // every field access is null-safe. altText reuses formatSlipReply (notification + fallback
 // text when a device can't render Flex). Mirrors the buildOrderFlex pattern in track-flex.ts.
+// Also exports the shared classify/format helpers (classifySlipState, fmtAmount, fmtDate,
+// partyName, bankName) consumed by slip-messenger.ts so both channels render identical copy.
 import { formatSlipReply, type ThunderVerifyResponse, type ThunderParty } from './slip';
 
 export type SlipState = 'success' | 'duplicate' | 'mismatch' | 'unreadable';

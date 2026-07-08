@@ -24,10 +24,13 @@ export function buildSlipMessenger(result: ThunderVerifyResponse): Record<string
   } else if (state === 'duplicate') {
     lines.push('⚠️ สลิปนี้เคยส่งแล้วค่ะ');
     if (amount) lines.push(`ยอดโอน ${amount}`);
+    const sender = partyName(raw?.sender);
+    if (sender !== '-') lines.push(`จาก ${sender}`);
     lines.push('ถ้าเป็นการโอนใหม่ รบกวนแจ้งทีมงานเพิ่มเติมนะคะ 🙏');
   } else if (state === 'mismatch') {
-    // D4: never expose the mistaken destination account
+    // D4: never expose the mistaken destination account (amount = transfer amount, safe)
     lines.push('❌ ยอดนี้ดูไม่ตรงบัญชีของร้านค่ะ 🙏');
+    if (amount) lines.push(`ยอดโอน ${amount}`);
     lines.push('รบกวนตรวจสอบเลขบัญชีปลายทางอีกครั้งนะคะ');
   } else {
     lines.push('ระบบไม่สามารถยืนยันสลิปได้');
