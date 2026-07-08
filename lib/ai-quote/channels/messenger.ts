@@ -72,3 +72,76 @@ export function parseMessengerEvents(body: unknown): InboundMessage[] {
   }
   return out;
 }
+
+// ─── Messenger I/O layer (Meta Send API — Graph v23.0) ───
+
+const GRAPH_API = 'https://graph.facebook.com/v23.0';
+
+function pageToken(): string {
+  const t = process.env.FB_PAGE_TOKEN;
+  if (!t) throw new Error('FB_PAGE_TOKEN missing');
+  return t;
+}
+
+/** Pure: generic quick replies → Messenger quick_replies payload. label →
+ *  title (Messenger truncates display at 20 chars); text → payload (full text
+ *  comes back via quick_reply.payload — parse prefers it over the title). */
+export function messengerQuickReplies(qrs?: QuickReply[]) {
+  if (!qrs?.length) return undefined;
+  return qrs.map((q) => ({ content_type: 'text', title: q.label, payload: q.text }));
+}
+
+/** Pure: build the Send API request body. message = plain text (string) or a
+ *  ready-made Messenger message object (e.g. buildSlipMessenger output). */
+export function buildMessengerSendBody(
+  psid: string, message: string | object, qrs?: QuickReply[],
+): Record<string, unknown> {
+  const quick_replies = messengerQuickReplies(qrs);
+  const msg = typeof message === 'string'
+    ? { text: message, ...(quick_replies ? { quick_replies } : {}) }
+    : { ...(message as Record<string, unknown>), ...(quick_replies ? { quick_replies } : {}) };
+  return { recipient: { id: psid }, messaging_type: 'RESPONSE', message: msg };
+}
+
+/** ส่งข้อความหา PSID — Messenger ไม่มี reply token, reply = push เสมอ. */
+export async function sendMessenger(psid: string, message: string | object, qrs?: QuickReply[]): Promise<void> {
+  const res = await fetch(`${GRAPH_API}/me/messages?access_token=${encodeURIComponent(pageToken())}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildMessengerSendBody(psid, message, qrs)),
+  });
+  if (!res.ok) throw new Error(`Messenger send HTTP ${res.status}`);
+}
+
+/** ดึง bytes ของรูปจาก attachment CDN URL (ไม่ต้อง auth). URL หมดอายุได้ —
+ *  เรียกทันทีที่ webhook มาถึงเท่านั้น ห้าม defer. */
+export async function downloadMessengerImage(url: string): Promise<Blob> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Messenger content HTTP ${res.status}`);
+  return res.blob();
+}
+
+/** Best-effort profile lookup (display name for lead cards / escalation Flex).
+ *  Returns null on ANY failure — must never block the reply path. */
+export async function getMessengerProfile(psid: string): Promise<{ displayName: string } | null> {
+  try {
+    const res = await fetch(`${GRAPH_API}/${psid}?fields=first_name,last_name&access_token=${encodeURIComponent(pageToken())}`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { first_name?: string; last_name?: string };
+    const name = [body.first_name, body.last_name].filter(Boolean).join(' ').trim();
+    return name ? { displayName: name } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Build the Messenger ChannelAdapter (reply == push — no reply-token concept). */
+export function buildMessengerAdapter(appSecret: string): ChannelAdapter {
+  return {
+    verifySignature: (rawBody, sig) => verifyMessengerSignature(rawBody, sig, appSecret),
+    parseEvents: parseMessengerEvents,
+    downloadImage: (msg) => downloadMessengerImage(msg.imageMessageId!),
+    reply: (msg, message, qrs) => sendMessenger(msg.channelUserId, message, qrs),
+    push: (id, text) => sendMessenger(id, text),
+  };
+}
