@@ -8,7 +8,7 @@ import type {
 function rowToSession(r: Record<string, unknown>): AiQuoteSession {
   return {
     id: Number(r.id),
-    channel: (r.channel as 'dashboard' | 'line') ?? 'dashboard',
+    channel: (r.channel as 'dashboard' | 'line' | 'messenger') ?? 'dashboard',
     lineUserId: (r.line_user_id as string | null) ?? null,
     conversation: (r.conversation as ConversationTurn[]) ?? [],
     extractedSpec: (r.extracted_spec as QuoteSpec | null) ?? null,
@@ -60,17 +60,20 @@ export async function releaseLead(id: number, onlyOwner?: string): Promise<void>
 
 /** Load a session by id. Pass `opts.channel` to scope the lookup to a single
  *  channel — the staff chat route passes 'dashboard' so a staff sessionId can
- *  never cross-load a LINE-channel session (and vice-versa). Pass
- *  `opts.lineUserId` (LINE flow) for the full M5 owner-check: the session is
- *  returned only when channel='line' AND the webhook-verified sender owns it —
- *  mismatch → null, indistinguishable from not-found (never leaks existence).
- *  See design-ai-quoting.md §7. */
+ *  never cross-load a chat-channel session (and vice-versa). Pass
+ *  `opts.channelUserId` (chat webhook flows) for the full M5 owner-check:
+ *  the session is returned only when channel matches AND the webhook-verified
+ *  sender owns it — mismatch → null, indistinguishable from not-found (never
+ *  leaks existence). channelUserId requires channel; omitting channel binds
+ *  `channel = NULL` which never matches (fail closed). Column line_user_id
+ *  stores the channel-scoped user id (LINE userId / Messenger PSID) — the
+ *  name is historical. See design-ai-quoting.md §7 + spec 1c §2. */
 export async function loadSession(
   id: number,
-  opts?: { channel?: 'dashboard' | 'line'; lineUserId?: string },
+  opts?: { channel?: 'dashboard' | 'line' | 'messenger'; channelUserId?: string },
 ): Promise<AiQuoteSession | null> {
-  const { rows } = opts?.lineUserId
-    ? await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id} AND channel = 'line' AND line_user_id = ${opts.lineUserId}`
+  const { rows } = opts?.channelUserId
+    ? await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id} AND channel = ${opts.channel ?? null} AND line_user_id = ${opts.channelUserId}`
     : opts?.channel
       ? await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id} AND channel = ${opts.channel}`
       : await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id}`;
@@ -155,6 +158,16 @@ export async function createLineSession(lineUserId: string, displayName?: string
   const { rows } = await sql`
     INSERT INTO ai_quote_sessions (channel, line_user_id, conversation, lead_status, customer_name, customer_contact)
     VALUES ('line', ${lineUserId}, '[]'::jsonb, 'ใหม่', ${displayName ?? null}, 'LINE')
+    RETURNING *`;
+  return rowToSession(rows[0]);
+}
+
+/** Create a Messenger-channel session bound to its webhook-verified owner
+ *  (M5 — mirror createLineSession). line_user_id stores the PSID. */
+export async function createMessengerSession(psid: string, displayName?: string | null): Promise<AiQuoteSession> {
+  const { rows } = await sql`
+    INSERT INTO ai_quote_sessions (channel, line_user_id, conversation, lead_status, customer_name, customer_contact)
+    VALUES ('messenger', ${psid}, '[]'::jsonb, 'ใหม่', ${displayName ?? null}, 'Messenger')
     RETURNING *`;
   return rowToSession(rows[0]);
 }
