@@ -23,3 +23,52 @@ export function verifyMessengerSignature(rawBody: string, signature: string, app
   if (got.length !== expected.length) return false;
   return crypto.timingSafeEqual(got, expected);
 }
+
+interface MsgrMessaging {
+  sender?: { id?: string };
+  message?: {
+    is_echo?: boolean;
+    text?: string;
+    quick_reply?: { payload?: string };
+    attachments?: Array<{ type?: string; payload?: { url?: string } }>;
+  };
+  postback?: { payload?: string };
+}
+
+/** Normalize a Meta Page webhook body → text/image/postback messages.
+ *  Messenger is 1-on-1 by nature (no groups → sourceType always undefined).
+ *  Echo events (page's own sends, incl. staff replying from Page inbox) are
+ *  skipped — we also do NOT subscribe to message_echoes; this is defense in
+ *  depth. quick_reply.payload beats message.text (title truncates at 20 chars).
+ *  A text+attachment combo counts as text (spec: multi-turn image in AI mode
+ *  is out of scope; slip images arrive alone). Never throws. */
+export function parseMessengerEvents(body: unknown): InboundMessage[] {
+  const b = body as { object?: string; entry?: Array<{ messaging?: unknown }> };
+  if (b?.object !== 'page' || !Array.isArray(b.entry)) return [];
+  const out: InboundMessage[] = [];
+  for (const entry of b.entry) {
+    const messaging = entry?.messaging;
+    if (!Array.isArray(messaging)) continue;
+    for (const raw of messaging as MsgrMessaging[]) {
+      const psid = raw?.sender?.id;
+      if (!psid) continue;
+      if (raw.message?.is_echo) continue;   // page's own message → never process
+      const base = { channel: 'messenger' as const, channelUserId: psid };
+      const text = raw.message?.quick_reply?.payload ?? raw.message?.text;
+      if (typeof text === 'string' && text) {
+        out.push({ ...base, kind: 'text', text });
+        continue;
+      }
+      const image = raw.message?.attachments?.find((a) => a?.type === 'image' && a?.payload?.url);
+      if (image?.payload?.url) {
+        out.push({ ...base, kind: 'image', imageMessageId: image.payload.url });
+        continue;
+      }
+      if (raw.postback?.payload) {
+        out.push({ ...base, kind: 'postback', postbackData: raw.postback.payload });
+      }
+      // อื่นๆ (sticker/audio/file/delivery/read) → ทิ้ง
+    }
+  }
+  return out;
+}
