@@ -10,7 +10,9 @@ const MUTED = '#888780';
 export interface EscalationFlexInput {
   trigger: TriggerType;
   customerName: string | null;
-  lineUserId: string;
+  /** Webhook-verified sender id — LINE userId หรือ Messenger PSID. */
+  channelUserId: string;
+  channel: 'line' | 'messenger';
   lastUserText: string;
   lastQuote: { productType: string; unitPrice: number } | null;
   sessionId: number;
@@ -38,11 +40,14 @@ function kvRow(label: string, value: string): Record<string, unknown> {
  *  ready to pass to pushLine(LINE_STAFF_GROUP_ID, ...). */
 export function buildEscalationFlex(input: EscalationFlexInput): Record<string, unknown> {
   const h = HEADER[input.trigger === 'order_intent' ? 'B' : 'A'];
-  const who = input.customerName || input.lineUserId;
+  const who = input.customerName || input.channelUserId;
   const body: Record<string, unknown>[] = [
     kvRow('ลูกค้า', who),
     kvRow('เหตุผล', TRIGGER_LABEL[input.trigger]),
   ];
+  if (input.channel === 'messenger') {
+    body.push(kvRow('ช่องทาง', 'Facebook Messenger — ตอบต่อใน Page inbox'));
+  }
   if (input.lastQuote) {
     body.push(kvRow(
       'ราคาล่าสุด',

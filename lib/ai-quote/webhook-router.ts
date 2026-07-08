@@ -265,7 +265,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     try { lastQuote = await ai.loadLastQuote(sid); } catch { /* best-effort */ }
     if (ai.pushStaff) {
       try {
-        await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, lineUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
+        await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, channel: m.channel, channelUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
       } catch (err) {
         console.error(`[ai-quote/${m.channel}] escalation push failed:`, err instanceof Error ? err.message : err);
       }
