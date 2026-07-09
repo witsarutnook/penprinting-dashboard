@@ -98,7 +98,7 @@ owner: คุณนุ๊ก (developers.facebook.com / Meta Business Suite / Ve
   - ⏳ **verify ค้าง: ทัก Page ด้วยบัญชีที่ไม่ใช่ tester** (เช่นพนักงานที่ไม่มี role ใน app) → บอทต้องตอบ hint/เข้าโหมดได้ — Claude ทำแทนไม่ได้ ต้องบัญชีคนจริง
   - ⏳ M5 2-account test ยังค้าง (publish ก่อน test ตามคำสั่งคุณนุ๊ก — ทำตามหลังโดยเร็ว)
   - **Rollback 2 ชั้น**: ① ปุ่ม **Unpublish** หน้า Publish (กลับ dev mode ทันที ลูกค้าเจอพนักงานตามปกติ) ② `AI_QUOTE_MESSENGER_ENABLED=false` + redeploy → route เงียบ
-- [ ] **2.4** ตั้ง **persistent menu + ice breakers** — **deploy kit พร้อมแล้ว (2026-07-09)** ที่ workspace `../messenger-profile/` (นอก repo, ข้างๆ `line-oa-richmenu/`):
+- [x] **2.4** ✅ **DEPLOYED 2026-07-09** — คุณนุ๊กรันสคริปต์เอง: `{"result":"success"}` + verify GET เห็นครบ 3 (get_started/menu/ice breaker ทุกตัว payload `ai_quote_start` ถูกต้อง). เหลือเช็คตาเปล่าบน Messenger app (เมนู ☰ + ice breaker ในบทสนทนาใหม่). Kit อยู่ workspace `../messenger-profile/` (นอก repo, ข้างๆ `line-oa-richmenu/`):
   - **เนื้อหา (minimal ตามที่คุณนุ๊กเลือก)**: Get Started (Meta บังคับคู่ persistent menu) + ice breaker "ขอราคางานพิมพ์ (AI ตอบทันที)" + เมนูปุ่มเดียว "🤖 ขอราคา AI" — ทุกปุ่ม postback `ai_quote_start` = เข้าโหมด AI ([webhook-router.ts:77](lib/ai-quote/webhook-router.ts) bypass gate "/", verified ก่อนสร้าง kit)
   - **รัน**: `bash "../messenger-profile/deploy-messenger-profile.sh"` — ถาม `FB_PAGE_TOKEN` ผ่าน `read -s` (**ห้ามวาง token ลงแชต**), POST → verify GET ในตัว
   - **เช็คของจริง**: เมนู ☰ ข้างช่องพิมพ์ในแชท Page; ice breaker/Get Started เห็นเฉพาะบทสนทนาใหม่ (mobile cache 1-2 นาที)
