@@ -78,8 +78,8 @@ owner: คุณนุ๊ก (developers.facebook.com / Meta Business Suite / Ve
   - ส่งรูปสลิปโอนเงินจริง → ตอบ `✅ สลิปถูกต้องค่ะ` + ยอด + ธนาคาร
   - ส่งสลิปใบเดิมซ้ำ → ตอบ `⚠️ สลิปนี้เคยส่งแล้วค่ะ`
   - ส่งรูปที่ไม่ใช่สลิป (เช่นรูปงานพิมพ์) → **เงียบ ไม่ตอบ** (Haiku pre-filter กรองก่อน ไม่กิน Thunder quota)
-  - เช็ค `GET /api/admin/slip-metrics` (ต้อง login admin) — ดูยอด `thunder_calls`/`images` ขยับขึ้นตามที่ทดสอบ
-    - ⚠️ **หมายเหตุความแม่นยำ:** endpoint นี้ปัจจุบัน **รวมทุกช่องทาง (LINE+Messenger) เข้าด้วยกัน** ยังไม่มีตัวกรองแยก channel ในหน้า API/UI (แม้ตาราง `slip_checks` จะเก็บคอลัมน์ `channel` ไว้แล้วก็ตาม) — วิธีเช็คที่แม่นสุดตอนนี้คือดูยอดรวมก่อน/หลังการทดสอบ ไม่ใช่กรอง `channel=messenger` ตรงๆ (ของเดิม accurate: จะแยก channel ได้ต้องมี follow-up เพิ่ม query param ในเฟสถัดไป)
+  - เช็ค `GET /api/admin/slip-metrics?channel=messenger` (ต้อง login admin) — ดูยอด `thunder_calls`/`images` ขยับขึ้นตามที่ทดสอบ
+    - ✅ **filter แยก channel มีแล้ว (2026-07-09 `db2eebd`):** `?channel=line` / `?channel=messenger` — ไม่ใส่ = รวมทุกช่องทางเหมือนเดิม (response มี field `channel: 'all'`), ค่าอื่น → 400
 - [ ] **1.9 ออกจากโหมด** — พิมพ์ **"จบ"** หรือ **"ออก"** → ได้ EXIT_TEXT ("ออกจากโหมดประเมินราคาแล้วค่ะ...")
 
 > ระหว่างจังหวะนี้ ลูกค้าทั่วไปที่ทัก Page ยังคุยกับพนักงานผ่าน Page inbox ปกติ — บอทไม่แทรก (dev mode = เห็นเฉพาะ tester)
@@ -88,7 +88,7 @@ owner: คุณนุ๊ก (developers.facebook.com / Meta Business Suite / Ve
 
 ## จังหวะ 2 — Go live
 
-- [ ] **2.1** เช็ค **privacy policy URL** บน penprinting.co ว่ามีหรือยัง — **ถ้าไม่มี ต้องเพิ่มก่อนยื่น** (งานฝั่ง `penprinting-web` — Meta App Review บังคับต้องมี URL นี้)
+- [x] **2.1** ✅ **มีแล้ว (2026-07-09)**: `https://penprinting.co/privacy-policy` — live บน penprinting-web (ครอบทุก touchpoint: เว็บ/LINE/Messenger/ออเดอร์ + เปิดเผยว่ามี AI ช่วยตอบ + ขั้นตอนขอลบข้อมูลครบ) → คุณนุ๊กกรอกใน **Meta App Settings → Basic → Privacy Policy URL** และช่อง **Data Deletion Instructions URL ใช้ URL เดียวกันได้** (ข้อ 6 ของหน้ามีขั้นตอนลบข้อมูล)
 - [ ] **2.2** ยื่น **App Review ขอสิทธิ์ `pages_messaging`**:
   - แนบ **screencast** สาธิต flow จริง (ทัก Page → ได้ hint → กดปุ่มเข้าโหมด → ได้ราคา)
   - ใส่ app icon ให้ครบ
