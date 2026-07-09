@@ -89,10 +89,14 @@ owner: คุณนุ๊ก (developers.facebook.com / Meta Business Suite / Ve
 ## จังหวะ 2 — Go live
 
 - [x] **2.1** ✅ **มีแล้ว (2026-07-09)**: `https://penprinting.co/privacy-policy` — live บน penprinting-web (ครอบทุก touchpoint: เว็บ/LINE/Messenger/ออเดอร์ + เปิดเผยว่ามี AI ช่วยตอบ + ขั้นตอนขอลบข้อมูลครบ) → คุณนุ๊กกรอกใน **Meta App Settings → Basic → Privacy Policy URL** และช่อง **Data Deletion Instructions URL ใช้ URL เดียวกันได้** (ข้อ 6 ของหน้ามีขั้นตอนลบข้อมูล)
-- [ ] **2.2** ยื่น **App Review ขอสิทธิ์ `pages_messaging`**:
-  - แนบ **screencast** สาธิต flow จริง (ทัก Page → ได้ hint → กดปุ่มเข้าโหมด → ได้ราคา)
-  - ใส่ app icon ให้ครบ
-  - ⚠️ อาจถูกขอ **Business Verification** เพิ่มถ้า Meta จัดเป็น advanced access — เผื่อเวลาไว้
+- [ ] **2.2** ยื่น **App Review ขอสิทธิ์ `pages_messaging`** (คู่มือละเอียด — เพิ่ม 2026-07-09):
+  - **Pre-check 3 อย่าง**: ① app icon 1024×1024 (App Settings → Basic) ② ~~privacy/data-deletion URL~~ ✅ 7/09 ③ **Business Verification** ของ portfolio Penprinting (business.facebook.com → Settings → Security Center) — advanced access มักบังคับ, ถ้ายังไม่ verified เริ่มก่อนได้เลย (เอกสารจดทะเบียนบริษัท/DBD)
+  - **ยื่น**: developers.facebook.com → app AI Quoting → **App Review → Permissions and Features** → ค้น `pages_messaging` → **Request advanced access** → ไปที่ App Review → Requests กรอกฟอร์ม
+  - **Use-case text (EN) — วางในช่อง "Tell us how you'll use this permission"**:
+    > Our app is an automated price-quotation assistant for Penprinting Co., Ltd., a commercial printing house in Khon Kaen, Thailand. When a customer messages our Facebook Page ("Penprinting"), the app uses pages_messaging to reply within the standard 24-hour window: (1) it greets the customer and offers an opt-in "AI quote" mode via a quick-reply button; (2) once the customer opts in, it answers print-job questions and returns an instant price estimate (brochures, books, flyers); (3) it verifies bank-transfer slip images that customers send when paying; and (4) it hands the conversation off to our human staff whenever the customer asks for a person or the request is out of scope. The bot only responds to users who message our Page first, customers can exit the mode at any time, and our staff can take over in the Page inbox at any moment. Conversations are in Thai — the screencast includes captions explaining each step.
+  - **Screencast** (1-2 นาที, mp4, บัญชี tester): ① เปิดแชท Page ② ทัก → เห็น hint+ปุ่ม "ขอราคา AI" ③ กดปุ่ม → พิมพ์สเปก (ใบปลิว A4 4สี 1,000) → ได้ราคา ④ "ขอคุยกับทีมงาน" → hand-off ⑤ "จบ" → ออกโหมด — ใส่ caption อังกฤษต่อช็อต
+  - ⚠️ **hint gate ≤1/24ชม.** — บัญชีที่เพิ่งได้ hint จะไม่เห็นช็อต ② → รอ 24 ชม. หรือใช้ **tester คนที่ 2** (จังหวะเดียวกับ M5 2-account test — ทำคู่กัน)
+  - รอผล 2-3 วัน – ~2 สัปดาห์; ระหว่างรอ dev mode ใช้ได้ปกติ
 - [ ] **2.3** รอ **Approved** → สลับ app จาก **Development → Live**
 - [ ] **2.4** ตั้ง **persistent menu + ice breakers** ผ่าน Graph API (postback payload `ai_quote_start` — payload เดียวกับปุ่มเข้าโหมดของ LINE rich menu)
   - Claude เตรียม curl payload ให้ตอน rollout จริง
