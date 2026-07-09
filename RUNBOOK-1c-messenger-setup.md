@@ -94,10 +94,10 @@ owner: คุณนุ๊ก (developers.facebook.com / Meta Business Suite / Ve
   - `pages_messaging` สถานะ **"Ready for testing"** + tag "Required for use case" (อยู่ใน use case โดยปริยาย ถอดไม่ได้) — webhooks ✅ tokens ✅
   - ⚠️⚠️ **ห้ามกด "Add to App Review" / "Become a Tech Provider" เด็ดขาด** — dialog จริงยืนยัน: App Review path ของ app แบบ use case = สมัคร **Tech Provider** เท่านั้น (สำหรับ app ที่เข้าถึงข้อมูล**ธุรกิจอื่น** — access verification + review เข้มขึ้น) และ **"This decision cannot be reversed"** ย้อนกลับไม่ได้ตลอดชีพ app. เราใช้ Page ตัวเอง (asset ใน portfolio เดียวกับ app) = ไม่ใช่ Tech Provider. ข้อความ "Complete App Review" ใน Messenger API Settings เป็น copy generic — เส้นทางจริงของ own-Page app คือ **Publish เฉยๆ**
   - use-case text (EN) + สคริปต์ screencast (เวอร์ชันก่อนของข้อนี้ ดู git history) = **ไม่ต้องใช้แล้ว** — เก็บเผื่อ Meta ขอ Data Use Checkup/questionnaire ภายหลัง
-- [ ] **2.3** **กด Publish เมื่อพร้อมเปิดลูกค้าจริง** (ปุ่มอยู่หน้า Publish มุมขวาล่าง — การตัดสินใจธุรกิจของคุณนุ๊ก: publish ปุ๊บ บอทตอบลูกค้าจริงทันทีเพราะ env เปิดอยู่บน prod)
-  - **แนะนำทำ M5 2-account test ให้ผ่านก่อน publish** (security acceptance — เพิ่ม tester คนที่ 2 ใน App roles)
-  - verify หลัง publish: ทัก Page ด้วยบัญชีที่**ไม่ใช่** tester → บอทต้องตอบ (hint/เข้าโหมด). ถ้าเงียบ+log ขึ้น permission error → **unpublish** (กลับ dev mode ได้ ปุ่มเดียวกัน) แล้วค่อยสืบต่อ — rollback ง่าย ไม่มีของพัง
-  - rollback อีกชั้น: `AI_QUOTE_MESSENGER_ENABLED=false` + redeploy → route เงียบทั้ง channel
+- [x] **2.3** ✅ **PUBLISHED 2026-07-09** — คุณนุ๊กสั่ง "กดเลย", Claude กดผ่าน Chrome MCP: dialog ยืนยัน **"Your app was successfully published. Your app is now available for the public to use."** + badge Publish → **Published** + ปุ่มเปลี่ยนเป็น Unpublish (rollback มีจริง)
+  - ⏳ **verify ค้าง: ทัก Page ด้วยบัญชีที่ไม่ใช่ tester** (เช่นพนักงานที่ไม่มี role ใน app) → บอทต้องตอบ hint/เข้าโหมดได้ — Claude ทำแทนไม่ได้ ต้องบัญชีคนจริง
+  - ⏳ M5 2-account test ยังค้าง (publish ก่อน test ตามคำสั่งคุณนุ๊ก — ทำตามหลังโดยเร็ว)
+  - **Rollback 2 ชั้น**: ① ปุ่ม **Unpublish** หน้า Publish (กลับ dev mode ทันที ลูกค้าเจอพนักงานตามปกติ) ② `AI_QUOTE_MESSENGER_ENABLED=false` + redeploy → route เงียบ
 - [ ] **2.4** ตั้ง **persistent menu + ice breakers** ผ่าน Graph API (postback payload `ai_quote_start` — payload เดียวกับปุ่มเข้าโหมดของ LINE rich menu)
   - Claude เตรียม curl payload ให้ตอน rollout จริง
   - **Token ต้องใส่ผ่าน `read -s` ในเทอร์มินัลของคุณนุ๊กเอง — ห้ามวาง `FB_PAGE_TOKEN` ลงในแชต**
