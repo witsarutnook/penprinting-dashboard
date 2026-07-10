@@ -45,4 +45,30 @@ describe('parseMessengerEvents', () => {
     expect(parseMessengerEvents({})).toEqual([]);
     expect(parseMessengerEvents({ object: 'page', entry: [{}] })).toEqual([]);
   });
+
+  // HINT-1: echo classification — only when ourAppId is provided
+  it('own-app echo is skipped (the bot echoes every AI reply)', () => {
+    const body = page([{ sender: { id: 'PAGE1' }, recipient: { id: '555' }, message: { is_echo: true, app_id: 1234, text: 'AI ตอบ' } }]);
+    expect(parseMessengerEvents(body, { ourAppId: '1234' })).toEqual([]);
+  });
+  it('other-app echo → staff-echo carrying the CUSTOMER psid (recipient, not sender)', () => {
+    const body = page([{ sender: { id: 'PAGE1' }, recipient: { id: '555' }, message: { is_echo: true, app_id: 263902037430900, text: 'ตอบจาก inbox' } }]);
+    expect(parseMessengerEvents(body, { ourAppId: '1234' })).toEqual([
+      { channel: 'messenger', kind: 'staff-echo', channelUserId: '555' },
+    ]);
+  });
+  it('echo without app_id (Page inbox send) → staff-echo', () => {
+    const body = page([{ sender: { id: 'PAGE1' }, recipient: { id: '556' }, message: { is_echo: true, text: 'จาก inbox' } }]);
+    expect(parseMessengerEvents(body, { ourAppId: '1234' })).toEqual([
+      { channel: 'messenger', kind: 'staff-echo', channelUserId: '556' },
+    ]);
+  });
+  it('without ourAppId EVERY echo is skipped — fail-safe (misclassified own echo would kick users out of AI mode)', () => {
+    const body = page([{ sender: { id: 'PAGE1' }, recipient: { id: '555' }, message: { is_echo: true, app_id: 99, text: 'x' } }]);
+    expect(parseMessengerEvents(body)).toEqual([]);
+  });
+  it('echo without recipient id is dropped (never throws)', () => {
+    const body = page([{ sender: { id: 'PAGE1' }, message: { is_echo: true, text: 'x' } }]);
+    expect(parseMessengerEvents(body, { ourAppId: '1234' })).toEqual([]);
+  });
 });

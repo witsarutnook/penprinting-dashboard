@@ -26,8 +26,10 @@ export function verifyMessengerSignature(rawBody: string, signature: string, app
 
 interface MsgrMessaging {
   sender?: { id?: string };
+  recipient?: { id?: string };   // echo: sender = Page → ลูกค้าอยู่ที่ recipient
   message?: {
     is_echo?: boolean;
+    app_id?: number | string;    // echo: app ที่ส่งข้อความนั้น (ไม่มี = Page inbox)
     text?: string;
     quick_reply?: { payload?: string };
     attachments?: Array<{ type?: string; payload?: { url?: string } }>;
@@ -35,14 +37,17 @@ interface MsgrMessaging {
   postback?: { payload?: string };
 }
 
-/** Normalize a Meta Page webhook body → text/image/postback messages.
+/** Normalize a Meta Page webhook body → text/image/postback/staff-echo messages.
  *  Messenger is 1-on-1 by nature (no groups → sourceType always undefined).
- *  Echo events (page's own sends, incl. staff replying from Page inbox) are
- *  skipped — we also do NOT subscribe to message_echoes; this is defense in
- *  depth. quick_reply.payload beats message.text (title truncates at 20 chars).
+ *  Echo events (page's own sends): with opts.ourAppId set, an echo whose
+ *  app_id ≠ ours (or missing — Page inbox) = staff replied → 'staff-echo'
+ *  carrying the CUSTOMER psid (recipient); our own echoes are skipped.
+ *  Without ourAppId ALL echoes are skipped (fail-safe: misclassifying our own
+ *  echo as staff would kick the user out of AI mode on every bot reply).
+ *  quick_reply.payload beats message.text (title truncates at 20 chars).
  *  A text+attachment combo counts as text (spec: multi-turn image in AI mode
  *  is out of scope; slip images arrive alone). Never throws. */
-export function parseMessengerEvents(body: unknown): InboundMessage[] {
+export function parseMessengerEvents(body: unknown, opts?: { ourAppId?: string }): InboundMessage[] {
   const b = body as { object?: string; entry?: Array<{ messaging?: unknown }> };
   if (b?.object !== 'page' || !Array.isArray(b.entry)) return [];
   const out: InboundMessage[] = [];
@@ -50,9 +55,16 @@ export function parseMessengerEvents(body: unknown): InboundMessage[] {
     const messaging = entry?.messaging;
     if (!Array.isArray(messaging)) continue;
     for (const raw of messaging as MsgrMessaging[]) {
+      if (raw?.message?.is_echo) {
+        const appId = raw.message.app_id == null ? null : String(raw.message.app_id);
+        const customer = raw.recipient?.id;
+        if (opts?.ourAppId && customer && appId !== opts.ourAppId) {
+          out.push({ channel: 'messenger', kind: 'staff-echo', channelUserId: customer });
+        }
+        continue;   // echo ของบอทเอง / ourAppId ไม่ตั้ง / ไม่มี recipient → ทิ้ง
+      }
       const psid = raw?.sender?.id;
       if (!psid) continue;
-      if (raw.message?.is_echo) continue;   // page's own message → never process
       const base = { channel: 'messenger' as const, channelUserId: psid };
       const text = raw.message?.quick_reply?.payload ?? raw.message?.text;
       if (typeof text === 'string' && text) {

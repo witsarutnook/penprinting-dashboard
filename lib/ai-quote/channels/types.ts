@@ -7,7 +7,9 @@ export interface QuickReply {
   text: string;        // ข้อความที่ส่งกลับเมื่อกด
 }
 
-export type InboundKind = 'text' | 'image' | 'postback';
+// 'staff-echo' (Messenger message_echoes, HINT-1): staff replied from the Page
+// inbox — pure signal, channelUserId = the CUSTOMER psid; never gets a reply.
+export type InboundKind = 'text' | 'image' | 'postback' | 'staff-echo';
 
 export interface InboundMessage {
   channel: 'line' | 'messenger';
