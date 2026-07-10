@@ -10,6 +10,7 @@ import { sql } from '@/lib/postgres';
 
 export const MODE_IDLE_MINUTES = 30;   // spec §1 — idle >30 min = mode expired
 export const HINT_GATE_HOURS = 24;     // spec §2 — ≤1 hint/user/24h
+export const STAFF_SUPPRESS_HOURS = 48; // HINT-1 — staff replied within → no hint
 
 export interface LineModeRow {
   channelUserId: string;
@@ -18,6 +19,7 @@ export interface LineModeRow {
   sessionId: number | null;
   roundsNoQuote: number;
   lastHintAt: string | null;
+  lastStaffReplyAt: string | null;
 }
 
 /** Pure: is the mode still active given the last-activity timestamp? */
@@ -36,6 +38,15 @@ export function hintAllowed(lastHintAt: string | null, nowMs: number): boolean {
   return nowMs - t > HINT_GATE_HOURS * 3_600_000;
 }
 
+/** Pure: did staff reply to this customer within the suppression window?
+ *  (HINT-1 — Messenger message_echoes). true = never interject with a hint. */
+export function staffActive(lastStaffReplyAt: string | null, nowMs: number): boolean {
+  if (!lastStaffReplyAt) return false;
+  const t = Date.parse(lastStaffReplyAt);
+  if (Number.isNaN(t)) return false;
+  return nowMs - t <= STAFF_SUPPRESS_HOURS * 3_600_000;
+}
+
 /** pg-types parses TIMESTAMPTZ into a JS Date by default; a custom parser or
  *  driver swap could hand us a string instead. Normalize to ISO so
  *  modeActive/hintAllowed always Date.parse a well-formed value. */
@@ -52,6 +63,7 @@ function rowToMode(r: Record<string, unknown>): LineModeRow {
     sessionId: r.session_id == null ? null : Number(r.session_id),
     roundsNoQuote: Number(r.rounds_no_quote) || 0,
     lastHintAt: toIso(r.last_hint_at),
+    lastStaffReplyAt: toIso(r.last_staff_reply_at),
   };
 }
 
@@ -103,4 +115,19 @@ export async function markHintSent(channelUserId: string): Promise<void> {
     INSERT INTO ai_quote_line_modes (channel_user_id, last_hint_at)
     VALUES (${channelUserId}, NOW())
     ON CONFLICT (channel_user_id) DO UPDATE SET last_hint_at = NOW()`;
+}
+
+/** Staff replied from the Page inbox (Messenger message_echoes → HINT-1):
+ *  stamp the 48h suppression window AND clear the mode in one atomic upsert —
+ *  staff takeover stops the AI immediately. Keeps last_hint_at (the 24h hint
+ *  gate is an independent axis). Upsert: a customer with no row yet still
+ *  gets the suppression window recorded. */
+export async function recordStaffReply(channelUserId: string): Promise<void> {
+  await sql`
+    INSERT INTO ai_quote_line_modes (channel_user_id, last_staff_reply_at, entered_at, last_activity_at, session_id, rounds_no_quote)
+    VALUES (${channelUserId}, NOW(), NULL, NULL, NULL, 0)
+    ON CONFLICT (channel_user_id)
+    DO UPDATE SET last_staff_reply_at = NOW(),
+                  entered_at = NULL, last_activity_at = NULL,
+                  session_id = NULL, rounds_no_quote = 0`;
 }

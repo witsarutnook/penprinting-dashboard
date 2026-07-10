@@ -5,8 +5,8 @@ import { resetMockPostgres, queueResult, findCallContaining } from './helpers/mo
 vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 
 import {
-  modeActive, hintAllowed, MODE_IDLE_MINUTES, HINT_GATE_HOURS,
-  loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent,
+  modeActive, hintAllowed, staffActive, MODE_IDLE_MINUTES, HINT_GATE_HOURS, STAFF_SUPPRESS_HOURS,
+  loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, recordStaffReply,
 } from '@/lib/ai-quote/line-mode';
 
 const NOW = Date.parse('2026-07-06T10:00:00Z');
@@ -37,13 +37,41 @@ describe('hintAllowed (≤1 hint/user/24h — spec §2)', () => {
   });
 });
 
+describe('staffActive (48h staff-conversation suppression — HINT-1)', () => {
+  it('true when staff replied within the window', () => {
+    expect(staffActive(new Date(NOW - min(60)).toISOString(), NOW)).toBe(true);
+  });
+  it('false once the window lapses', () => {
+    expect(staffActive(new Date(NOW - (STAFF_SUPPRESS_HOURS + 1) * 3_600_000).toISOString(), NOW)).toBe(false);
+  });
+  it('false for null / unparsable timestamps (never throws)', () => {
+    expect(staffActive(null, NOW)).toBe(false);
+    expect(staffActive('not-a-date', NOW)).toBe(false);
+  });
+});
+
 describe('mode DB fns (query shape pins)', () => {
   beforeEach(() => resetMockPostgres());
 
   it('loadLineMode maps snake_case row → LineModeRow', async () => {
-    queueResult({ rows: [{ channel_user_id: 'U1', entered_at: 't1', last_activity_at: 't2', session_id: '7', rounds_no_quote: 2, last_hint_at: null }], rowCount: 1 });
+    queueResult({ rows: [{ channel_user_id: 'U1', entered_at: 't1', last_activity_at: 't2', session_id: '7', rounds_no_quote: 2, last_hint_at: null, last_staff_reply_at: null }], rowCount: 1 });
     const r = await loadLineMode('U1');
-    expect(r).toEqual({ channelUserId: 'U1', enteredAt: 't1', lastActivityAt: 't2', sessionId: 7, roundsNoQuote: 2, lastHintAt: null });
+    expect(r).toEqual({ channelUserId: 'U1', enteredAt: 't1', lastActivityAt: 't2', sessionId: 7, roundsNoQuote: 2, lastHintAt: null, lastStaffReplyAt: null });
+  });
+  it('loadLineMode maps last_staff_reply_at when present', async () => {
+    queueResult({ rows: [{ channel_user_id: 'P1', last_staff_reply_at: '2026-07-10T09:00:00Z' }], rowCount: 1 });
+    const r = await loadLineMode('P1');
+    expect(r?.lastStaffReplyAt).toBe('2026-07-10T09:00:00Z');
+  });
+  it('recordStaffReply stamps last_staff_reply_at + clears the mode atomically, keeping last_hint_at', async () => {
+    await recordStaffReply('PSID9');
+    const call = findCallContaining('last_staff_reply_at = NOW()');
+    expect(call?.text).toContain('ON CONFLICT (channel_user_id)');
+    expect(call?.text).toContain('entered_at = NULL');
+    expect(call?.text).toContain('last_activity_at = NULL');
+    expect(call?.text).toContain('session_id = NULL');
+    expect(call?.text).toContain('rounds_no_quote = 0');
+    expect(call?.text).not.toContain('last_hint_at');
   });
   it('enterLineMode upserts and resets rounds but NOT last_hint_at', async () => {
     await enterLineMode('U1');
