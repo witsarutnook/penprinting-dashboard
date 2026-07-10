@@ -147,11 +147,13 @@ export async function getMessengerProfile(psid: string): Promise<{ displayName: 
   }
 }
 
-/** Build the Messenger ChannelAdapter (reply == push — no reply-token concept). */
-export function buildMessengerAdapter(appSecret: string): ChannelAdapter {
+/** Build the Messenger ChannelAdapter (reply == push — no reply-token concept).
+ *  ourAppId (FB_APP_ID) enables echo classification → 'staff-echo' (HINT-1);
+ *  omitted = every echo skipped (fail-safe). */
+export function buildMessengerAdapter(appSecret: string, ourAppId?: string): ChannelAdapter {
   return {
     verifySignature: (rawBody, sig) => verifyMessengerSignature(rawBody, sig, appSecret),
-    parseEvents: parseMessengerEvents,
+    parseEvents: (body) => parseMessengerEvents(body, { ourAppId }),
     downloadImage: (msg) => downloadMessengerImage(msg.imageMessageId!),
     reply: (msg, message, qrs) => sendMessenger(msg.channelUserId, message, qrs),
     push: (id, text) => sendMessenger(id, text),

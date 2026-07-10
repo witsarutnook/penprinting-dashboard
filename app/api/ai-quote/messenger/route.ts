@@ -11,7 +11,7 @@ import { runComputeQuote } from '@/lib/ai-quote/tools';
 import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
 import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
 import { loadSession, createMessengerSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from '@/lib/ai-quote/db';
-import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed } from '@/lib/ai-quote/line-mode';
+import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed, staffActive, recordStaffReply } from '@/lib/ai-quote/line-mode';
 import { pushLine } from '@/lib/ai-quote/channels/line';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -43,7 +43,11 @@ function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken:
     markHintSent,
     modeActive,
     hintAllowed,
-    hintEnabled: process.env.AI_QUOTE_MESSENGER_HINT_ENABLED === 'true',
+    staffActive,
+    recordStaffReply,
+    // HINT-1 fail-closed: no FB_APP_ID = echoes can't be classified = the
+    // suppression signal doesn't exist → hint must stay off.
+    hintEnabled: process.env.AI_QUOTE_MESSENGER_HINT_ENABLED === 'true' && !!process.env.FB_APP_ID,
     checkRateLimit: async (uid) => (await checkRateLimit(`ai-quote-msgr:${uid}`, AI_RATE_LIMIT)).ok,
     loadSessionForUser: async (id, uid) => {
       const s = await loadSession(id, { channel: 'messenger', channelUserId: uid });
@@ -80,7 +84,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!appSecret) return NextResponse.json({ error: 'not configured' }, { status: 500 });
 
   const rawBody = await req.text();
-  const adapter = buildMessengerAdapter(appSecret);
+  const adapter = buildMessengerAdapter(appSecret, process.env.FB_APP_ID);
   if (!adapter.verifySignature(rawBody, req.headers.get('x-hub-signature-256') ?? '')) {
     return new NextResponse('unauthorized', { status: 401 });
   }

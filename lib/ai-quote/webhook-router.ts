@@ -12,7 +12,7 @@ import {
   HINT_QUICK_REPLY, RATE_LIMIT_TEXT, ERROR_TEXT, type TriggerType,
 } from './customer-triggers';
 
-export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'ignore';
+export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'ignore';
 
 /** Match the group-id command — e.g. `/groupid`, `/group-id`, `/id` (leading slash
  *  required, case-insensitive). Echoes the LINE group/room id so staff can register
@@ -61,6 +61,9 @@ export function isExitAiKeyword(text: string): boolean {
  *  trackEnabled (default true = LINE) gates the command arms — Messenger (1c D1)
  *  passes false: track/groupid text falls through as ordinary text (ai arm / ignore). */
 export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean; trackEnabled?: boolean }): Route {
+  // Staff echo (Messenger message_echoes — HINT-1): pure signal, classified
+  // before every other arm; independent of aiEnabled/trackEnabled.
+  if (m.kind === 'staff-echo') return 'staff-echo';
   const trackEnabled = opts.trackEnabled ?? true;
   // Explicit commands work anywhere (1-on-1 and groups/rooms):
   //   /groupid → echo the group id · /track <id> → status card (customers can track in their own group)
@@ -119,6 +122,10 @@ export interface CustomerAiDeps {
   modeActive: (lastActivityAt: string | null, nowMs: number) => boolean;
   hintAllowed: (lastHintAt: string | null, nowMs: number) => boolean;
   hintEnabled: boolean;
+  /** true = staff replied to this customer within the 48h suppression window (HINT-1). */
+  staffActive: (lastStaffReplyAt: string | null, nowMs: number) => boolean;
+  /** Staff replied (Messenger echo): stamp last_staff_reply_at + clear the mode (takeover). */
+  recordStaffReply: (uid: string) => Promise<void>;
   /** true = ผ่าน (30 msg/hr per line_user_id — spec §6). */
   checkRateLimit: (uid: string) => Promise<boolean>;
   /** Owner-checked load (M5): null on mismatch — caller starts fresh. */
@@ -140,6 +147,17 @@ export interface CustomerAiDeps {
  *  slip + track; 1b-B wires the customer AI arms via deps.aiCustomer (absent = 1b-A behaviour). */
 export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promise<void> {
   const route = routeInbound(m, { aiEnabled: deps.aiEnabled, trackEnabled: deps.trackEnabled });
+  if (route === 'staff-echo') {
+    // Silent by design: record the takeover, never reply, never touch the engine.
+    // Errors are swallowed (e.g. webhook fires before the column migration) —
+    // Meta disables webhooks that keep failing, so this path must never throw.
+    try {
+      await deps.aiCustomer?.recordStaffReply(m.channelUserId);
+    } catch (err) {
+      console.error(`[ai-quote/${m.channel}] recordStaffReply failed:`, err instanceof Error ? err.message : err);
+    }
+    return;
+  }
   if (route === 'slip') {
     const blob = await deps.adapter.downloadImage(m);
     // Cheap Haiku pre-filter to spare Thunder quota (customers send many non-slip
@@ -226,6 +244,9 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     // นอกโหมด (spec §2): hint ≤1/user/24h + ปุ่มเข้าโหมด 1 แตะ. Sub-flag ปิดได้
     // ช่วง soft launch. Gate เก็บใน DB (ไม่ใช้ KV — fail-open จะ spam แชตพนักงาน).
     if (!ai.hintEnabled) return;
+    // HINT-1: staff talked to this customer within 48h → never interject.
+    // Checked BEFORE the 24h gate so a suppressed hint doesn't burn the quota.
+    if (mode && ai.staffActive(mode.lastStaffReplyAt, now)) return;
     if (mode && !ai.hintAllowed(mode.lastHintAt, now)) return;
     await ai.markHintSent(uid);
     await deps.adapter.reply(m, HINT_TEXT, [HINT_QUICK_REPLY]);
