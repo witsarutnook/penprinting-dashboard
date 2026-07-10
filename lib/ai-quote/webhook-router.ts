@@ -149,8 +149,10 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   const route = routeInbound(m, { aiEnabled: deps.aiEnabled, trackEnabled: deps.trackEnabled });
   if (route === 'staff-echo') {
     // Silent by design: record the takeover, never reply, never touch the engine.
-    // Errors are swallowed (e.g. webhook fires before the column migration) —
-    // Meta disables webhooks that keep failing, so this path must never throw.
+    // Errors are swallowed locally (e.g. webhook fires before the column
+    // migration) so they log under this specific prefix instead of the routes'
+    // generic handleInbound catch — the 200 ack itself is never at risk (both
+    // routes ack before after() runs).
     try {
       await deps.aiCustomer?.recordStaffReply(m.channelUserId);
     } catch (err) {
