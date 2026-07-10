@@ -439,14 +439,17 @@ export async function GET() {
     // (last_hint_at), which must survive mode exits. Expiry is lazy (no
     // cron): modeActive() in lib/ai-quote/line-mode.ts checks the 30-min
     // idle window on the next inbound message.
+    // HINT-1 (2026-07-10) adds a third axis: last_staff_reply_at — the 48h
+    // staff-conversation suppression window (also cleared-mode takeover marker).
     await sql`
       CREATE TABLE IF NOT EXISTS ai_quote_line_modes (
-        channel_user_id  TEXT PRIMARY KEY,
-        entered_at       TIMESTAMPTZ,
-        last_activity_at TIMESTAMPTZ,
-        session_id       INTEGER REFERENCES ai_quote_sessions(id) ON DELETE SET NULL,
-        rounds_no_quote  INT NOT NULL DEFAULT 0,
-        last_hint_at     TIMESTAMPTZ
+        channel_user_id     TEXT PRIMARY KEY,
+        entered_at          TIMESTAMPTZ,
+        last_activity_at    TIMESTAMPTZ,
+        session_id          INTEGER REFERENCES ai_quote_sessions(id) ON DELETE SET NULL,
+        rounds_no_quote     INT NOT NULL DEFAULT 0,
+        last_hint_at        TIMESTAMPTZ,
+        last_staff_reply_at TIMESTAMPTZ
       )`;
     applied.push('CREATE TABLE ai_quote_line_modes');
 
@@ -454,6 +457,13 @@ export async function GET() {
     // owner; loadSession({ channel, channelUserId }) filters on it (mismatch → not found).
     await sql`ALTER TABLE ai_quote_sessions ADD COLUMN IF NOT EXISTS line_user_id TEXT`;
     applied.push('ai_quote_sessions.line_user_id column');
+
+    // HINT-1 (2026-07-10): staff-activity suppression — staff replied from the
+    // Page inbox (Messenger message_echoes) → suppress the out-of-mode hint
+    // 48h + clear the mode (takeover). NULL on purpose — no DEFAULT NOW()
+    // backfill (that would suppress every existing customer at ALTER time).
+    await sql`ALTER TABLE ai_quote_line_modes ADD COLUMN IF NOT EXISTS last_staff_reply_at TIMESTAMPTZ`;
+    applied.push('ai_quote_line_modes.last_staff_reply_at column');
 
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
