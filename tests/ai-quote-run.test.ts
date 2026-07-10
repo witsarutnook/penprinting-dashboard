@@ -1,7 +1,7 @@
 // tests/ai-quote-run.test.ts
 import { describe, it, expect, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { runQuoteTurn, detectEscalation, shouldPersistTurn, sanitizeHistory } from '@/lib/ai-quote/run';
+import { runQuoteTurn, detectEscalation, shouldPersistTurn, sanitizeHistory, stripChatMarkdown } from '@/lib/ai-quote/run';
 
 // Minimal fake Anthropic client: messages.create returns scripted responses.
 function fakeClient(responses: unknown[]) {
@@ -116,6 +116,40 @@ describe('runQuoteTurn', () => {
     );
     expect(out.quotes).toHaveLength(1);
     expect(out.escalated).toBe(false);
+  });
+
+  // Polish 2026-07-10: no chat surface renders markdown (LINE / Messenger /
+  // quote-assistant are all plain text) — a model reply with **bold** must go
+  // out stripped, and the persisted history turn must match what was sent.
+  it('strips ** markdown from the reply and the persisted assistant turn', async () => {
+    const client = fakeClient([{ stop_reason: 'end_turn', content: [
+      { type: 'text', text: '**ราคา 5.05 บาท/ชิ้น** (ยังไม่รวม VAT 7%)\n**📋 ประเมินจาก:** A4 / 4 สี' },
+    ] }]);
+    const out = await runQuoteTurn(
+      { history: [], userMessage: 'โบรชัวร์ 1000 ใบ' },
+      { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'claude-haiku-4-5' },
+    );
+    expect(out.reply).toBe('ราคา 5.05 บาท/ชิ้น (ยังไม่รวม VAT 7%)\n📋 ประเมินจาก: A4 / 4 สี');
+    const lastTurn = out.newHistory[out.newHistory.length - 1];
+    expect(lastTurn.text).not.toContain('**');
+    expect(lastTurn.text).toBe(out.reply);
+  });
+});
+
+describe('stripChatMarkdown', () => {
+  it('unwraps paired **bold** keeping the inner text', () => {
+    expect(stripChatMarkdown('ราคา **5.05 บาท/ชิ้น** ค่ะ')).toBe('ราคา 5.05 บาท/ชิ้น ค่ะ');
+  });
+  it('handles multiple pairs across lines', () => {
+    expect(stripChatMarkdown('**หนังสือ A5**\nราคา **32.64** บาท/เล่ม'))
+      .toBe('หนังสือ A5\nราคา 32.64 บาท/เล่ม');
+  });
+  it('drops a stray unpaired ** marker', () => {
+    expect(stripChatMarkdown('ราคา **5.05 บาท')).toBe('ราคา 5.05 บาท');
+  });
+  it('leaves text without markdown unchanged (single * intact)', () => {
+    const plain = 'ราคา 5.05 บาท/ชิ้น (ยังไม่รวม VAT 7%) · ขนาด 10*15 ซม.';
+    expect(stripChatMarkdown(plain)).toBe(plain);
   });
 });
 

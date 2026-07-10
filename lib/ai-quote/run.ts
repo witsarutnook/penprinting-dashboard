@@ -56,6 +56,15 @@ export function sanitizeHistory(input: unknown, maxTurns = 40, maxLen = 4000): C
   return turns.slice(-maxTurns);
 }
 
+/** None of the chat surfaces render markdown (LINE / Messenger / the
+ *  quote-assistant panel are all plain text) — the model still emits **bold**
+ *  markers sometimes. Strip them at the single reply-construction point so
+ *  sent text and persisted history stay identical. Single '*' (e.g. sizes
+ *  like 10*15) is left alone. */
+export function stripChatMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '');
+}
+
 /** Did this turn escalate to the sales team rather than quote? Heuristic:
  *  no compute_quote succeeded AND the reply uses handoff wording. Pure +
  *  exported so the route can wire the lead-status badge off one source of
@@ -122,7 +131,7 @@ export async function runQuoteTurn(
   // message and brick the whole session. Fall back to a retry prompt if the
   // loop ended without text (MAX_TOOL_ROUNDS hit while still tool_use, or a
   // tool-use-only / max_tokens stop with no text block).
-  const reply = replyText.trim() || 'ขออภัยค่ะ ระบบยังประมวลผลคำขอไม่เสร็จ — รบกวนพิมพ์คำขออีกครั้งนะคะ';
+  const reply = stripChatMarkdown(replyText).trim() || 'ขออภัยค่ะ ระบบยังประมวลผลคำขอไม่เสร็จ — รบกวนพิมพ์คำขออีกครั้งนะคะ';
 
   const newHistory: ConversationTurn[] = [
     ...input.history,

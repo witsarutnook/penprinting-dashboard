@@ -27,4 +27,9 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
   it('forbids self-negotiated discounts (escalate instead)', () => {
     expect(p).toMatch(/ต่อราคา|ส่วนลด/);
   });
+  // Polish 2026-07-10: LINE/Messenger show markdown raw — the prompt must
+  // forbid it (stripChatMarkdown in run.ts is the safety net, not the fix).
+  it('forbids markdown formatting in replies', () => {
+    expect(p).toContain('ห้ามใช้ markdown');
+  });
 });
