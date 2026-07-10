@@ -12,7 +12,7 @@ merge PR → Vercel auto-deploy → รอ Ready
 
 ## 3. ตั้ง FB_APP_ID + redeploy
 - Meta App dashboard (app "AI Quoting") → App ID ตัวเลขบนหัวหน้า dashboard (ค่า public)
-- Vercel env `FB_APP_ID` = ตัวเลขนั้น → **Redeploy** (env live ต่อเมื่อ deploy ใหม่)
+- Vercel env `FB_APP_ID` = ตัวเลขนั้น → **Redeploy** (env live ต่อเมื่อ deploy ใหม่) (วางตัวเลขล้วน ห้ามมีช่องว่าง)
 
 ## 4. Subscribe message_echoes
 Meta App dashboard → Messenger → API Settings → Webhooks (Page subscription ของ Penprinting)
@@ -27,6 +27,7 @@ Meta App dashboard → Messenger → API Settings → Webhooks (Page subscriptio
 
 ## 6. เปิด hint
 Vercel env `AI_QUOTE_MESSENGER_HINT_ENABLED=true` → **Redeploy**
+(⚠️ ห้ามเปิด flag นี้ก่อน step 4 subscribe message_echoes — flag on โดยไม่มี echo signal = ซ้ำ incident 7/09)
 (⚠️ LINE: `AI_QUOTE_LINE_HINT_ENABLED` ปิดถาวร — ไม่มี staff signal บน LINE, ทางเข้า = rich menu)
 
 ## Rollback
