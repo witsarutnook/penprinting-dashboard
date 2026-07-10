@@ -16,7 +16,7 @@ import { runComputeQuote } from '@/lib/ai-quote/tools';
 import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
 import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
 import { loadSession, createLineSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from '@/lib/ai-quote/db';
-import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed } from '@/lib/ai-quote/line-mode';
+import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed, staffActive, recordStaffReply } from '@/lib/ai-quote/line-mode';
 import { getLineProfile, pushLine } from '@/lib/ai-quote/channels/line';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -40,6 +40,8 @@ function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken:
     markHintSent,
     modeActive,
     hintAllowed,
+    staffActive,       // never true on LINE — no staff-reply signal writes the column
+    recordStaffReply,  // unreachable — LINE adapter never emits staff-echo
     hintEnabled: process.env.AI_QUOTE_LINE_HINT_ENABLED === 'true',
     checkRateLimit: async (uid) => (await checkRateLimit(`ai-quote-line:${uid}`, AI_RATE_LIMIT)).ok,
     loadSessionForUser: async (id, uid) => {

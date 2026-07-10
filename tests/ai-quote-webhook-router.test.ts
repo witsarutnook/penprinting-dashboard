@@ -240,7 +240,7 @@ describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
 // ─── 1b-B: customer AI arms ───
 import type { CustomerAiDeps } from '@/lib/ai-quote/webhook-router';
 
-const ACTIVE_MODE = { channelUserId: 'U1', enteredAt: 't', lastActivityAt: 't', sessionId: 7, roundsNoQuote: 0, lastHintAt: null };
+const ACTIVE_MODE = { channelUserId: 'U1', enteredAt: 't', lastActivityAt: 't', sessionId: 7, roundsNoQuote: 0, lastHintAt: null, lastStaffReplyAt: null };
 const QUOTE = { productType: 'brochure' as const, spec: {}, result: { unitPrice: 5 }, unitPrice: 5 };
 
 function stubAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
@@ -255,6 +255,8 @@ function stubAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
     modeActive: () => true,
     hintAllowed: () => true,
     hintEnabled: true,
+    staffActive: () => false,
+    recordStaffReply: async () => { calls.push('staff-reply'); },
     checkRateLimit: async () => true,
     loadSessionForUser: async () => ({ conversation: [], customerName: 'คุณเอ' }),
     createSessionForUser: async () => ({ id: 7, customerName: null }),
@@ -455,5 +457,47 @@ describe('routeInbound (Messenger — trackEnabled=false, spec 1c §1)', () => {
   it('trackEnabled omitted defaults to true (LINE routing unchanged)', () => {
     const m: InboundMessage = { channel: 'line', channelUserId: 'U1', kind: 'text', text: '/track 202606110' };
     expect(routeInbound(m, { aiEnabled: true })).toBe('track');
+  });
+  it('staff-echo kind routes to staff-echo regardless of aiEnabled/trackEnabled', () => {
+    const m: InboundMessage = { channel: 'messenger', channelUserId: '555', kind: 'staff-echo' };
+    expect(routeInbound(m, { aiEnabled: false, trackEnabled: false })).toBe('staff-echo');
+    expect(routeInbound(m, { aiEnabled: true })).toBe('staff-echo');
+  });
+});
+
+describe('handleInbound — HINT-1 staff-echo + hint suppression', () => {
+  const staffEcho: InboundMessage = { channel: 'messenger', channelUserId: '555', kind: 'staff-echo' };
+
+  it('staff-echo records the staff reply and stays completely silent', async () => {
+    const { ai, calls } = stubAi();
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(staffEcho, deps as never);
+    expect(calls).toContain('staff-reply');
+    expect(replies.length).toBe(0);
+  });
+  it('staff-echo without aiCustomer deps is a no-op', async () => {
+    const { replies, deps } = stubDeps({ aiEnabled: false });
+    await expect(handleInbound(staffEcho, deps as never)).resolves.toBeUndefined();
+    expect(replies.length).toBe(0);
+  });
+  it('staff-echo recordStaffReply failure is swallowed (webhook must never 500)', async () => {
+    const { ai } = stubAi({ recordStaffReply: async () => { throw new Error('column missing'); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await expect(handleInbound(staffEcho, deps as never)).resolves.toBeUndefined();
+    expect(replies.length).toBe(0);
+  });
+  it('hint is silent while a staff conversation is active — and does NOT burn the 24h quota', async () => {
+    const { ai, calls } = stubAi({ modeActive: () => false, staffActive: () => true });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สวัสดีค่ะ สนใจงานพิมพ์'), deps as never);
+    expect(calls).not.toContain('hint-sent');
+    expect(replies.length).toBe(0);
+  });
+  it('hint fires again once the staff window lapses', async () => {
+    const { ai, calls } = stubAi({ modeActive: () => false, staffActive: () => false });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('สวัสดีค่ะ'), deps as never);
+    expect(calls).toContain('hint-sent');
+    expect(replies.length).toBe(1);
   });
 });

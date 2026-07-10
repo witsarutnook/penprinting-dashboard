@@ -11,7 +11,7 @@ import { runComputeQuote } from '@/lib/ai-quote/tools';
 import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
 import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
 import { loadSession, createMessengerSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from '@/lib/ai-quote/db';
-import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed } from '@/lib/ai-quote/line-mode';
+import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed, staffActive, recordStaffReply } from '@/lib/ai-quote/line-mode';
 import { pushLine } from '@/lib/ai-quote/channels/line';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -31,7 +31,7 @@ function unreachable(name: string): never {
   throw new Error(`[ai-quote/messenger] ${name} unreachable (trackEnabled=false, 2026-07-08)`);
 }
 
-function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken: string): CustomerAiDeps {
+function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken: string, fbAppId: string | undefined): CustomerAiDeps {
   const staffGroupId = process.env.LINE_STAFF_GROUP_ID || null;
   return {
     // mode table (ai_quote_line_modes) is keyed on channel_user_id — PSID rows
@@ -43,7 +43,11 @@ function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken:
     markHintSent,
     modeActive,
     hintAllowed,
-    hintEnabled: process.env.AI_QUOTE_MESSENGER_HINT_ENABLED === 'true',
+    staffActive,
+    recordStaffReply,
+    // HINT-1 fail-closed: no FB_APP_ID = echoes can't be classified = the
+    // suppression signal doesn't exist → hint must stay off.
+    hintEnabled: process.env.AI_QUOTE_MESSENGER_HINT_ENABLED === 'true' && !!fbAppId,
     checkRateLimit: async (uid) => (await checkRateLimit(`ai-quote-msgr:${uid}`, AI_RATE_LIMIT)).ok,
     loadSessionForUser: async (id, uid) => {
       const s = await loadSession(id, { channel: 'messenger', channelUserId: uid });
@@ -79,8 +83,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const appSecret = process.env.FB_APP_SECRET;
   if (!appSecret) return NextResponse.json({ error: 'not configured' }, { status: 500 });
 
+  // Trimmed once: a whitespace-padded FB_APP_ID would fail the exact-string
+  // echo comparison → our own echoes misclassified as staff → mode cleared on
+  // every bot reply. trim + empty→undefined keeps the fail-safe intact.
+  const fbAppId = process.env.FB_APP_ID?.trim() || undefined;
+
   const rawBody = await req.text();
-  const adapter = buildMessengerAdapter(appSecret);
+  const adapter = buildMessengerAdapter(appSecret, fbAppId);
   if (!adapter.verifySignature(rawBody, req.headers.get('x-hub-signature-256') ?? '')) {
     return new NextResponse('unauthorized', { status: 401 });
   }
@@ -120,7 +129,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           visionModel: VISION_MODEL,
           aiEnabled,
           trackEnabled: false,   // spec 1c D1 — no /track /groupid on Messenger
-          aiCustomer: aiEnabled ? buildCustomerAiDeps(anthropic, quoteUrl!, quoteToken!) : undefined,
+          aiCustomer: aiEnabled ? buildCustomerAiDeps(anthropic, quoteUrl!, quoteToken!, fbAppId) : undefined,
         });
       } catch (err) {
         console.error('[ai-quote/messenger] handleInbound failed:', err instanceof Error ? err.message : err);
