@@ -1,5 +1,8 @@
 # RUNBOOK — HINT-1: เปิด hint Messenger คืน (staff-activity suppression)
 
+> ✅ **COMPLETED 2026-07-11** — ครบทั้ง 6 steps, verify 3 ข้อผ่านบน Messenger จริง, hint Messenger เปิดแล้ว.
+> เก็บไฟล์นี้เป็น reference + rollback instructions (ท้ายไฟล์)
+>
 > Spec: docs/superpowers/specs/2026-07-10-hint-staff-suppression-design.md
 > ทุก step เป็น user action (คุณนุ๊ก) เว้นที่ระบุ — **ทำตามลำดับ ห้ามข้าม**
 
@@ -19,11 +22,11 @@ Meta App dashboard → Messenger → API Settings → Webhooks (Page subscriptio
 → เพิ่ม field `message_echoes` (คงของเดิม `messages`, `messaging_postbacks` ไว้)
 
 ## 5. Verify (critical — ก่อนเปิด hint flag)
-- [ ] **บอทไม่เตะตัวเอง**: เข้าโหมด AI (เมนู ☰) → คุย 2-3 เทิร์น → AI ต้องตอบต่อเนื่องไม่หลุดโหมด
+- [x] **บอทไม่เตะตัวเอง**: เข้าโหมด AI (เมนู ☰) → คุย 2-3 เทิร์น → AI ต้องตอบต่อเนื่องไม่หลุดโหมด ✅ 2026-07-11
       (ถ้าหลุดหลังบอทตอบ = การจำแนก app_id ผิด → ปิด subscribe message_echoes แล้วแจ้ง Claude ทันที)
-- [ ] **Takeover**: บัญชี test เข้าโหมด AI → พนักงานตอบจาก Page inbox → ข้อความถัดไปของ test
-      ต้องไม่ถูก AI ตอบ (โหมดโดนเคลียร์)
-- [ ] **Suppress**: หลังพนักงานตอบ → บัญชี test (นอกโหมด) พิมพ์ข้อความธรรมดา → ต้องไม่มี hint
+- [x] **Takeover**: บัญชี test เข้าโหมด AI → พนักงานตอบจาก Page inbox → ข้อความถัดไปของ test
+      ต้องไม่ถูก AI ตอบ (โหมดโดนเคลียร์) ✅ 2026-07-11 — ข้อนี้พิสูจน์ FB_APP_ID live จริงในตัว
+- [x] **Suppress**: หลังพนักงานตอบ → บัญชี test (นอกโหมด) พิมพ์ข้อความธรรมดา → ต้องไม่มี hint ✅ 2026-07-11
 
 ## 6. เปิด hint
 Vercel env `AI_QUOTE_MESSENGER_HINT_ENABLED=true` → **Redeploy**
