@@ -54,6 +54,10 @@ describe('canned copy', () => {
     expect(INTRO_TEXT).toContain('โบรชัวร์');
     expect(INTRO_TEXT).toContain('ออก');
   });
+  it('intro + hint scope lists include นามบัตร (added 2026-07-13)', () => {
+    expect(INTRO_TEXT).toContain('นามบัตร');
+    expect(HINT_TEXT).toContain('นามบัตร');
+  });
   it('intro + hint introduce the AI as น้อง PP (persona 2026-07-13)', () => {
     expect(INTRO_TEXT).toContain('น้อง PP');
     expect(HINT_TEXT).toContain('น้อง PP');

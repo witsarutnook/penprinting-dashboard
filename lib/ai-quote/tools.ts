@@ -1,25 +1,28 @@
 // lib/ai-quote/tools.ts
 import type { ProductType, QuoteSpec, ComputeResult } from './types';
 
-/** The single tool the model may call. Box/bag/namecard/etc. are intentionally
- *  absent — the model escalates those (D8) rather than pricing them. */
+/** The single tool the model may call. Box/bag/sticker/etc. are intentionally
+ *  absent — the model escalates those (D8) rather than pricing them.
+ *  namecard added 2026-07-13 (fix rate/box — calc API is the price source). */
 export const COMPUTE_QUOTE_TOOL = {
   name: 'compute_quote',
   description:
     'คำนวณราคางานพิมพ์ (ต่อชิ้น ก่อน VAT) จากสเปคที่ครบถ้วน. ' +
     'เรียกเมื่อได้สเปคครบเท่านั้น — ห้ามเดาราคาเอง. ' +
-    'รองรับเฉพาะ โบรชัวร์/ใบปลิว (brochure), หนังสือ (book), สมุด (notebook). ' +
-    'งานกล่อง/ถุง/นามบัตร/สติกเกอร์/โปสการ์ด ห้ามเรียก — ให้ escalate ให้พนักงานแทน.',
+    'รองรับเฉพาะ โบรชัวร์/ใบปลิว (brochure), หนังสือ (book), สมุด (notebook), นามบัตร (namecard). ' +
+    'งานกล่อง/ถุง/สติกเกอร์/โปสการ์ด ห้ามเรียก — ให้ escalate ให้พนักงานแทน.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      productType: { type: 'string', enum: ['brochure', 'book', 'notebook'] },
+      productType: { type: 'string', enum: ['brochure', 'book', 'notebook', 'namecard'] },
       spec: {
         type: 'object',
         description:
           'สเปคตามชนิดงาน. brochure: {size(A2/A3/A4/A5/ตัด16), color("1"/"2"/"4"), sides(1/2), paperName, qty}. ' +
           'book/notebook: {size, qty, cover:{paperName,color}, innerA:{paperName,color,pages}, innerB:{paperName,color,pages}}. ' +
-          'notebook size = A4/A5 เท่านั้น. paperName ต้องเป็นชื่อกระดาษที่รู้จัก (ดูใน system prompt).',
+          'notebook size = A4/A5 เท่านั้น. paperName ต้องเป็นชื่อกระดาษที่รู้จัก (ดูใน system prompt). ' +
+          'namecard: {qty(จำนวนใบ), sides(1/2), laminated(boolean — เคลือบเงา/ด้าน)}. ' +
+          'นามบัตรขายเป็นกล่อง (100 ใบ/กล่อง) — ระบบปัดจำนวนใบขึ้นเป็นกล่องเต็มให้เอง ผลลัพธ์มี boxes/pricePerBox/totalPrice.',
       },
     },
     required: ['productType', 'spec'],

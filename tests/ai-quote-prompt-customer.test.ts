@@ -15,6 +15,13 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
   it('carries the น้อง PP persona', () => {
     expect(p).toContain('น้อง PP');
   });
+  // Namecard 2026-07-13: quotable (fix rate/box) — must be in scope and OUT of
+  // the escalate list.
+  it('quotes namecard and no longer escalates it', () => {
+    expect(p).toContain('นามบัตร');
+    expect(p).toContain('namecard');
+    expect(p).not.toMatch(/ส่งต่อทีมงาน[^\n]*\n[^\n]*นามบัตร/); // not in the out-of-scope list
+  });
   it('keeps the full known-paper list', () => {
     for (const name of VALID_PAPER_NAMES) expect(p).toContain(name);
   });

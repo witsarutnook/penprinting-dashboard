@@ -8,6 +8,7 @@ const PRODUCT_LABEL: Record<string, string> = {
   brochure: 'โบรชัวร์/ใบปลิว',
   book: 'หนังสือ',
   notebook: 'สมุด',
+  namecard: 'นามบัตร',
 };
 const MODE_LABEL: Record<string, string> = { offset: 'ออฟเซ็ต', digital: 'ดิจิทัล' };
 
@@ -129,7 +130,7 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
       {!compact && (
         <p className="flex items-center gap-2 text-sm text-stone-500">
           <IconSparkles size={16} className="text-accent" />
-          วางข้อความที่ลูกค้าถามมา — ระบบช่วยสกัดสเปกและคิดราคา (โบรชัวร์ / หนังสือ / สมุด)
+          วางข้อความที่ลูกค้าถามมา — ระบบช่วยสกัดสเปกและคิดราคา (โบรชัวร์ / หนังสือ / สมุด / นามบัตร)
         </p>
       )}
 

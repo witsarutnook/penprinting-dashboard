@@ -1,8 +1,9 @@
 // lib/ai-quote/types.ts
 // Shared shapes for the AI Quote Assistant (Phase 1a).
-// Box/bag are recognised by the model but NOT quoted in 1a (escalate) — see D8.
+// Box/bag are recognised by the model but NOT quoted (escalate) — see D8.
+// namecard added 2026-07-13 (fix rate/box on the calc API).
 
-export type ProductType = 'brochure' | 'book' | 'notebook';
+export type ProductType = 'brochure' | 'book' | 'notebook' | 'namecard';
 
 /** Loose spec — the calc /api/quote endpoint is the source of truth for
  *  validation (returns 422 with issues on a bad spec). We forward as-is. */

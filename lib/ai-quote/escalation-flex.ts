@@ -24,7 +24,7 @@ const HEADER: Record<'A' | 'B', { bg: string; fg: string; label: string }> = {
   B: { bg: '#e1f5ee', fg: '#0f6e56', label: '🛒 ลูกค้าพร้อมสั่ง (จาก AI)' },
 };
 
-const PRODUCT_LABEL: Record<string, string> = { brochure: 'โบรชัวร์/ใบปลิว', book: 'หนังสือ', notebook: 'สมุด' };
+const PRODUCT_LABEL: Record<string, string> = { brochure: 'โบรชัวร์/ใบปลิว', book: 'หนังสือ', notebook: 'สมุด', namecard: 'นามบัตร' };
 
 function kvRow(label: string, value: string): Record<string, unknown> {
   return {
