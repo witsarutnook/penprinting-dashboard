@@ -54,6 +54,10 @@ describe('canned copy', () => {
     expect(INTRO_TEXT).toContain('โบรชัวร์');
     expect(INTRO_TEXT).toContain('ออก');
   });
+  it('intro + hint introduce the AI as น้อง PP (persona 2026-07-13)', () => {
+    expect(INTRO_TEXT).toContain('น้อง PP');
+    expect(HINT_TEXT).toContain('น้อง PP');
+  });
   it('hint quick-reply sends an enter keyword', () => {
     expect(HINT_QUICK_REPLY.text).toBe('/ขอราคา AI');
     expect(HINT_TEXT).toContain('ทีมงาน');

@@ -10,6 +10,11 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
     expect(p).toContain('ลูกค้า');
     expect(p).not.toContain('พนักงานจะวาง');   // staff-prompt framing must not leak
   });
+  // Persona 2026-07-13 (คุณนุ๊ก): the customer-facing AI is named "น้อง PP" —
+  // matches the rich menu "CHAT with PP BOT".
+  it('carries the น้อง PP persona', () => {
+    expect(p).toContain('น้อง PP');
+  });
   it('keeps the full known-paper list', () => {
     for (const name of VALID_PAPER_NAMES) expect(p).toContain(name);
   });
