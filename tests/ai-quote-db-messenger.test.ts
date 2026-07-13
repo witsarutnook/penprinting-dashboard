@@ -24,7 +24,9 @@ describe('loadSession owner-check — messenger channel (M5, 1c §2)', () => {
   });
   it('channelUserId without channel fails CLOSED (channel = NULL never matches)', async () => {
     queueResult({ rows: [], rowCount: 0 });
-    await loadSession(7, { channelUserId: '24680' });
+    // LoadSessionOpts now forbids this shape at compile time (follow-up 7/10);
+    // the cast simulates a non-TS caller to pin the runtime defense in depth.
+    await loadSession(7, { channelUserId: '24680' } as unknown as Parameters<typeof loadSession>[1]);
     expect(sqlCalls[0].values).toContain(null);
   });
 });

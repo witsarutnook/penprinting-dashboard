@@ -2,28 +2,18 @@
 import { NextResponse, type NextRequest, after } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildMessengerAdapter, getMessengerProfile } from '@/lib/ai-quote/channels/messenger';
-import { handleInbound, type HandleDeps, type CustomerAiDeps } from '@/lib/ai-quote/webhook-router';
+import { handleInbound, type HandleDeps } from '@/lib/ai-quote/webhook-router';
+import { buildCustomerAiDeps, messengerHintEnabled, normalizeFbAppId } from '@/lib/ai-quote/customer-deps';
 import { isSlipImage, verifyBankSlipImage } from '@/lib/ai-quote/slip';
 import { buildSlipMessenger } from '@/lib/ai-quote/slip-messenger';
 import { recordSlipCheck } from '@/lib/ai-quote/slip-metrics';
-import { runQuoteTurn, sanitizeHistory } from '@/lib/ai-quote/run';
-import { runComputeQuote } from '@/lib/ai-quote/tools';
-import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
-import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
-import { loadSession, createMessengerSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from '@/lib/ai-quote/db';
-import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed, staffActive, recordStaffReply } from '@/lib/ai-quote/line-mode';
-import { pushLine } from '@/lib/ai-quote/channels/line';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { createMessengerSession } from '@/lib/ai-quote/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const VISION_MODEL = 'claude-haiku-4-5';
-// Same engine decision as LINE/staff (2026-07-02): Sonnet 5 quote engine,
-// Haiku on the slip-vision gate.
-const MODEL = 'claude-sonnet-5';
-const AI_RATE_LIMIT = { limit: 30, windowSec: 3600 };   // spec 1c §2 — per PSID
 
 // track/groupid ปิดฝั่ง Messenger (spec 1c D1) — deps เหล่านี้ unreachable เมื่อ
 // trackEnabled=false; stub-throw กันเรียกพลาดเงียบๆ ถ้า routing เปลี่ยนในอนาคต
@@ -31,47 +21,12 @@ function unreachable(name: string): never {
   throw new Error(`[ai-quote/messenger] ${name} unreachable (trackEnabled=false, 2026-07-08)`);
 }
 
-function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken: string, fbAppId: string | undefined): CustomerAiDeps {
-  const staffGroupId = process.env.LINE_STAFF_GROUP_ID || null;
-  return {
-    // mode table (ai_quote_line_modes) is keyed on channel_user_id — PSID rows
-    // coexist with LINE userIds (ID spaces disjoint: 'U'+hex vs numeric)
-    loadMode: loadLineMode,
-    enterMode: enterLineMode,
-    touchMode: touchLineMode,
-    exitMode: exitLineMode,
-    markHintSent,
-    modeActive,
-    hintAllowed,
-    staffActive,
-    recordStaffReply,
-    // HINT-1 fail-closed: no FB_APP_ID = echoes can't be classified = the
-    // suppression signal doesn't exist → hint must stay off.
-    hintEnabled: process.env.AI_QUOTE_MESSENGER_HINT_ENABLED === 'true' && !!fbAppId,
-    checkRateLimit: async (uid) => (await checkRateLimit(`ai-quote-msgr:${uid}`, AI_RATE_LIMIT)).ok,
-    loadSessionForUser: async (id, uid) => {
-      const s = await loadSession(id, { channel: 'messenger', channelUserId: uid });
-      return s ? { conversation: s.conversation, customerName: s.customerName } : null;
-    },
-    createSessionForUser: async (uid) => {
-      const profile = await getMessengerProfile(uid);   // best-effort display name
-      const s = await createMessengerSession(uid, profile?.displayName ?? null);
-      return { id: s.id, customerName: s.customerName };
-    },
-    saveConversation,
-    saveQuote,
-    countQuotes,
-    loadLastQuote,
-    updateLeadStatus: (sessionId, status) => updateLead(sessionId, { leadStatus: status }),
-    runTurn: (history, userMessage) =>
-      runQuoteTurn(
-        { history: sanitizeHistory(history), userMessage: userMessage.slice(0, 4000) },
-        { client: anthropic, compute: (inp) => runComputeQuote(inp, { url: quoteUrl, token: quoteToken }), systemPrompt: buildCustomerSystemPrompt(), model: MODEL },
-      ),
-    buildEscalationFlex,
-    // escalation ยัง push เข้ากลุ่ม LINE พนักงานเดิม (spec 1c D3)
-    pushStaff: staffGroupId ? (message) => pushLine(staffGroupId, message) : null,
-  };
+/** Channel-specific piece of the shared builder: Messenger profile fetch
+ *  (best-effort display name) + owner-bound (PSID) session insert. */
+async function createSessionForMessengerUser(uid: string): Promise<{ id: number; customerName: string | null }> {
+  const profile = await getMessengerProfile(uid);
+  const s = await createMessengerSession(uid, profile?.displayName ?? null);
+  return { id: s.id, customerName: s.customerName };
 }
 
 async function blobToBase64(b: Blob): Promise<{ data: string; mediaType: string }> {
@@ -83,10 +38,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const appSecret = process.env.FB_APP_SECRET;
   if (!appSecret) return NextResponse.json({ error: 'not configured' }, { status: 500 });
 
-  // Trimmed once: a whitespace-padded FB_APP_ID would fail the exact-string
-  // echo comparison → our own echoes misclassified as staff → mode cleared on
-  // every bot reply. trim + empty→undefined keeps the fail-safe intact.
-  const fbAppId = process.env.FB_APP_ID?.trim() || undefined;
+  // Normalized once — a padded FB_APP_ID would break echo classification
+  // (see normalizeFbAppId docstring, HINT-1 I1).
+  const fbAppId = normalizeFbAppId(process.env.FB_APP_ID);
 
   const rawBody = await req.text();
   const adapter = buildMessengerAdapter(appSecret, fbAppId);
@@ -129,7 +83,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           visionModel: VISION_MODEL,
           aiEnabled,
           trackEnabled: false,   // spec 1c D1 — no /track /groupid on Messenger
-          aiCustomer: aiEnabled ? buildCustomerAiDeps(anthropic, quoteUrl!, quoteToken!, fbAppId) : undefined,
+          aiCustomer: aiEnabled ? buildCustomerAiDeps({
+            channel: 'messenger',
+            hintEnabled: messengerHintEnabled(process.env.AI_QUOTE_MESSENGER_HINT_ENABLED, fbAppId),
+            createSessionForUser: createSessionForMessengerUser,
+            anthropic, quoteUrl: quoteUrl!, quoteToken: quoteToken!,
+          }) : undefined,
         });
       } catch (err) {
         console.error('[ai-quote/messenger] handleInbound failed:', err instanceof Error ? err.message : err);

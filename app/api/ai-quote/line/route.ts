@@ -1,8 +1,9 @@
 // app/api/ai-quote/line/route.ts
 import { NextResponse, type NextRequest, after } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { buildLineAdapter } from '@/lib/ai-quote/channels/line';
-import { handleInbound, type HandleDeps, type CustomerAiDeps } from '@/lib/ai-quote/webhook-router';
+import { buildLineAdapter, getLineProfile } from '@/lib/ai-quote/channels/line';
+import { handleInbound, type HandleDeps } from '@/lib/ai-quote/webhook-router';
+import { buildCustomerAiDeps, lineHintEnabled } from '@/lib/ai-quote/customer-deps';
 import { isSlipImage, verifyBankSlipImage } from '@/lib/ai-quote/slip';
 import { buildSlipFlex } from '@/lib/ai-quote/slip-flex';
 import { recordSlipCheck } from '@/lib/ai-quote/slip-metrics';
@@ -11,63 +12,20 @@ import { loadOrder } from '@/lib/api';
 import { loadActiveJobsByCustomer } from '@/lib/customer-track';
 import { loadRegistrationByGroup } from '@/lib/registrations';
 import { buildCustomerJobsFlex } from '@/lib/ai-quote/customer-jobs-flex';
-import { runQuoteTurn, sanitizeHistory } from '@/lib/ai-quote/run';
-import { runComputeQuote } from '@/lib/ai-quote/tools';
-import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
-import { buildEscalationFlex } from '@/lib/ai-quote/escalation-flex';
-import { loadSession, createLineSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from '@/lib/ai-quote/db';
-import { loadLineMode, enterLineMode, touchLineMode, exitLineMode, markHintSent, modeActive, hintAllowed, staffActive, recordStaffReply } from '@/lib/ai-quote/line-mode';
-import { getLineProfile, pushLine } from '@/lib/ai-quote/channels/line';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { createLineSession } from '@/lib/ai-quote/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const VISION_MODEL = 'claude-haiku-4-5';
-// Same engine decision as the staff route (2026-07-02): Sonnet 5 quote engine,
-// Haiku stays on the slip-vision gate. See app/api/ai-quote/route.ts.
-const MODEL = 'claude-sonnet-5';
-const AI_RATE_LIMIT = { limit: 30, windowSec: 3600 };   // spec §6 — per line_user_id
 
-function buildCustomerAiDeps(anthropic: Anthropic, quoteUrl: string, quoteToken: string): CustomerAiDeps {
-  const staffGroupId = process.env.LINE_STAFF_GROUP_ID || null;
-  return {
-    loadMode: loadLineMode,
-    enterMode: enterLineMode,
-    touchMode: touchLineMode,
-    exitMode: exitLineMode,
-    markHintSent,
-    modeActive,
-    hintAllowed,
-    staffActive,       // never true on LINE — no staff-reply signal writes the column
-    recordStaffReply,  // unreachable — LINE adapter never emits staff-echo
-    hintEnabled: process.env.AI_QUOTE_LINE_HINT_ENABLED === 'true',
-    checkRateLimit: async (uid) => (await checkRateLimit(`ai-quote-line:${uid}`, AI_RATE_LIMIT)).ok,
-    loadSessionForUser: async (id, uid) => {
-      const s = await loadSession(id, { channel: 'line', channelUserId: uid });
-      return s ? { conversation: s.conversation, customerName: s.customerName } : null;
-    },
-    createSessionForUser: async (uid) => {
-      const profile = await getLineProfile(uid);   // best-effort display name
-      const s = await createLineSession(uid, profile?.displayName ?? null);
-      return { id: s.id, customerName: s.customerName };
-    },
-    saveConversation,
-    saveQuote,
-    countQuotes,
-    loadLastQuote,
-    updateLeadStatus: (sessionId, status) => updateLead(sessionId, { leadStatus: status }),
-    runTurn: (history, userMessage) =>
-      runQuoteTurn(
-        // sanitizeHistory caps replayed turns (LINE conversations grow every
-        // turn); slice(0,4000) mirrors the staff route's message cap (M2).
-        { history: sanitizeHistory(history), userMessage: userMessage.slice(0, 4000) },
-        { client: anthropic, compute: (inp) => runComputeQuote(inp, { url: quoteUrl, token: quoteToken }), systemPrompt: buildCustomerSystemPrompt(), model: MODEL },
-      ),
-    buildEscalationFlex,
-    pushStaff: staffGroupId ? (message) => pushLine(staffGroupId, message) : null,
-  };
+/** Channel-specific piece of the shared builder: LINE profile fetch (best-effort
+ *  display name) + owner-bound session insert. */
+async function createSessionForLineUser(uid: string): Promise<{ id: number; customerName: string | null }> {
+  const profile = await getLineProfile(uid);
+  const s = await createLineSession(uid, profile?.displayName ?? null);
+  return { id: s.id, customerName: s.customerName };
 }
 
 async function blobToBase64(b: Blob): Promise<{ data: string; mediaType: string }> {
@@ -122,7 +80,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           anthropic,
           visionModel: VISION_MODEL,
           aiEnabled,
-          aiCustomer: aiEnabled ? buildCustomerAiDeps(anthropic, quoteUrl!, quoteToken!) : undefined,
+          aiCustomer: aiEnabled ? buildCustomerAiDeps({
+            channel: 'line',
+            hintEnabled: lineHintEnabled(process.env.AI_QUOTE_LINE_HINT_ENABLED),
+            createSessionForUser: createSessionForLineUser,
+            anthropic, quoteUrl: quoteUrl!, quoteToken: quoteToken!,
+          }) : undefined,
         });
       } catch (err) {
         console.error('[ai-quote/line] handleInbound failed:', err instanceof Error ? err.message : err);

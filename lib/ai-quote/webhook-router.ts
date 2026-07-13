@@ -109,11 +109,8 @@ export interface HandleDeps {
   aiCustomer?: CustomerAiDeps;
 }
 
-/** Side-effecting deps for the 1b-B customer AI arms — everything injectable
- *  so handleInbound stays pure-testable. Pure helpers (trigger detectors,
- *  canned copy) are imported directly, not injected. Absent (undefined) when
- *  AI_QUOTE_LINE_ENABLED is off or QUOTE_API env is missing → 1b-A behaviour. */
-export interface CustomerAiDeps {
+/** AI-mode lifecycle + hint/suppression gates (table ai_quote_line_modes). */
+export interface CustomerModeDeps {
   loadMode: (uid: string) => Promise<LineModeRow | null>;
   enterMode: (uid: string) => Promise<void>;
   touchMode: (uid: string, patch: { sessionId?: number | null; roundsNoQuote?: number | null }) => Promise<void>;
@@ -126,8 +123,10 @@ export interface CustomerAiDeps {
   staffActive: (lastStaffReplyAt: string | null, nowMs: number) => boolean;
   /** Staff replied (Messenger echo): stamp last_staff_reply_at + clear the mode (takeover). */
   recordStaffReply: (uid: string) => Promise<void>;
-  /** true = ผ่าน (30 msg/hr per line_user_id — spec §6). */
-  checkRateLimit: (uid: string) => Promise<boolean>;
+}
+
+/** Session + quote persistence (tables ai_quote_sessions / ai_quotes). */
+export interface CustomerSessionDeps {
   /** Owner-checked load (M5): null on mismatch — caller starts fresh. */
   loadSessionForUser: (id: number, uid: string) => Promise<{ conversation: ConversationTurn[]; customerName: string | null } | null>;
   createSessionForUser: (uid: string) => Promise<{ id: number; customerName: string | null }>;
@@ -136,12 +135,31 @@ export interface CustomerAiDeps {
   countQuotes: (sessionId: number) => Promise<number>;
   /** Latest persisted quote for the escalation Flex ("ราคา AI ถ้ามี") — null when none. */
   loadLastQuote: (sessionId: number) => Promise<{ productType: string; unitPrice: number } | null>;
-  updateLeadStatus: (sessionId: number, status: 'escalated' | 'กำลังติดตาม') => Promise<void>;
+}
+
+/** Quote engine + throughput guard. */
+export interface CustomerEngineDeps {
+  /** true = ผ่าน (30 msg/hr per channel user id — spec §6). */
+  checkRateLimit: (uid: string) => Promise<boolean>;
   runTurn: (history: ConversationTurn[], userMessage: string) => Promise<RunQuoteTurnOutput>;
+}
+
+/** Staff hand-off: lead status + push to the staff LINE group. */
+export interface CustomerEscalationDeps {
+  updateLeadStatus: (sessionId: number, status: 'escalated' | 'กำลังติดตาม') => Promise<void>;
   buildEscalationFlex: (input: EscalationFlexInput) => Record<string, unknown>;
   /** null = LINE_STAFF_GROUP_ID unset → escalation continues, push skipped (logged). */
   pushStaff: ((message: object) => Promise<void>) | null;
 }
+
+/** Side-effecting deps for the 1b-B customer AI arms — everything injectable
+ *  so handleInbound stays pure-testable. Pure helpers (trigger detectors,
+ *  canned copy) are imported directly, not injected. Absent (undefined) when
+ *  the channel flag is off or QUOTE_API env is missing → 1b-A behaviour.
+ *  Grouped by concern (follow-up 7/10) — the flat shape is unchanged, so
+ *  call sites and tests are untouched; wire via buildCustomerAiDeps
+ *  (customer-deps.ts). */
+export interface CustomerAiDeps extends CustomerModeDeps, CustomerSessionDeps, CustomerEngineDeps, CustomerEscalationDeps {}
 
 /** Orchestrate one inbound message → side-effecting reply. Phase 1b-A handles
  *  slip + track; 1b-B wires the customer AI arms via deps.aiCustomer (absent = 1b-A behaviour). */

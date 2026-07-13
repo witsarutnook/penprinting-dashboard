@@ -58,19 +58,26 @@ export async function releaseLead(id: number, onlyOwner?: string): Promise<void>
   }
 }
 
+/** Scope for loadSession. `channel` is required whenever opts are passed, so a
+ *  channelUserId can never arrive without its channel at the type level
+ *  (follow-up 7/10 — the runtime fail-closed guard below stays as defense in
+ *  depth for non-TS callers). */
+export type LoadSessionOpts = { channel: 'dashboard' | 'line' | 'messenger'; channelUserId?: string };
+
 /** Load a session by id. Pass `opts.channel` to scope the lookup to a single
  *  channel — the staff chat route passes 'dashboard' so a staff sessionId can
  *  never cross-load a chat-channel session (and vice-versa). Pass
  *  `opts.channelUserId` (chat webhook flows) for the full M5 owner-check:
  *  the session is returned only when channel matches AND the webhook-verified
  *  sender owns it — mismatch → null, indistinguishable from not-found (never
- *  leaks existence). channelUserId requires channel; omitting channel binds
- *  `channel = NULL` which never matches (fail closed). Column line_user_id
- *  stores the channel-scoped user id (LINE userId / Messenger PSID) — the
- *  name is historical. See design-ai-quoting.md §7 + spec 1c §2. */
+ *  leaks existence). channelUserId requires channel (enforced by
+ *  LoadSessionOpts); at runtime a missing channel still binds `channel = NULL`
+ *  which never matches (fail closed). Column line_user_id stores the
+ *  channel-scoped user id (LINE userId / Messenger PSID) — the name is
+ *  historical. See design-ai-quoting.md §7 + spec 1c §2. */
 export async function loadSession(
   id: number,
-  opts?: { channel?: 'dashboard' | 'line' | 'messenger'; channelUserId?: string },
+  opts?: LoadSessionOpts,
 ): Promise<AiQuoteSession | null> {
   const { rows } = opts?.channelUserId
     ? await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id} AND channel = ${opts.channel ?? null} AND line_user_id = ${opts.channelUserId}`
