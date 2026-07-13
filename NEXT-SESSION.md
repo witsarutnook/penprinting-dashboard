@@ -9,7 +9,7 @@
 > **Follow-up 2 (2026-07-13, same session) — 🚀 rich menu DEPLOYED สำเร็จ (richMenuId `richmenu-6fc315e0d20bb93fa34704b9577cdb75`):** รอบแรก step 3/3 (set default) ล้ม — Akamai HTML "Bad Request". `/diagnose` ด้วย token ปลอม (HTML 400 = request shape ผิด · JSON 401 = shape ถูก, แยกตัวแปรได้โดยไม่แตะ token จริง): **root cause = POST ตัวเปล่าไม่มี body โดน Akamai edge ของ LINE ปัดตกก่อนถึง API** (step 1-2 รอดเพราะมี body) → fix `-d ''` ใน deploy-richmenu.sh + สคริปต์เก็บตก `set-default-richmenu.sh` (กันรัน deploy ซ้ำ = เมนูซ้ำ) → คุณนุ๊กรันผ่าน ✅. DELETE rollback ตรวจแล้วไม่โดน. Lesson → memory [[line-api-empty-post-akamai]]. **เหลือ: คุณนุ๊ก verify บนมือถือ** (เมนู 4 โซน + แตะ CHAT with PP BOT → เข้าโหมด + น้อง PP แนะนำตัว).
 >
 > ## ⏳ Pending (2026-07-13)
-> 1. 📲 **Verify rich menu บนมือถือ (คุณนุ๊ก)**: เปิดแชต OA (เมนูไม่ขึ้น = ปิดห้องแชตเปิดใหม่ รอ client cache ได้ถึง ~ครึ่งชม.) → เมนู 4 โซนตรงดีไซน์ · แตะ "CHAT with PP BOT" → เข้าโหมด AI + **น้อง PP แนะนำตัว** · แตะโซน โทร/แผนที่/ผลงาน → เปิดถูกที่ · rollback ถ้าจำเป็น: DELETE commands ใน output สคริปต์ (เมนูเดิม OA Manager กลับมาเอง)
+> 0. ~~📲 Verify rich menu บนมือถือ~~ ✅ **ผ่าน (same-day)** — คุณนุ๊กกดเมนูใหม่บนมือถือแล้วโอเค. **Rich menu LINE = LIVE — ทางเข้าโหมด AI หลักของ LINE เปิดแล้ว** (item รอรูปดีไซน์ที่ค้างมาตั้งแต่ 7/07 = จบ)
 > 2. 📱 **M5 2-account test (carryover — urgent, live กับลูกค้าจริงแล้ว)**: บัญชีที่ 2 เข้าโหมด AI → ต้องไม่เห็นบทสนทนา/ราคาของบัญชีแรก (ทั้ง Messenger + LINE)
 > 3. 🎨 smoke LINE ที่เหลือ (④ "สั่งเลย" + /track/สลิประหว่างโหมด) · revert gate "/" เมื่อ rich menu นิ่ง (เมนูส่ง postback ไม่พึ่ง keyword — revert ได้อิสระ)
 > 4. 📊 optional: smoke slip-metrics `?channel=` ในเบราว์เซอร์ admin (carryover)
