@@ -65,13 +65,23 @@ export function ceilTo05(n: number): number {
  *  flows into saveQuote → lead history + escalation Flex show what the customer
  *  was actually told. VAT fields are dropped — customer quoting is pre-VAT only
  *  (D4), and a raw VAT figure next to a rounded base would contradict it.
- *  totalPrice passes through untouched: namecard replies need it and its fix
- *  rates are already whole baht. */
+ *  totalPrice: recomputed from the ROUNDED unit × qty (prod smoke 7/15 caught
+ *  "ใบละ 2.40 รวม 4,776.25" — a raw total next to a rounded unit), dropped when
+ *  qty is unknown. namecard keeps its total as-is: boxes × fix rate (whole
+ *  baht), NOT qty × unit — recomputing would undercharge partial boxes. */
 export function roundOutcomeForCustomer(outcome: ComputeQuoteOutcome): ComputeQuoteOutcome {
   if (!outcome.ok) return outcome;
   const result = { ...outcome.result, unitPrice: ceilTo05(outcome.result.unitPrice) };
   delete result.unitPriceVat;
   delete result.totalPriceVat;
+  if (outcome.productType !== 'namecard') {
+    const qty = outcome.spec.qty;
+    if (typeof qty === 'number' && qty > 0) {
+      result.totalPrice = Math.round(result.unitPrice * qty * 100) / 100;
+    } else {
+      delete result.totalPrice;
+    }
+  }
   return { ...outcome, result };
 }
 

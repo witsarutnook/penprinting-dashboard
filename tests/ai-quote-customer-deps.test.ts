@@ -66,7 +66,7 @@ describe('customer price rounding (ceil to 0.05)', () => {
     expect(ceilTo05(0.3)).toBe(0.3);       // 0.3*20 = 6.000000000000001 in floats
     expect(ceilTo05(150)).toBe(150);       // namecard fix rates untouched
   });
-  it('roundOutcomeForCustomer rounds unitPrice, drops VAT fields, keeps the rest', () => {
+  it('roundOutcomeForCustomer rounds unitPrice and drops VAT fields', () => {
     const out = roundOutcomeForCustomer({
       ok: true, productType: 'brochure', spec: { qty: 10000 },
       result: { mode: 'offset', unitPrice: 1.17625, unitPriceVat: 1.2585875, totalPrice: 11762.5, totalPriceVat: 12585.875 },
@@ -76,9 +76,45 @@ describe('customer price rounding (ceil to 0.05)', () => {
       expect(out.result.unitPrice).toBe(1.2);
       expect(out.result).not.toHaveProperty('unitPriceVat');
       expect(out.result).not.toHaveProperty('totalPriceVat');
-      expect(out.result.mode).toBe('offset');       // non-price fields pass through
-      expect(out.result.totalPrice).toBe(11762.5);  // namecard needs totalPrice — kept as-is
+      expect(out.result.mode).toBe('offset');   // non-price fields pass through
     }
+  });
+  // Prod smoke 2026-07-15 (LINE): "ใบละ 2.40 รวม 4,776.25" — the raw totalPrice
+  // (computed from the full-precision unit) leaked next to the rounded unit.
+  // Non-namecard totals must be recomputed from the ROUNDED unit × qty.
+  it('recomputes non-namecard totalPrice from the rounded unit (the 4,776.25 bug)', () => {
+    const out = roundOutcomeForCustomer({
+      ok: true, productType: 'brochure', spec: { qty: 2000 },
+      result: { unitPrice: 2.388125, totalPrice: 4776.25 },
+    });
+    if (out.ok) {
+      expect(out.result.unitPrice).toBe(2.4);
+      expect(out.result.totalPrice).toBe(4800);   // 2.40 × 2,000 — consistent
+    }
+    expect(out.ok).toBe(true);
+  });
+  it('drops totalPrice when qty is unknown (never show an inconsistent raw total)', () => {
+    const out = roundOutcomeForCustomer({
+      ok: true, productType: 'book', spec: {},
+      result: { unitPrice: 54.98, totalPrice: 16494 },
+    });
+    if (out.ok) {
+      expect(out.result.unitPrice).toBe(55);
+      expect(out.result).not.toHaveProperty('totalPrice');
+    }
+    expect(out.ok).toBe(true);
+  });
+  it('keeps namecard totalPrice as-is (boxes × fix rate, NOT qty × unit)', () => {
+    const out = roundOutcomeForCustomer({
+      ok: true, productType: 'namecard', spec: { qty: 250 },
+      result: { unitPrice: 3, boxes: 3, pricePerBox: 300, totalPrice: 900 },
+    });
+    if (out.ok) {
+      expect(out.result.totalPrice).toBe(900);   // 3 × 250 = 750 would be wrong
+      expect(out.result.boxes).toBe(3);
+      expect(out.result.pricePerBox).toBe(300);
+    }
+    expect(out.ok).toBe(true);
   });
   it('roundOutcomeForCustomer passes calc errors through untouched', () => {
     const err = { ok: false as const, recoverable: true as const, message: 'สเปคไม่ครบ' };
