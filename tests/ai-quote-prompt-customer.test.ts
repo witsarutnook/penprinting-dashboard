@@ -68,4 +68,12 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
     expect(p).toContain('ไม่เกิน 3 บรรทัดหลัก');
     expect(p).toContain('ไม่ต้องทวนสเปกที่ลูกค้าระบุมาแล้ว');
   });
+  // Prod smoke 2026-07-15 11:12 (LINE): repeat of an already-quoted spec in the
+  // same session → the model skipped the tool and copied the stale total
+  // (4,776.25) from its own earlier text turn. Prices must come from THIS
+  // turn's compute_quote — never reused from conversation history.
+  it('forbids reusing price numbers from earlier turns (must re-call the tool)', () => {
+    expect(p).toContain('เทิร์นปัจจุบัน');
+    expect(p).toContain('ห้ามนำตัวเลขราคาจากข้อความก่อนหน้า');
+  });
 });
