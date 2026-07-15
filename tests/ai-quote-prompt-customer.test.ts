@@ -44,4 +44,17 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
   it('forbids markdown formatting in replies', () => {
     expect(p).toContain('ห้ามใช้ markdown');
   });
+  // Case 2026-07-15 (Messenger, real customer): Art 130 → model escalated AND
+  // promised "แจ้งได้เลย น้อง PP ประเมินทันที" — but escalation exits the AI
+  // mode (webhook-router escalate → exitMode), so the customer's "120" reply
+  // hit silence. Two rules pin the fix:
+  it('offers a close in-list paper before escalating (stays in mode)', () => {
+    expect(p).toContain('กระดาษนอกรายการ');
+    expect(p).toContain('Art 130');   // the worked example from the real case
+    expect(p).toContain('ห้ามใช้วลี "ส่งต่อทีมงาน" ในคำถามนี้');
+  });
+  it('requires hand-off replies to end the conversation (mode is closed)', () => {
+    expect(p).toContain('ห้ามชวนให้ลูกค้า');
+    expect(p).toContain('ปิดโหมด');
+  });
 });
