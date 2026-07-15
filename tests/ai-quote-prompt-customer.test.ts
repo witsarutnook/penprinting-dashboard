@@ -57,4 +57,15 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
     expect(p).toContain('ห้ามชวนให้ลูกค้า');
     expect(p).toContain('ปิดโหมด');
   });
+  // คุณนุ๊ก 2026-07-15: prices are pre-rounded in code (roundOutcomeForCustomer,
+  // ceil to 0.05) before the model sees them — the old "แนบเลขเต็ม" instruction
+  // must be gone, and price replies capped at 3 main lines.
+  it('no longer asks the model to attach the full-precision price', () => {
+    expect(p).not.toContain('แนบเลขเต็ม');
+    expect(p).toContain('ปัดราคาให้แล้ว');
+  });
+  it('pins the concise price-reply format', () => {
+    expect(p).toContain('ไม่เกิน 3 บรรทัดหลัก');
+    expect(p).toContain('ไม่ต้องทวนสเปกที่ลูกค้าระบุมาแล้ว');
+  });
 });

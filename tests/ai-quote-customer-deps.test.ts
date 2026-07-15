@@ -7,7 +7,7 @@ vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 import type Anthropic from '@anthropic-ai/sdk';
 import {
   rateLimitKey, lineHintEnabled, messengerHintEnabled, normalizeFbAppId,
-  buildCustomerAiDeps,
+  buildCustomerAiDeps, ceilTo05, roundOutcomeForCustomer,
 } from '@/lib/ai-quote/customer-deps';
 
 const anthropic = {} as unknown as Anthropic;
@@ -46,6 +46,43 @@ describe('rateLimitKey — prefixes are live counter state, changing one resets 
   it('keeps the historical per-channel prefixes', () => {
     expect(rateLimitKey('line', 'U123')).toBe('ai-quote-line:U123');
     expect(rateLimitKey('messenger', '999')).toBe('ai-quote-msgr:999');
+  });
+});
+
+// คุณนุ๊ก 2026-07-15: customer-facing prices ceil to the next 0.05 step (never
+// down, floor 0.05) and the model must never see the full-precision number —
+// rounding happens on the tool result BEFORE the model reads it. Staff flows
+// (quote-assistant/FAB) wire runComputeQuote directly and keep exact numbers.
+describe('customer price rounding (ceil to 0.05)', () => {
+  it('ceilTo05 rounds up to the next 0.05 step with a 0.05 floor', () => {
+    expect(ceilTo05(1.17625)).toBe(1.2);   // the real case from the screenshot
+    expect(ceilTo05(0.98)).toBe(1);
+    expect(ceilTo05(3.53)).toBe(3.55);
+    expect(ceilTo05(54.98)).toBe(55);
+    expect(ceilTo05(0.03)).toBe(0.05);     // tiny per-piece price → minimum step
+  });
+  it('ceilTo05 leaves exact 0.05 multiples alone (no float-drift bump)', () => {
+    expect(ceilTo05(1.2)).toBe(1.2);
+    expect(ceilTo05(0.3)).toBe(0.3);       // 0.3*20 = 6.000000000000001 in floats
+    expect(ceilTo05(150)).toBe(150);       // namecard fix rates untouched
+  });
+  it('roundOutcomeForCustomer rounds unitPrice, drops VAT fields, keeps the rest', () => {
+    const out = roundOutcomeForCustomer({
+      ok: true, productType: 'brochure', spec: { qty: 10000 },
+      result: { mode: 'offset', unitPrice: 1.17625, unitPriceVat: 1.2585875, totalPrice: 11762.5, totalPriceVat: 12585.875 },
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.unitPrice).toBe(1.2);
+      expect(out.result).not.toHaveProperty('unitPriceVat');
+      expect(out.result).not.toHaveProperty('totalPriceVat');
+      expect(out.result.mode).toBe('offset');       // non-price fields pass through
+      expect(out.result.totalPrice).toBe(11762.5);  // namecard needs totalPrice — kept as-is
+    }
+  });
+  it('roundOutcomeForCustomer passes calc errors through untouched', () => {
+    const err = { ok: false as const, recoverable: true as const, message: 'สเปคไม่ครบ' };
+    expect(roundOutcomeForCustomer(err)).toBe(err);
   });
 });
 

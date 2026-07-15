@@ -8,7 +8,7 @@ import 'server-only';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { CustomerAiDeps } from './webhook-router';
 import { runQuoteTurn, sanitizeHistory } from './run';
-import { runComputeQuote } from './tools';
+import { runComputeQuote, type ComputeQuoteOutcome } from './tools';
 import { buildCustomerSystemPrompt } from './prompt-customer';
 import { buildEscalationFlex } from './escalation-flex';
 import { loadSession, saveConversation, saveQuote, countQuotes, loadLastQuote, updateLead } from './db';
@@ -50,6 +50,29 @@ export function messengerHintEnabled(flag: string | undefined, fbAppId: string |
  *  intact. */
 export function normalizeFbAppId(raw: string | undefined): string | undefined {
   return raw?.trim() || undefined;
+}
+
+/** ราคาฝั่งลูกค้า: ปัดขึ้นเป็นขั้นละ 0.05 เสมอ ขั้นต่ำ 0.05 (คุณนุ๊ก 2026-07-15)
+ *  — ราคาที่ลูกค้าเห็นไม่มีวันต่ำกว่าราคาจริง. The 1e-9 guard stops float drift
+ *  from bumping an exact 0.05 multiple up a step (0.3*20 = 6.000000000000001). */
+export function ceilTo05(n: number): number {
+  return Math.max(1, Math.ceil(n * 20 - 1e-9)) / 20;
+}
+
+/** Transform the calc outcome before the customer-flow model sees it: the model
+ *  can't leak a full-precision price it never saw (staff flows wire
+ *  runComputeQuote directly and keep exact numbers). The rounded price also
+ *  flows into saveQuote → lead history + escalation Flex show what the customer
+ *  was actually told. VAT fields are dropped — customer quoting is pre-VAT only
+ *  (D4), and a raw VAT figure next to a rounded base would contradict it.
+ *  totalPrice passes through untouched: namecard replies need it and its fix
+ *  rates are already whole baht. */
+export function roundOutcomeForCustomer(outcome: ComputeQuoteOutcome): ComputeQuoteOutcome {
+  if (!outcome.ok) return outcome;
+  const result = { ...outcome.result, unitPrice: ceilTo05(outcome.result.unitPrice) };
+  delete result.unitPriceVat;
+  delete result.totalPriceVat;
+  return { ...outcome, result };
 }
 
 export function buildCustomerAiDeps(opts: {
@@ -95,7 +118,7 @@ export function buildCustomerAiDeps(opts: {
         // sanitizeHistory caps replayed turns (chat conversations grow every
         // turn); slice(0,4000) mirrors the staff route's message cap (M2).
         { history: sanitizeHistory(history), userMessage: userMessage.slice(0, 4000) },
-        { client: anthropic, compute: (inp) => runComputeQuote(inp, { url: quoteUrl, token: quoteToken }), systemPrompt: buildCustomerSystemPrompt(), model: MODEL },
+        { client: anthropic, compute: async (inp) => roundOutcomeForCustomer(await runComputeQuote(inp, { url: quoteUrl, token: quoteToken })), systemPrompt: buildCustomerSystemPrompt(), model: MODEL },
       ),
     buildEscalationFlex,
     // Escalation always pushes to the staff LINE group — even for Messenger
