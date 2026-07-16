@@ -35,6 +35,13 @@ describe('compareFields', () => {
       { path: 'boxes', expected: 3, actual: undefined },
     ]);
   });
+
+  it('compares array values by content, not reference', () => {
+    expect(compareFields({ tags: [1, 2, 3] }, { tags: [1, 2, 3] })).toEqual([]);
+    expect(compareFields({ tags: [1, 2] }, { tags: [1, 3] })).toEqual([
+      { path: 'tags', expected: [1, 2], actual: [1, 3] },
+    ]);
+  });
 });
 
 describe('buildFailMessage', () => {

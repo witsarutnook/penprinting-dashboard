@@ -13,7 +13,11 @@ export function compareFields(expected, actual, prefix = '') {
   for (const [key, want] of Object.entries(expected)) {
     const path = prefix ? `${prefix}.${key}` : key;
     const got = actual == null ? undefined : actual[key];
-    if (want !== null && typeof want === 'object' && !Array.isArray(want)) {
+    if (Array.isArray(want)) {
+      if (JSON.stringify(want) !== JSON.stringify(got)) {
+        diffs.push({ path, expected: want, actual: got });
+      }
+    } else if (want !== null && typeof want === 'object') {
       diffs.push(...compareFields(want, got, path));
     } else if (got !== want) {
       diffs.push({ path, expected: want, actual: got });
