@@ -1,0 +1,43 @@
+name: Post-deploy smoke
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      test_notify:
+        description: 'ส่งข้อความทดสอบเข้ากลุ่ม LINE (ไม่รัน checks)'
+        type: boolean
+        default: false
+
+jobs:
+  smoke:
+    # deployment_status: เฉพาะ Production + success (ข้าม Preview/failure)
+    # หมายเหตุ: ชื่อ environment จริงของ Vercel ต้อง verify จาก log run แรก (spec §1)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       startsWith(github.event.deployment.environment, 'Production'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Log deployment event (env-name verification)
+        if: github.event_name == 'deployment_status'
+        run: |
+          echo "environment=${{ github.event.deployment.environment }}"
+          echo "state=${{ github.event.deployment_status.state }}"
+          echo "target_url=${{ github.event.deployment_status.target_url }}"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run smoke
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_GROUP_ID: ${{ secrets.LINE_GROUP_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/smoke.mjs ${{ github.event.inputs.test_notify == 'true' && '--test-notify' || '' }}
