@@ -86,3 +86,13 @@
 - Cron canary รายวัน — ตัดโดย D3 (เพิ่มทีหลัง = `schedule:` บรรทัดเดียว)
 - Smoke ฝั่ง penprinting-web / photobook (ไม่มี logic ราคา — health เฉยๆ ค่อยว่ากัน)
 - E2E UI (Playwright) — คนละชั้นกับ smoke นี้
+
+## Accepted deviations (บันทึกหลัง final review 2026-07-16 — SHIPPED)
+
+| Spec เขียน | Implement จริง | เหตุผล |
+|---|---|---|
+| §4 retry เว้น "~10 วิ" | `delayMs` default 5s (`smoke-core.mjs`) | 3 attempts รวม ~10s+ พอ absorb Vercel cold start — พิสูจน์แล้วใน fail-path run จริง |
+| §1 timeout "~5 นาที" | `timeout-minutes: 15` ทั้ง 2 workflows | worst case ล่มทั้งระบบ ≈ 8 นาที — 5 นาทีจะ kill job ก่อน LINE notify ยิง |
+| §2 "ทุก field ราคา" | pin unitPrice/totalPrice/mode (+boxes/pricePerBox namecard) ไม่ pin sub-cost (paperCost ฯลฯ) | subset-compare คือกลไกที่ออกแบบ — drift ใน sub-cost โผล่ที่ unitPrice/totalPrice เสมอ |
+
+หมายเหตุ minor ที่รู้แล้วยอมรับ: node 20 (calc) / 22 (dashboard) ใน workflows ไม่ตรงกัน (แก้ตอนแตะไฟล์ครั้งหน้า) · preview-no-trigger ยังไม่เคยเจอ Preview event จริง (filter ถูกโดย logic) · recapture recipe ใช้ localhost — prod parity ยืนยันด้วย smoke run เขียวหลัง push แทน (ขั้นตอนอยู่ใน /sync-paper-prices)
