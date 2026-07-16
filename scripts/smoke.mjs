@@ -10,6 +10,7 @@ const BASE = process.env.BASE_URL ?? 'https://dashboard.penprinting.co';
 
 const CHECKS = [
   { name: 'login-200', run: () => expectStatus(`${BASE}/login`, 200) },
+  // /track is intentionally public (app/track/page.tsx) — update this check if it ever gets auth-gated
   { name: 'track-200', run: () => expectStatus(`${BASE}/track`, 200) },
   {
     name: 'board-redirects-to-login',
