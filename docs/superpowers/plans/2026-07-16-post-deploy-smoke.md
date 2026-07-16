@@ -365,10 +365,15 @@ jobs:
     steps:
       - name: Log deployment event (env-name verification)
         if: github.event_name == 'deployment_status'
+        # env-indirection กัน script injection จาก webhook-payload strings (review hardening)
+        env:
+          DEPLOY_ENV: ${{ github.event.deployment.environment }}
+          DEPLOY_STATE: ${{ github.event.deployment_status.state }}
+          DEPLOY_TARGET_URL: ${{ github.event.deployment_status.target_url }}
         run: |
-          echo "environment=${{ github.event.deployment.environment }}"
-          echo "state=${{ github.event.deployment_status.state }}"
-          echo "target_url=${{ github.event.deployment_status.target_url }}"
+          echo "environment=$DEPLOY_ENV"
+          echo "state=$DEPLOY_STATE"
+          echo "target_url=$DEPLOY_TARGET_URL"
 
       - uses: actions/checkout@v4
         with:
@@ -686,9 +691,14 @@ jobs:
     steps:
       - name: Log deployment event
         if: github.event_name == 'deployment_status'
+        # env-indirection กัน script injection จาก webhook-payload strings
+        # (review hardening จาก Task 2 — ห้าม interpolate github.event.* ตรงๆ ใน run:)
+        env:
+          DEPLOY_ENV: ${{ github.event.deployment.environment }}
+          DEPLOY_STATE: ${{ github.event.deployment_status.state }}
         run: |
-          echo "environment=${{ github.event.deployment.environment }}"
-          echo "state=${{ github.event.deployment_status.state }}"
+          echo "environment=$DEPLOY_ENV"
+          echo "state=$DEPLOY_STATE"
 
       - uses: actions/checkout@v4
         with:
