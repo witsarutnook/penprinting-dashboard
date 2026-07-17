@@ -62,8 +62,8 @@ describe('canned copy', () => {
     expect(INTRO_TEXT).toContain('น้อง PP');
     expect(HINT_TEXT).toContain('น้อง PP');
   });
-  it('hint quick-reply sends an enter keyword', () => {
-    expect(HINT_QUICK_REPLY.text).toBe('/ขอราคา AI');
+  it('hint quick-reply sends an enter keyword (bare — gate "/" reverted 2026-07-17)', () => {
+    expect(HINT_QUICK_REPLY.text).toBe('ขอราคา AI');
     expect(HINT_TEXT).toContain('ทีมงาน');
   });
 });

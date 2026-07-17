@@ -39,13 +39,12 @@ export function parseTrackCommand(text: string):
 /** Mode entry keywords (spec §1 — exact-ish; a broad "ราคา..." sentence must
  *  NOT enter the mode, it collides with normal staff conversation).
  *
- *  ⚠️ TEST-ONLY (soft-launch 2026-07-07): require a leading "/" so real
- *  customers typing a bare "ขอราคา"/"ตีราคา" on the live OA cannot fall into
- *  AI mode by accident — only testers who know the "/ขอราคา AI" command enter.
- *  REVERT after soft launch: drop the "\/" prefix (→ `^(ขอราคา|ตีราคา)…`) and
- *  restore HINT_QUICK_REPLY.text to "ขอราคา AI" in customer-triggers.ts. */
+ *  Soft-launch "/" gate reverted 2026-07-17 (rich menu + hint live, entry via
+ *  postback ai_quote_start ครอบอยู่แล้ว): bare "ขอราคา"/"ตีราคา" enters. The
+ *  "/" prefix stays OPTIONAL — hint quick-reply buttons already delivered to
+ *  customer chats carry the old "/ขอราคา AI" text and must keep working. */
 export function isEnterAiKeyword(text: string): boolean {
-  return /^\/(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim());
+  return /^\/?(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim());
 }
 
 /** Mode exit keywords (spec §1). "คุยกับทีมงาน" is deliberately NOT here —

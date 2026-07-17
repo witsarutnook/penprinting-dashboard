@@ -66,10 +66,9 @@ export const HINT_TEXT =
   '\n' +
   'รายการ Packaging และอื่นๆ ทีมงานจะรีบตอบกลับลูกค้าอีกครั้งในชั่วโมงทำการนะค้า ☺️💗';
 
-// ⚠️ TEST-ONLY (soft-launch 2026-07-07): text carries the "/" entry command so
-// the hint button matches isEnterAiKeyword. REVERT with webhook-router.ts →
-// 'ขอราคา AI'.
-export const HINT_QUICK_REPLY = { label: '🤖 เริ่มขอราคา AI', text: '/ขอราคา AI' };
+// Gate "/" reverted 2026-07-17 — bare text matches isEnterAiKeyword (which
+// still accepts the old "/ขอราคา AI" from buttons delivered before the revert).
+export const HINT_QUICK_REPLY = { label: '🤖 เริ่มขอราคา AI', text: 'ขอราคา AI' };
 
 export const RATE_LIMIT_TEXT =
   'ขออภัยค่ะ มีการใช้งานถี่เกินไป รบกวนรอสักครู่ หรือรอทีมงานติดต่อกลับนะคะ 🙏';

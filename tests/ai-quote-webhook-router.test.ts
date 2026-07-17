@@ -211,9 +211,10 @@ describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
   it.each(['/ขอราคา', '/ตีราคา', '/ขอราคา AI', '/ขอราคาai', ' /ขอราคา '])('enter keyword: %s → enter-ai', (t) => {
     expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
   });
-  // TEST-ONLY soft-launch: bare keyword (no leading "/") must NOT enter the mode.
-  it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI'])('bare keyword: %s → ai (not enter)', (t) => {
-    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('ai');
+  // Soft-launch gate reverted 2026-07-17: bare keyword enters the mode; the
+  // "/" prefix stays optional so legacy hint quick-reply buttons keep working.
+  it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI', 'ขอราคาai'])('bare keyword: %s → enter-ai', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
   });
   it.each(['จบ', 'ออก', 'ออกจากโหมด AI'])('exit keyword: %s → exit-ai', (t) => {
     expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('exit-ai');
