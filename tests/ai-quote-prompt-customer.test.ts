@@ -68,6 +68,15 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
     expect(p).toContain('ไม่เกิน 3 บรรทัดหลัก');
     expect(p).toContain('ไม่ต้องทวนสเปกที่ลูกค้าระบุมาแล้ว');
   });
+  // คุณนุ๊ก 2026-07-18 (real LINE case "ขอราคาหน่อย"): a vague price ask with no
+  // product type must get the exact pinned ask-for-details template (verbatim),
+  // not a model-improvised paraphrase.
+  it('pins the verbatim ask-for-details template for vague price asks', () => {
+    expect(p).toContain('น้อง PP รบกวนขอรายละเอียดงานหน่อยนะคะ');
+    expect(p).toContain('เดี๋ยวน้อง PP คำนวณราคาให้เลย 😊');
+    expect(p).toContain('📄 ใบปลิว/โบรชัวร์\n📚 หนังสือ\n📓 สมุด\n🪪 นามบัตร');
+    expect(p).toContain('ตรงตัวทุกตัวอักษร');
+  });
   // Prod smoke 2026-07-15 11:12 (LINE): repeat of an already-quoted spec in the
   // same session → the model skipped the tool and copied the stale total
   // (4,776.25) from its own earlier text turn. Prices must come from THIS
