@@ -7,7 +7,7 @@
 > **Follow-up (2026-07-18, same session) — 🎨 pin template "ขอราคาหน่อย" SHIPPED ([`f8c3d7e`](https://github.com/witsarutnook/penprinting-dashboard/commit/f8c3d7e) ตรง main → auto-deploy):** คุณนุ๊กส่ง screenshot เคสจริง LINE — ลูกค้าในโหมดพิมพ์ "ขอราคาหน่อย" → model แต่งคำตอบขอรายละเอียดเอง → คุณนุ๊กให้ wording ที่ต้องการ. **Fix (TDD +1 = 470 tests):** section ใหม่ใน [prompt-customer.ts](lib/ai-quote/prompt-customer.ts) — ลูกค้าขอราคาโดยยังไม่บอกชนิดงาน → ตอบ template ตรงตัวทุกตัวอักษร ("น้อง PP รบกวนขอรายละเอียดงานหน่อยนะคะ..." + list 4 ประเภท 📄📚📓🪪); รู้ชนิดงานแล้วสเปกไม่ครบ → กฎ "ต้องถามเสมอ" เดิม. Test pin verbatim lines + list block. Gates เขียว Node 22 ครบ (lint warning `_r` slip.ts = pre-existing ไม่เกี่ยว).
 >
 > ## ⏳ Pending (2026-07-18)
-> 0. 🎨 **Smoke template "ขอราคาหน่อย" บน prod (คุณนุ๊ก — หลัง deploy ~2 นาที)**: ออกโหมดเดิม (`ออก`) → เข้าโหมดใหม่ → พิมพ์ `ขอราคาหน่อย` → ต้องได้ template เป๊ะทุกบรรทัด
+> 0. ~~🎨 Smoke template "ขอราคาหน่อย" บน prod~~ ✅ **ผ่าน (same-day, คุณนุ๊ก confirm)** — template pin `f8c3d7e` live + verified บน prod
 > 1. 👀 **เฝ้า hint Messenger กับ traffic จริงต่อ (วันที่ 2)** — เจอแทรกผิดที่ = `AI_QUOTE_MESSENGER_HINT_ENABLED=false` + redeploy แล้วแจ้ง Claude
 > 2. 💡 optional: chip **smoke check Meta subscription** (task_8243d7bb — ต้องตั้ง `FB_PAGE_TOKEN` เป็น gh secret ตอนทำ) — regression net กัน `message_echoes` หลุดเงียบซ้ำรอย 6 วัน
 > 3. 📊 optional: smoke slip-metrics `?channel=` ในเบราว์เซอร์ admin (carryover)
