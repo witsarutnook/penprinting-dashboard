@@ -38,6 +38,9 @@ export interface AiQuote {
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   text: string;
+  /** ISO time the turn was created (quote-logs 2026-07-20). Optional —
+   *  turns persisted before the feature have none; UI shows order only. */
+  ts?: string;
 }
 
 export interface AiQuoteSession {

@@ -4,6 +4,7 @@ import { extractOrderId } from './track-flex';
 import type { ThunderVerifyResponse } from './slip';
 import type { ConversationTurn } from './types';
 import type { RunQuoteTurnOutput, ProducedQuote } from './run';
+import { mkTurn } from './run';
 import type { LineModeRow } from './line-mode';
 import type { EscalationFlexInput } from './escalation-flex';
 import {
@@ -319,14 +320,14 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   // ① ขอคุยกับคน — ไม่เรียก engine (ไม่เผา token กับข้อความที่ขอ hand-off)
   if (detectHumanRequest(text)) {
     await escalate('human',
-      [...conversation, { role: 'user', text }, { role: 'assistant', text: CUSTOMER_REPLY.human }],
+      [...conversation, mkTurn('user', text), mkTurn('assistant', CUSTOMER_REPLY.human)],
       CUSTOMER_REPLY.human);
     return;
   }
   // ④ ลูกค้ายืนยันจะสั่ง (Type B) — ต้องมีราคาแล้วเท่านั้น ไม่งั้นปล่อยให้ engine ตีราคาก่อน
   if (detectOrderIntent(text) && (await ai.countQuotes(sid)) > 0) {
     await escalate('order_intent',
-      [...conversation, { role: 'user', text }, { role: 'assistant', text: CUSTOMER_REPLY.order_intent }],
+      [...conversation, mkTurn('user', text), mkTurn('assistant', CUSTOMER_REPLY.order_intent)],
       CUSTOMER_REPLY.order_intent);
     return;
   }
@@ -355,7 +356,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   // ③ วนหลายรอบไม่ได้ราคา — แทน reply ของ model ด้วยข้อความส่งต่อ
   const rounds = out.quotes.length > 0 ? 0 : mode!.roundsNoQuote + 1;
   if (out.quotes.length === 0 && rounds >= ROUNDS_NO_QUOTE_LIMIT) {
-    const conv: ConversationTurn[] = [...out.newHistory.slice(0, -1), { role: 'assistant', text: CUSTOMER_REPLY.rounds }];
+    const conv: ConversationTurn[] = [...out.newHistory.slice(0, -1), mkTurn('assistant', CUSTOMER_REPLY.rounds)];
     await escalate('rounds', conv, CUSTOMER_REPLY.rounds);
     return;
   }

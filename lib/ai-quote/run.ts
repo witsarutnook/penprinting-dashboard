@@ -41,6 +41,13 @@ export function shouldPersistTurn(hasSession: boolean, escalated: boolean): bool
   return hasSession || escalated;
 }
 
+/** Construct a turn stamped with creation time. Every persist path uses this
+ *  so /quote-logs can show per-message times. NOT sent to the model —
+ *  toMessages() maps role+text only. */
+export function mkTurn(role: 'user' | 'assistant', text: string): ConversationTurn {
+  return { role, text, ts: new Date().toISOString() };
+}
+
 /** Clamp a client-supplied conversation to safe bounds before replaying it to
  *  the model (the client owns history now — don't trust its size/shape). Keeps
  *  the last MAX turns, drops malformed entries, caps each text. */
@@ -49,9 +56,11 @@ export function sanitizeHistory(input: unknown, maxTurns = 40, maxLen = 4000): C
   const turns: ConversationTurn[] = [];
   for (const t of input) {
     if (!t || typeof t !== 'object') continue;
-    const { role, text } = t as { role?: unknown; text?: unknown };
+    const { role, text, ts } = t as { role?: unknown; text?: unknown; ts?: unknown };
     if ((role !== 'user' && role !== 'assistant') || typeof text !== 'string' || !text.trim()) continue;
-    turns.push({ role, text: text.slice(0, maxLen) });
+    const turn: ConversationTurn = { role, text: text.slice(0, maxLen) };
+    if (typeof ts === 'string' && !Number.isNaN(Date.parse(ts))) turn.ts = ts;
+    turns.push(turn);
   }
   return turns.slice(-maxTurns);
 }
@@ -135,8 +144,8 @@ export async function runQuoteTurn(
 
   const newHistory: ConversationTurn[] = [
     ...input.history,
-    { role: 'user', text: input.userMessage },
-    { role: 'assistant', text: reply },
+    mkTurn('user', input.userMessage),
+    mkTurn('assistant', reply),
   ];
   return { reply, quotes, escalated: detectEscalation(quotes.length, reply), newHistory };
 }

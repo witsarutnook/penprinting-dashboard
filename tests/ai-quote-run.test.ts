@@ -1,7 +1,7 @@
 // tests/ai-quote-run.test.ts
 import { describe, it, expect, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { runQuoteTurn, detectEscalation, shouldPersistTurn, sanitizeHistory, stripChatMarkdown } from '@/lib/ai-quote/run';
+import { runQuoteTurn, detectEscalation, shouldPersistTurn, sanitizeHistory, stripChatMarkdown, mkTurn } from '@/lib/ai-quote/run';
 
 // Minimal fake Anthropic client: messages.create returns scripted responses.
 function fakeClient(responses: unknown[]) {
@@ -193,5 +193,24 @@ describe('sanitizeHistory', () => {
     expect(sanitizeHistory('nope')).toEqual([]);
     const many = Array.from({ length: 50 }, (_, i) => ({ role: 'user', text: `m${i}` }));
     expect(sanitizeHistory(many, 40)).toHaveLength(40);
+  });
+});
+
+describe('per-turn timestamp (quote-logs spec 2026-07-20)', () => {
+  it('mkTurn stamps role/text/ts (ISO parseable)', () => {
+    const t = mkTurn('assistant', 'สวัสดีค่ะ');
+    expect(t.role).toBe('assistant');
+    expect(t.text).toBe('สวัสดีค่ะ');
+    expect(typeof t.ts).toBe('string');
+    expect(Number.isNaN(Date.parse(t.ts!))).toBe(false);
+  });
+  it('sanitizeHistory preserves a valid ts', () => {
+    const out = sanitizeHistory([{ role: 'user', text: 'hi', ts: '2026-07-20T10:00:00.000Z' }]);
+    expect(out[0].ts).toBe('2026-07-20T10:00:00.000Z');
+  });
+  it('sanitizeHistory drops an invalid ts but keeps the turn', () => {
+    const out = sanitizeHistory([{ role: 'user', text: 'hi', ts: 'not-a-date' }]);
+    expect(out).toHaveLength(1);
+    expect(out[0].ts).toBeUndefined();
   });
 });

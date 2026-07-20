@@ -28,7 +28,7 @@
 - `ConversationTurn` เพิ่ม `ts?: string` (ISO) — optional เพราะ turn เก่าไม่มี
 - ใส่ ts ณ **จุดสร้าง turn object** ที่ append ลง conversation:
   - **LINE + Messenger: ได้ ts ครบแน่นอน** — server เป็นเจ้าของ history (จุด push user turn + assistant turn ใน webhook-router ก่อน `saveConversation`)
-  - **dashboard: ไม่ stamp ts** — client เป็นเจ้าของ history แบบ stateless replay (persist ตอน saveQuote จาก array ที่ client ส่ง); stamp ตอน save = ทุก turn ได้เวลาเดียวกัน หลอกตา → ปล่อยไม่มี ts, UI แสดงตามลำดับ (รองรับ turn ไม่มี ts อยู่แล้วโดย design)
+  - **dashboard: ได้ ts สำหรับ session-backed turns** (แก้จาก design รอบแรก 2026-07-20 ตอน implement) — stamp เกิดใน `runQuoteTurn.newHistory` ที่ทุก channel ใช้ร่วม และ route persist `out.newHistory` เมื่อ session มีอยู่ ([route.ts:75](../../app/api/ai-quote/route.ts)) = เวลาถูกต้อง ณ ตอนคุยจริง · เฉพาะ pre-session turns ที่ client เก็บเอง (ก่อนกด save lead) ไม่มี ts — UI รองรับ turn ไม่มี ts โดย design อยู่แล้ว
 - **ห้ามส่ง ts เข้า Anthropic API** — mapping `history → msgs` ใน [run.ts](../../lib/ai-quote/run.ts) เลือกเฉพาะ role+text อยู่แล้ว (ยืนยันแล้ว บรรทัด 78) — ไม่ต้องแก้
 - Sanitizer ฝั่ง dashboard route (run.ts ~52-54 `turns.push({role, text})`) ตัด field แปลกทิ้ง — **ต้อง preserve `ts`** (string เท่านั้น, ไม่ valid = drop field ไม่ drop turn)
 
