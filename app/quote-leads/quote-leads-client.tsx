@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { displayDateTime } from '@/lib/jobs';
 import { useConfirm } from '@/components/confirm-provider';
 import { IconTrash } from '@/lib/icons';
@@ -198,6 +199,14 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                         {l.conversation.length > 0 ? (expandedId === l.id ? '▾ ' : '▸ ') : ''}
                         {l.lastMessage || '—'}
                       </button>
+                      {isAdmin && (
+                        <Link
+                          href={`/quote-logs/${l.id}`}
+                          className="text-[11px] text-stone-400 underline hover:text-stone-600"
+                        >
+                          ดูบทสนทนาเต็ม →
+                        </Link>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums text-stone-500">{l.quoteCount}</td>
                     <td className="px-3 py-2.5">
