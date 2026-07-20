@@ -388,6 +388,25 @@ export async function GET() {
     await sql`CREATE INDEX IF NOT EXISTS idx_ai_quotes_session ON ai_quotes(session_id)`;
     applied.push('idx_ai_quotes_session');
 
+    // ─── ai_quote_turn_flags (quote-logs 2026-07-20) ────────────────
+    // Tag "AI ตอบผิด" ระดับข้อความ — snapshot role+text กัน turn_index drift
+    // (dashboard history โดน trim ที่ 40 turns ได้). ลบ session → flags ตามไป.
+    await sql`
+      CREATE TABLE IF NOT EXISTS ai_quote_turn_flags (
+        id            SERIAL PRIMARY KEY,
+        session_id    INTEGER NOT NULL REFERENCES ai_quote_sessions(id) ON DELETE CASCADE,
+        turn_index    INTEGER NOT NULL,
+        turn_role     TEXT NOT NULL,
+        turn_text     TEXT NOT NULL,
+        note          TEXT,
+        flagged_by    TEXT NOT NULL,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(session_id, turn_index)
+      )`;
+    applied.push('ai_quote_turn_flags table');
+    await sql`CREATE INDEX IF NOT EXISTS idx_turn_flags_session ON ai_quote_turn_flags(session_id)`;
+    applied.push('idx_turn_flags_session');
+
     // ─── slip_checks (LINE OA slip-verify metrics) ──────────────────
     // One row per inbound image to the LINE webhook. Lets us measure
     // Thunder quota use: thunder_called=true rows == Thunder API calls.
