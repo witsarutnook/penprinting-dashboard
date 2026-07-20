@@ -486,7 +486,7 @@ export async function GET() {
 
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
-    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'slip_checks', 'customer_registrations', 'ai_quote_line_modes']) {
+    for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'ai_quote_turn_flags', 'slip_checks', 'customer_registrations', 'ai_quote_line_modes']) {
       try {
         const r = await sql.query(`SELECT COUNT(*)::int AS count FROM ${t}`);
         counts[t] = (r.rows[0] as { count?: number })?.count ?? 0;
