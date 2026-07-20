@@ -273,6 +273,11 @@ export const IconBolt = makeIcon(
   'IconBolt',
 );
 
+export const IconMessageSquare = makeIcon(
+  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  'IconMessageSquare',
+);
+
 export const IconSearch = makeIcon(
   <>
     <circle cx="11" cy="11" r="8" />

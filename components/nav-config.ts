@@ -21,6 +21,7 @@ import {
   IconAlertCircle,
   IconSparkles,
   IconClipboardList,
+  IconMessageSquare,
   IconUsers,
 } from '@/lib/icons';
 
@@ -60,6 +61,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/quote-assistant', label: 'ผู้ช่วยตีราคา (AI)', icon: IconSparkles, adminOrSalesOnly: true },
       { href: '/quote-leads', label: 'Lead ใบเสนอราคา', icon: IconClipboardList, adminOrSalesOnly: true },
+      { href: '/quote-logs', label: 'AI Logs', icon: IconMessageSquare, adminOnly: true },
     ],
   },
   {

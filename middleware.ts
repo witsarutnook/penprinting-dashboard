@@ -35,6 +35,7 @@ export const config = {
     '/cancelled/:path*',
     '/quote-assistant/:path*',
     '/quote-leads/:path*',
+    '/quote-logs/:path*',
     '/registrations/:path*',
   ],
 };
