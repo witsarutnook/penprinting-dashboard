@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
-import { toISODate } from '@/lib/jobs';
-import { STAFF, type Dept } from '@/lib/board';
-import { RESTRICTED_TARGETS } from '@/lib/forward';
+import { validateReassign } from '@/lib/forward';
+import { loadJobDeptStaffFromPostgres } from '@/lib/api-postgres';
 import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -22,20 +21,18 @@ export const maxDuration = 30;
  * primary use case is correcting mistakes. `dateIn` is preserved (not
  * bumped) — admin reassign keeps the original received date.
  *
- * Strategy: client passes the source snapshot (already on screen), server
- * skips `loadAllFresh()`. Apps Script `updateJob` is open to all roles —
- * same as WP — so this just proxies through after validating the
- * dept/staff constraint. Net round-trips: 1 instead of 2.
+ * Trust model (M-reassign-client-dept-trust, audit 2026-07-21): the job's
+ * current dept/staff are read from Postgres and feed every guard — a lying
+ * client can no longer make a cross-dept move look same-dept, and the audit
+ * trail records the real prevDept/prevStaff. The update sends ONLY
+ * dept/staff; `updateJobInPostgres` merges over the stored raw snapshot so
+ * name/dates/status/orderId/cowork are preserved server-side (this also
+ * closes the older hole where reassign's payload let non-admin rewrite
+ * fields that /api/jobs/update locks behind admin). Cost: 1 extra read
+ * (~15ms) — the price of not trusting the client.
  *
- * Trust model: client-supplied dept feeds the dept-membership check. If
- * the client lies about dept, the worst case is moving a job to an
- * unintended staff; the session role + RESTRICTED_TARGETS gate remain
- * server-authoritative. updateJob preserves whatever's already in the row
- * except the fields we send, so cowork stays intact even if the client
- * omits it.
- *
- * Request body: { id, targetStaff, targetDept?, srcJob: { name, dept,
- *                  staff, date, dateIn, status, orderId, cowork? } }
+ * Request body: { id, targetStaff, targetDept? } — legacy clients still
+ * send `srcJob`; it is accepted and ignored.
  */
 export async function POST(req: Request) {
   const session = await requireSession();
@@ -46,16 +43,6 @@ export async function POST(req: Request) {
     id?: number | string;
     targetStaff?: string;
     targetDept?: string;
-    srcJob?: {
-      name?: string;
-      dept?: string;
-      staff?: string;
-      date?: string;
-      dateIn?: string;
-      status?: string;
-      orderId?: number | string | null;
-      cowork?: unknown;
-    };
   };
   try {
     body = await req.json();
@@ -70,82 +57,41 @@ export async function POST(req: Request) {
   const targetStaff = String(body.targetStaff || '');
   if (!targetStaff) return NextResponse.json({ error: 'Missing targetStaff' }, { status: 400 });
 
-  const src = body.srcJob;
-  if (!src || !src.dept || !src.staff) {
-    return NextResponse.json({ error: 'Missing srcJob (dept/staff required)' }, { status: 400 });
+  // Server-authoritative source position — live rows only (tombstoned =
+  // already forwarded/shipped/cancelled → same 409 as the update path).
+  let real: { dept: string; staff: string; name: string } | null;
+  try {
+    real = await loadJobDeptStaffFromPostgres(oldId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-
-  const srcDept = String(src.dept) as Dept;
-  // targetDept defaults to srcDept (same-dept reassign — original behavior).
-  const targetDept = (String(body.targetDept || srcDept)) as Dept;
-
-  // No-op guard — must compare BOTH dept and staff (admin cross-dept move
-  // back to the same row is still a no-op).
-  if (targetDept === srcDept && targetStaff === src.staff) {
-    return NextResponse.json({ error: 'ผู้รับงานเดิมแล้ว — ไม่ต้องย้าย' }, { status: 400 });
-  }
-
-  // Cross-dept = admin only.
-  if (targetDept !== srcDept && !isAdmin) {
+  if (!real) {
     return NextResponse.json(
-      { error: 'ย้ายข้ามแผนกสำหรับ admin เท่านั้น' },
-      { status: 403 },
+      { error: 'งานนี้ไม่อยู่ในระบบแล้ว — refresh หน้าแล้วลองใหม่' },
+      { status: 409 },
     );
   }
 
-  // Validate targetStaff exists in targetDept (catches typos + lying clients).
-  const validInDept = STAFF[targetDept]?.some((s) => s.id === targetStaff);
-  if (!validInDept) {
-    return NextResponse.json(
-      { error: `ผู้รับงาน "${targetStaff}" ไม่อยู่ในแผนก "${targetDept}"` },
-      { status: 400 },
-    );
+  // targetDept defaults to the real dept (same-dept reassign — original behavior).
+  const targetDept = String(body.targetDept || real.dept);
+
+  const invalid = validateReassign({
+    realDept: real.dept,
+    realStaff: real.staff,
+    targetDept,
+    targetStaff,
+    isAdmin,
+  });
+  if (invalid) {
+    return NextResponse.json({ error: invalid.error }, { status: invalid.status });
   }
-  if (!isAdmin && RESTRICTED_TARGETS.has(targetStaff)) {
-    return NextResponse.json({ error: `ปลายทาง "${targetStaff}" สำหรับ admin เท่านั้น` }, { status: 403 });
-  }
 
-  // Build the full updateJob payload — preserve EVERYTHING except dept/staff.
-  // Cowork passes through unchanged so collaborators stay attached.
-  // dateIn is intentionally preserved on cross-dept reassign too (per
-  // 2026-05-14 decision: admin reassign should not bump received date).
-  const payload: Record<string, unknown> = {
-    id: oldId,
-    name: String(src.name || ''),
-    date: toISODate(String(src.date || '')),
-    dateIn: toISODate(String(src.dateIn || '')),
-    dept: targetDept,
-    staff: targetStaff,
-    status: String(src.status || 'pending'),
-    orderId: src.orderId ? Number(src.orderId) : '',
-  };
-  if (src.cowork !== undefined) payload.cowork = src.cowork;
-
-  // prevDept/prevStaff are passed for audit trail (cross-dept moves visible).
-  return reassign(oldId, payload, session.role, session.user, srcDept, src.staff);
-}
-
-async function reassign(
-  id: number,
-  payload: Record<string, unknown>,
-  role: string,
-  user: string,
-  prevDept: string,
-  prevStaff: string,
-): Promise<NextResponse> {
   let found = false;
   try {
-    const r = await updateJobInPostgres({
-      id,
-      name: String(payload.name || ''),
-      date: (payload.date as string) ?? null,
-      dateIn: (payload.dateIn as string) ?? null,
-      dept: String(payload.dept || ''),
-      staff: String(payload.staff || ''),
-      status: String(payload.status || 'pending'),
-      orderId: payload.orderId as string | number | null,
-      cowork: payload.cowork,
-    });
+    // Only dept/staff change — updateJobInPostgres merges over the stored
+    // raw snapshot, so every other field is preserved server-side.
+    const r = await updateJobInPostgres({ id: oldId, dept: targetDept, staff: targetStaff });
     found = r.found;
   } catch (err) {
     const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
@@ -161,17 +107,18 @@ async function reassign(
     );
   }
 
+  // prevDept/prevStaff from the server read — cross-dept moves visible in audit.
   await appendAuditToPostgres({
     action: 'updateJob',
-    role,
-    user,
-    targetId: id,
+    role: session.role,
+    user: session.user,
+    targetId: oldId,
     data: {
-      name: String(payload.name || ''),
-      dept: String(payload.dept || ''),
-      staff: String(payload.staff || ''),
-      prevDept,
-      prevStaff,
+      name: real.name,
+      dept: targetDept,
+      staff: targetStaff,
+      prevDept: real.dept,
+      prevStaff: real.staff,
     },
   });
 

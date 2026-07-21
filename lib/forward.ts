@@ -87,6 +87,40 @@ export function getVisibleTargets(fromType: FromType, isAdmin: boolean): Forward
   return all.filter((t) => !RESTRICTED_TARGETS.has(t.value));
 }
 
+export interface ReassignCheck {
+  /** Job's dept as read from Postgres — never client-supplied. */
+  realDept: string;
+  /** Job's staff as read from Postgres — never client-supplied. */
+  realStaff: string;
+  targetDept: string;
+  targetStaff: string;
+  isAdmin: boolean;
+}
+
+/** Server-side validate a reassign (same-dept staff swap for all roles,
+ *  cross-dept for admin only). Takes the REAL dept/staff read from Postgres
+ *  — there is no client-dept parameter, so a lying client cannot make a
+ *  cross-dept move look same-dept (M-reassign-client-dept-trust, audit
+ *  2026-07-21). Returns null if valid, {status, error} otherwise. */
+export function validateReassign(c: ReassignCheck): { status: number; error: string } | null {
+  // No-op guard — must compare BOTH dept and staff (admin cross-dept move
+  // back to the same row is still a no-op).
+  if (c.targetDept === c.realDept && c.targetStaff === c.realStaff) {
+    return { status: 400, error: 'ผู้รับงานเดิมแล้ว — ไม่ต้องย้าย' };
+  }
+  if (c.targetDept !== c.realDept && !c.isAdmin) {
+    return { status: 403, error: 'ย้ายข้ามแผนกสำหรับ admin เท่านั้น' };
+  }
+  const validInDept = STAFF[c.targetDept as Dept]?.some((s) => s.id === c.targetStaff);
+  if (!validInDept) {
+    return { status: 400, error: `ผู้รับงาน "${c.targetStaff}" ไม่อยู่ในแผนก "${c.targetDept}"` };
+  }
+  if (!c.isAdmin && RESTRICTED_TARGETS.has(c.targetStaff)) {
+    return { status: 403, error: `ปลายทาง "${c.targetStaff}" สำหรับ admin เท่านั้น` };
+  }
+  return null;
+}
+
 /** Server-side validate that a (targetDept, targetStaff) pair is reachable from
  *  the given source. Returns null if valid, error string otherwise. */
 export function validateForwardTarget(

@@ -125,6 +125,28 @@ export async function loadOrderFromPostgres(
   };
 }
 
+/** Read a live job's dept/staff for server-authoritative permission checks
+ *  (M-reassign-client-dept-trust, audit 2026-07-21). Tombstoned rows are
+ *  excluded — reassigning a forwarded/shipped/cancelled job is a 409 at the
+ *  caller. Returns null when the job is missing or tombstoned. */
+export async function loadJobDeptStaffFromPostgres(
+  jobId: number | string,
+): Promise<{ dept: string; staff: string; name: string } | null> {
+  if (!isPostgresConfigured()) throw new PostgresReadError('not configured');
+  const id = Number(jobId);
+  if (!Number.isFinite(id) || !id) throw new Error('Invalid job id');
+
+  const r = await sql<{ dept: string | null; staff: string | null; name: string | null }>`
+    SELECT raw->>'dept' AS dept, raw->>'staff' AS staff, raw->>'name' AS name
+    FROM jobs
+    WHERE id = ${id}::bigint AND phase2_deleted_at IS NULL
+    LIMIT 1
+  `;
+  const row = r.rows[0];
+  if (!row) return null;
+  return { dept: String(row.dept ?? ''), staff: String(row.staff ?? ''), name: String(row.name ?? '') };
+}
+
 /** Single-target audit timeline from Postgres. Mirrors getAuditByTarget shape. */
 export async function getAuditByTargetFromPostgres(
   jobId: number | string | null | undefined,
