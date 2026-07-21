@@ -45,6 +45,20 @@ export async function POST(req: Request) {
     if (!r.found) {
       return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
     }
+    if (r.failedJobs.length > 0) {
+      // Partial cascade — the order was NOT flipped (M-cancelorder-partial-
+      // failure, audit 2026-07-21). Retry re-selects only still-active jobs.
+      const ids = r.failedJobs.map((f) => `#${f.id}`).join(', ');
+      return NextResponse.json(
+        {
+          error: `ยกเลิกงานลูกไม่สำเร็จ ${r.failedJobs.length} งาน (${ids}) — ` +
+            `ใบสั่งงานยังไม่ถูกยกเลิก กรุณาลองใหม่`,
+          cancelledJobs: r.cancelledJobs,
+          failedJobs: r.failedJobs,
+        },
+        { status: 502 },
+      );
+    }
     await appendAuditToPostgres({
       action: 'cancelOrder',
       role: session.role,

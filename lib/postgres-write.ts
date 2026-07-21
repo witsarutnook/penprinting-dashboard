@@ -1076,12 +1076,15 @@ export interface CancelOrderInput {
 
 /** Phase 2 cancelOrder — for every active job of the order:
  *  INSERT cancelled + tombstone job (phase2_deleted_at).
- *  Then flip orders.status='cancelled'.
- *  Returns { cancelledJobs: [id...] } so caller can report cascade count. */
+ *  Then flip orders.status='cancelled' — ONLY if every cascade succeeded
+ *  (M-cancelorder-partial-failure, audit 2026-07-21); failures come back
+ *  in `failedJobs` and the caller surfaces a non-ok so the operator
+ *  retries instead of losing an active job under a cancelled order. */
 export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
   ok: true;
   orderId: number;
   cancelledJobs: number[];
+  failedJobs: Array<{ id: number; error: string }>;
   found: boolean;
 }> {
   if (!isPostgresConfigured()) {
@@ -1095,7 +1098,7 @@ export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
   // Verify order exists.
   const orderCur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM orders WHERE id = ${orderIdNum}::bigint LIMIT 1`;
   if (orderCur.rows.length === 0) {
-    return { ok: true, orderId: orderIdNum, cancelledJobs: [], found: false };
+    return { ok: true, orderId: orderIdNum, cancelledJobs: [], failedJobs: [], found: false };
   }
   const oldOrderRaw = (orderCur.rows[0]?.raw && typeof orderCur.rows[0].raw === 'object') ? orderCur.rows[0].raw : {};
 
@@ -1105,11 +1108,17 @@ export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
     WHERE order_id = ${orderIdNum}::bigint AND phase2_deleted_at IS NULL
   `;
 
+  // Cascade — a per-job failure is RECORDED, not swallowed
+  // (M-cancelorder-partial-failure, audit 2026-07-21: catch {} +
+  // unconditional flip stranded active jobs under a cancelled order while
+  // the route reported ok). found:false is NOT a failure — a racer already
+  // moved that job to a terminal table, nothing is left active.
   const cancelledJobIds: number[] = [];
+  const failedJobs: Array<{ id: number; error: string }> = [];
   for (const row of jobs.rows) {
     const jraw = (row.raw && typeof row.raw === 'object') ? row.raw : {};
     try {
-      await cancelJobInPostgres({
+      const jr = await cancelJobInPostgres({
         id: row.id,
         name: String(jraw.name || ''),
         dept: jraw.dept != null ? String(jraw.dept) : undefined,
@@ -1119,13 +1128,20 @@ export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
         cancelledAt: input.cancelledAt,
         orderId: orderIdNum,
       });
-      cancelledJobIds.push(row.id);
-    } catch {
-      // Continue — best-effort cascade. Caller surfaces count via return.
+      if (jr.found) cancelledJobIds.push(row.id);
+    } catch (err) {
+      failedJobs.push({ id: row.id, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  // Flip order status to cancelled.
+  // Flip only when every job reached a terminal state — otherwise the
+  // order stays as-is and the caller surfaces the failure; a retry
+  // re-selects only still-active jobs, cancels the remainder, then flips
+  // (idempotent convergence).
+  if (failedJobs.length > 0) {
+    return { ok: true, orderId: orderIdNum, cancelledJobs: cancelledJobIds, failedJobs, found: true };
+  }
+
   const newOrderRaw = { ...oldOrderRaw, status: 'cancelled' };
   const newOrderRawJson = JSON.stringify(newOrderRaw);
   await sql`
@@ -1135,7 +1151,7 @@ export async function cancelOrderInPostgres(input: CancelOrderInput): Promise<{
     WHERE id = ${orderIdNum}::bigint
   `;
 
-  return { ok: true, orderId: orderIdNum, cancelledJobs: cancelledJobIds, found: true };
+  return { ok: true, orderId: orderIdNum, cancelledJobs: cancelledJobIds, failedJobs, found: true };
 }
 
 // ─── bulkForward (Phase 2 — multi-row tombstone + insert) ─────────

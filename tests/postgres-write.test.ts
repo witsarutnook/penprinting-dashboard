@@ -852,6 +852,61 @@ describe('cancelOrderInPostgres', () => {
     const orderFlip = findCallContaining('UPDATE orders SET');
     expect(orderFlip, 'must flip order status').toBeDefined();
     expect(orderFlip!.text).toMatch(/status\s*=\s*'cancelled'/);
+    expect(r.failedJobs).toEqual([]);
+  });
+
+  // M-cancelorder-partial-failure (audit 2026-07-21): the cascade loop used
+  // to swallow per-job errors (catch {}) and flip the order to 'cancelled'
+  // unconditionally — an active job stayed stranded under a cancelled order
+  // and the route reported ok. Now a failed cascade aborts the flip and is
+  // reported; the SELECT re-fetches only still-active jobs, so a retry
+  // cancels the remainder and then flips (idempotent convergence).
+  it('aborts the status flip and reports failedJobs when a cascade cancel fails', async () => {
+    queueResult({ rows: [{ raw: { id: 202605061, status: 'sent' } }], rowCount: 1 }); // SELECT order
+    queueResult({
+      rows: [
+        { id: 100, raw: { id: 100, name: 'job-A', dept: 'graphic', staff: 'aor' } },
+        { id: 101, raw: { id: 101, name: 'job-B', dept: 'print', staff: 'mo' } },
+      ],
+      rowCount: 2,
+    }); // SELECT jobs
+    queueResult({ rows: [{ raw: { id: 100, name: 'job-A' } }], rowCount: 1 }); // job 100 gate
+    queueResult({ rowCount: 1 });                                             // job 100 INSERT cancelled
+    queueError(new Error('db down'));                                          // job 101 gate → SQL error
+
+    const r = await cancelOrderInPostgres({
+      orderId: 202605061,
+      reason: 'ลูกค้ายกเลิก',
+      cancelledBy: 'admin:nook',
+      cancelledAt: '2026-05-11T...',
+    });
+
+    expect(r.found).toBe(true);
+    expect(r.cancelledJobs).toEqual([100]);
+    expect(r.failedJobs).toEqual([{ id: 101, error: 'db down' }]);
+    const flips = callsContaining('UPDATE orders').filter((c) => c.text.includes("'cancelled'"));
+    expect(flips, 'must NOT flip the order while a job is still active').toHaveLength(0);
+  });
+
+  it('skips a job already cancelled by a racer (gate 0 rows) and still flips', async () => {
+    queueResult({ rows: [{ raw: { id: 202605061, status: 'sent' } }], rowCount: 1 }); // SELECT order
+    queueResult({
+      rows: [{ id: 100, raw: { id: 100, name: 'job-A', dept: 'graphic', staff: 'aor' } }],
+      rowCount: 1,
+    }); // SELECT jobs
+    queueResult({ rows: [], rowCount: 0 }); // gate: racer already terminal → found:false
+    queueResult({ rowCount: 1 });           // UPDATE orders flip
+
+    const r = await cancelOrderInPostgres({
+      orderId: 202605061,
+      reason: 'r', cancelledBy: 'u', cancelledAt: 't',
+    });
+
+    // Already-terminal is not a failure — nothing left active, flip proceeds.
+    expect(r.cancelledJobs).toEqual([]);
+    expect(r.failedJobs).toEqual([]);
+    const flip = callsContaining('UPDATE orders').find((c) => c.text.includes("'cancelled'"));
+    expect(flip, 'flip must proceed when remaining jobs are already terminal').toBeDefined();
   });
 });
 
