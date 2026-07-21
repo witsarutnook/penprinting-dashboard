@@ -164,6 +164,16 @@ describe('buildSystemPrompt — book digital mode (calc 2026-07-20)', () => {
     expect(p).toMatch(/หนังสือ[^\n]*(digital|ดิจิตอล)/);
     expect(p).toContain('200 เล่ม');
   });
+
+  // Calc 2026-07-21: notebooks mirror the book rule exactly (shared
+  // computeBookDigital) — the same mode line must name สมุด so the
+  // assistant doesn't flag a 200-เล่ม notebook quote as abnormal either.
+  it('states that notebooks share the same digital rule (calc 2026-07-21)', () => {
+    expect(p).toMatch(/สมุด[^\n]*(digital|ดิจิตอล)|(digital|ดิจิตอล)[^\n]*สมุด|หนังสือ\/สมุด/);
+    const modeLine = p.split('\n').find((l) => l.includes('digital') && l.includes('200'));
+    expect(modeLine).toBeDefined();
+    expect(modeLine!).toContain('สมุด');
+  });
 });
 
 describe('buildSystemPrompt — prices from THIS turn only (staff twin of a521529)', () => {
