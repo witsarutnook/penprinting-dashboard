@@ -502,3 +502,64 @@ describe('handleInbound — HINT-1 staff-echo + hint suppression', () => {
     expect(replies.length).toBe(1);
   });
 });
+
+describe('handleInbound — append-only conversation persist (M-quotelogs-flag-index-collision)', () => {
+  // Flags key on absolute turn_index (UNIQUE(session_id, turn_index)) and the
+  // snapshot UI matches flags to turns by index. The persisted conversation
+  // must therefore NEVER drop turns from the front — trimming happens only at
+  // replay (sanitizeHistory inside runTurn). Pre-fix the router persisted
+  // out.newHistory = engine-trimmed(40) input + 2 new turns, so past ~40
+  // turns every round shifted indexes by ~2: new flags 409'd against stale
+  // rows, unflag deleted the wrong row, the role guard checked the wrong turn.
+  const fullConv = Array.from({ length: 50 }, (_, i) => ({
+    role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+    text: `turn-${i}`,
+    ts: '2026-07-20T00:00:00.000Z',
+  }));
+
+  function captureAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
+    const saved: { id: number; conv: { role: string; text: string }[] }[] = [];
+    const stub = stubAi({
+      loadSessionForUser: async () => ({ conversation: fullConv, customerName: 'คุณเอ' }),
+      saveConversation: async (id: number, conv: { role: string; text: string }[]) => {
+        saved.push({ id, conv });
+      },
+      ...over,
+    });
+    return { ...stub, saved };
+  }
+
+  it('normal engine turn persists FULL history + user + assistant (not engine-trimmed newHistory)', async () => {
+    const { ai, saved } = captureAi();
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ใบปลิว A5 1000 ใบ'), deps as never);
+
+    expect(saved).toHaveLength(1);
+    const conv = saved[0].conv;
+    expect(conv).toHaveLength(52);
+    expect(conv[0]).toMatchObject({ text: 'turn-0' });
+    expect(conv[50]).toMatchObject({ role: 'user', text: 'ใบปลิว A5 1000 ใบ' });
+    expect(conv[51].role).toBe('assistant');
+    expect(conv[51].text).toContain('ราคา ~5.00');
+  });
+
+  it('② model hand-off persists FULL history + user + model reply', async () => {
+    const { ai, saved } = captureAi({
+      runTurn: async () => ({
+        reply: 'กระดาษพิเศษแบบนี้ขอส่งต่อทีมงานประเมินราคาให้นะคะ',
+        quotes: [],
+        escalated: true,
+        newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'y' }],
+      }),
+    });
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('กระดาษ Art 130 มีมั้ย'), deps as never);
+
+    expect(saved).toHaveLength(1);
+    const conv = saved[0].conv;
+    expect(conv).toHaveLength(52);
+    expect(conv[0]).toMatchObject({ text: 'turn-0' });
+    expect(conv[50]).toMatchObject({ role: 'user', text: 'กระดาษ Art 130 มีมั้ย' });
+    expect(conv[51].text).toContain('ส่งต่อทีมงาน');
+  });
+});

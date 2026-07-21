@@ -346,22 +346,30 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   // soft-state posture as roundsNoQuote; quotes are display-only history).
   for (const q of out.quotes) await ai.saveQuote(sid, q);
 
+  // Persist append-only: FULL stored conversation + this turn's pair — never
+  // out.newHistory, which is built from the engine-trimmed(40) replay input
+  // (M-quotelogs-flag-index-collision, audit 2026-07-21: persisting the
+  // trimmed view shifted turn indexes ~2/round past 40 turns, breaking the
+  // absolute turn_index that ai_quote_turn_flags and the /quote-logs UI key
+  // on). Trim lives ONLY at replay (sanitizeHistory inside runTurn).
+  const persistedConv = (assistantText: string): ConversationTurn[] =>
+    [...conversation, mkTurn('user', text), mkTurn('assistant', assistantText)];
+
   // ② model hand-off (นอกขอบเขต/กระดาษพิเศษ/ขอส่วนลด) — ใช้ข้อความ model เอง.
   // ใช้ detector วลี pin ของ customer flow ไม่ใช่ out.escalated (heuristic ฝั่ง
   // staff กว้างเกิน — disclaimer ลูกค้ามีคำ "ทีมงาน" ทุกใบราคา).
   if (detectCustomerEscalation(out.quotes.length, out.reply)) {
-    await escalate('out_of_scope', out.newHistory, out.reply);
+    await escalate('out_of_scope', persistedConv(out.reply), out.reply);
     return;
   }
   // ③ วนหลายรอบไม่ได้ราคา — แทน reply ของ model ด้วยข้อความส่งต่อ
   const rounds = out.quotes.length > 0 ? 0 : mode!.roundsNoQuote + 1;
   if (out.quotes.length === 0 && rounds >= ROUNDS_NO_QUOTE_LIMIT) {
-    const conv: ConversationTurn[] = [...out.newHistory.slice(0, -1), mkTurn('assistant', CUSTOMER_REPLY.rounds)];
-    await escalate('rounds', conv, CUSTOMER_REPLY.rounds);
+    await escalate('rounds', persistedConv(CUSTOMER_REPLY.rounds), CUSTOMER_REPLY.rounds);
     return;
   }
 
-  await ai.saveConversation(sid, out.newHistory);
+  await ai.saveConversation(sid, persistedConv(out.reply));
   await ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds });
   await deps.adapter.reply(m, out.reply);
 }
