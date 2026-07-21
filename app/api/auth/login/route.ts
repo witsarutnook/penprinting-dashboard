@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_TTL_SECONDS, lookupPassword, signSession } from '@/lib/auth';
+import { peekRateLimit, recordFailure } from '@/lib/rate-limit';
 
 // Auth uses Web Crypto + signed cookies — no Node-only deps. Run on Edge
 // to skip the Vercel Node.js cold start (~150ms saved on the first login
@@ -11,15 +12,20 @@ export const runtime = 'edge';
  *  queryable in Logs tab + persisted ~30d. Sentry breadcrumb when
  *  configured (DSN not always set — see Project-Guidelines Pillar #9).
  *  (Auditor A09-1 finding, 2026-05-12.) */
+function clientIp(req: Request): string {
+  return (
+    req.headers.get('x-real-ip') ||
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown'
+  );
+}
+
 function logAuthEvent(
   req: Request,
   event: 'login-success' | 'login-fail' | 'login-rate-limit' | 'login-invalid-input',
   detail: { user?: string; role?: string; reason?: string } = {},
 ) {
-  const ip =
-    req.headers.get('x-real-ip') ||
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    'unknown';
+  const ip = clientIp(req);
   const ua = req.headers.get('user-agent') || 'unknown';
   // Single-line searchable format. Grep "[auth]" in Vercel Logs to
   // find every login event.
@@ -63,6 +69,20 @@ function logAuthEvent(
 const RATE_COOKIE = 'pp_login_rl';
 const ATTEMPT_WINDOW_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
+
+/** IP failure lockout — first gate, before the cookie window
+ *  (M-login-no-ip-ratelimit, audit 2026-07-21: a client that never sends
+ *  the cookie used to start every request at count 0 = unlimited guessing).
+ *
+ *  Failures-only counting via peekRateLimit + recordFailure — NOT
+ *  checkRateLimit-per-attempt like /track, because the whole print shop
+ *  shares one office NAT IP: successful morning logins must never consume
+ *  the budget. Trade-off accepted: peek-then-record isn't atomic, so a
+ *  concurrent burst can overshoot the limit by its concurrency — fine for
+ *  defense-in-depth (same trade-off as /track Layer-3, and the cookie
+ *  layer still throttles polite clients). Fails open without Upstash KV. */
+const IP_MAX_FAILS = 10;
+const IP_WINDOW_SEC = 15 * 60;
 
 interface RateState {
   count: number;
@@ -110,6 +130,22 @@ function clearRateCookie(res: NextResponse) {
 }
 
 export async function POST(req: Request) {
+  // Layer 1 — IP failure lockout (cookie-independent, survives cookie-clearing).
+  const ip = clientIp(req);
+  const ipGate = await peekRateLimit(`login:ip:${ip}`, {
+    limit: IP_MAX_FAILS,
+    windowSec: IP_WINDOW_SEC,
+  });
+  if (!ipGate.ok) {
+    const retryInMin = Math.max(1, Math.ceil(ipGate.retryIn / 60));
+    logAuthEvent(req, 'login-rate-limit', { reason: `ip lockout, retry in ${ipGate.retryIn}s` });
+    // Same wording as the cookie-layer 429 — no hint which layer tripped.
+    return NextResponse.json(
+      { error: `เข้าระบบผิดพลาดบ่อยเกินไป กรุณารออีก ${retryInMin} นาที` },
+      { status: 429 },
+    );
+  }
+
   const rate = readRate(req);
   if (rate.count >= MAX_ATTEMPTS) {
     const retryInMin = Math.ceil((ATTEMPT_WINDOW_MS - (Date.now() - rate.firstAt)) / 60000);
@@ -148,6 +184,9 @@ export async function POST(req: Request) {
   if (!mapping) {
     const next: RateState = { count: rate.count + 1, firstAt: rate.firstAt };
     logAuthEvent(req, 'login-fail', { reason: `attempt ${next.count}/${MAX_ATTEMPTS}` });
+    // Bump the IP failure counter so peek sees it next attempt. Awaited —
+    // the ~1 RTT only taxes failed attempts, and fails open on KV outage.
+    await recordFailure(`login:ip:${ip}`, { windowSec: IP_WINDOW_SEC });
     const res = NextResponse.json({ error: 'รหัสผ่านไม่ถูกต้อง' }, { status: 401 });
     attachRateCookie(res, next);
     return res;
