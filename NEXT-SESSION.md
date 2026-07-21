@@ -8,7 +8,7 @@
 >
 > ## ⏳ Pending (2026-07-21 PM)
 > 0. 📓 optional: คุณนุ๊ก smoke สมุด digital บนมือถือ — calc UI แท็บสมุด qty ≤200 ต้องขึ้น badge "Digital" + banner · หรือทักน้อง PP "สมุด A5 100 เล่ม เนื้อใน 64 หน้าขาวดำ" → ต้องได้ราคา digital ไม่ทักว่าผิดปกติ (**เปิด session ใหม่** — [[llm-reuses-stale-tool-numbers-from-history]])
-> 1. 📲 **คุณนุ๊กกด db-migrate บน prod** (หลัง Vercel deploy + **รอ post-deploy smoke เขียวก่อน** — [[feedback_db_migrate_stale_deploy]]): เช็ค applied list ต้องมีบรรทัด `CREATE UNIQUE INDEX uq_jobs_active_order` — ถ้าเจอ `SKIPPED uq_jobs_active_order — orders with >1 active job: [...]` แทน = มี duplicate ค้างใน prod → แจ้ง Claude เปิด /data-doctor แก้ก่อน rerun
+> 1. ~~📲 คุณนุ๊กกด db-migrate บน prod~~ ✅ **ทำแล้ว (same-day) — applied list ขึ้น `CREATE UNIQUE INDEX uq_jobs_active_order`** = prod สะอาดไม่มีงานซ้ำค้าง + race gate ทำงานที่ DB แล้ว. **M-jobs-add-guard-race = ปิดสมบูรณ์ end-to-end**
 > 2. 🧪 optional smoke เบาๆ บน prod: reassign งานปกติ 1 ครั้ง (drag ข้าม staff เดิมแผนกเดิม) + cancel order ที่มีงานลูก 1 ใบ — ยืนยัน flow เดิมไม่สะดุด (behavior ต่อ user ควรเหมือนเดิมทุกอย่าง ยกเว้น error cases ซื่อสัตย์ขึ้น)
 > 3. 💡 optional carryover เดิม: chip smoke check Meta subscription (task_8243d7bb) · smoke slip-metrics `?channel=`
 >
