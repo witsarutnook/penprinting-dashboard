@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -129,21 +130,26 @@ export function PendingMutationsProvider({
     pollNow().then(cleanup, cleanup);
   }, [pollNow]);
 
-  return (
-    <Ctx.Provider
-      value={{
-        hiddenIds,
-        pendingInserts,
-        hideJob,
-        unhideJob,
-        addPendingInsert,
-        removePendingInsert,
-        commit,
-      }}
-    >
-      {children}
-    </Ctx.Provider>
+  // Memoized so the context value keeps referential identity across provider
+  // re-renders that don't touch pending state (e.g. every delta poll that
+  // lands data). Every Card subscribes via usePendingMutations(); a fresh
+  // object here would re-render ~all visible cards and defeat the Card memo
+  // comparator. All fns above are useCallback-stable (commit's pollNow dep is
+  // itself stable — useDeltaSync builds it from a []-dep pollOnce).
+  const value = useMemo<PendingState>(
+    () => ({
+      hiddenIds,
+      pendingInserts,
+      hideJob,
+      unhideJob,
+      addPendingInsert,
+      removePendingInsert,
+      commit,
+    }),
+    [hiddenIds, pendingInserts, hideJob, unhideJob, addPendingInsert, removePendingInsert, commit],
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function usePendingMutations(): PendingState {
