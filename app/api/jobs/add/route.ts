@@ -8,7 +8,7 @@ import {
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { mintJobId } from '@/lib/id-allocation';
-import { addJobToPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
+import { addJobToPostgres, appendAuditToPostgres, isActiveJobConflict, PostgresWriteError } from '@/lib/postgres-write';
 import { sql } from '@/lib/postgres';
 
 export const maxDuration = 30;
@@ -50,9 +50,12 @@ export async function POST(req: Request) {
     );
   }
 
-  // Idempotency guard (auditor H1, 2026-05-08): when caller supplies an
-  // orderId, reject if an active (non-cancelled) job already references it —
-  // closes the orphan-recovery double-tap window in the data-audit modal.
+  // Fast-path guard (auditor H1, 2026-05-08): when caller supplies an
+  // orderId, reject early with the existing job id if an active job already
+  // references it — friendly 409 for the common stale-UI case. NOT the race
+  // gate: concurrent adds both pass this read; the partial unique index
+  // uq_jobs_active_order is the real gate (M-jobs-add-guard-race,
+  // 2026-07-21 — its violation maps to the same 409 in addJob below).
   const orderIdNum = body.orderId ? Number(body.orderId) : null;
   if (orderIdNum && Number.isFinite(orderIdNum)) {
     try {
@@ -115,6 +118,17 @@ async function addJob(payload: JobPayload, role: string, user: string): Promise<
       orderId: payload.orderId,
     });
   } catch (err) {
+    if (isActiveJobConflict(err)) {
+      // Lost the race to another add — uq_jobs_active_order rejected the
+      // second active job. Same 409 shape as the fast-path guard above.
+      return NextResponse.json(
+        {
+          error: `ใบสั่งงาน #${payload.orderId} มีงาน active ผูกอยู่แล้ว — ` +
+            `ไม่สามารถสร้างซ้ำได้ ถ้าต้องการเพิ่มงานอีกใบให้ใช้ "ส่งงานต่อ" บนการ์ดเดิม`,
+        },
+        { status: 409 },
+      );
+    }
     const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

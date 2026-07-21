@@ -25,6 +25,7 @@ import {
   cancelOrderInPostgres,
   deleteJobInPostgres,
   restoreJobInPostgres,
+  isActiveJobConflict,
   appendAuditToPostgres,
   addTemplateToPostgres,
   deleteTemplateFromPostgres,
@@ -782,6 +783,27 @@ describe('promoteDraftInPostgres', () => {
 
     const unflip = callsContaining('UPDATE orders').find((c) => c.text.includes("'draft'"));
     expect(unflip, 'must flip the order back to draft so the draft is not lost').toBeDefined();
+  });
+});
+
+describe('isActiveJobConflict', () => {
+  // M-jobs-add-guard-race (audit 2026-07-21): the route's SELECT-then-INSERT
+  // guard can't stop concurrent adds (no common row to lock under READ
+  // COMMITTED) — the partial unique index uq_jobs_active_order is the real
+  // gate. This helper lets routes map its 23505 violation to a friendly 409
+  // instead of a raw 500.
+  it('detects a unique violation on uq_jobs_active_order', () => {
+    const err = new Error(
+      'duplicate key value violates unique constraint "uq_jobs_active_order"',
+    );
+    expect(isActiveJobConflict(err)).toBe(true);
+  });
+
+  it('ignores other errors (different constraint / non-Error)', () => {
+    expect(isActiveJobConflict(new Error('duplicate key value violates unique constraint "jobs_pkey"'))).toBe(false);
+    expect(isActiveJobConflict(new Error('connection refused'))).toBe(false);
+    expect(isActiveJobConflict('uq_jobs_active_order')).toBe(false);
+    expect(isActiveJobConflict(null)).toBe(false);
   });
 });
 

@@ -341,6 +341,16 @@ export async function addJobToPostgres(input: AddJobInput): Promise<{ ok: true; 
   return { ok: true, id: idNum };
 }
 
+/** True when `err` is the partial unique index `uq_jobs_active_order`
+ *  rejecting a second active job for one order (M-jobs-add-guard-race,
+ *  audit 2026-07-21). The index — not the routes' SELECT pre-checks — is
+ *  the race-proof gate (concurrent INSERTs have no common row to lock
+ *  under READ COMMITTED); callers use this to surface a 409 instead of a
+ *  raw 500. */
+export function isActiveJobConflict(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('uq_jobs_active_order');
+}
+
 // ─── createOrder (Phase 2 — atomic 2-table) ──────────────────────
 
 export interface CreateOrderInput {

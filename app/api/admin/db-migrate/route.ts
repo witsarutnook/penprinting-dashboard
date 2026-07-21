@@ -97,6 +97,30 @@ export async function GET() {
     `;
     applied.push('CREATE INDEX idx_jobs_order_id');
 
+    // M-jobs-add-guard-race (audit 2026-07-21): 1 active job per order,
+    // enforced at the DB — the routes' SELECT pre-checks can't stop
+    // concurrent INSERTs (no common row to lock). NULL order_id rows
+    // (standalone jobs) never conflict. Guarded: existing duplicate active
+    // rows would abort CREATE UNIQUE INDEX mid-migration, so scan first
+    // and report instead of dying — fix via /data-doctor then rerun.
+    const activeDupes = await sql<{ order_id: number }>`
+      SELECT order_id FROM jobs
+      WHERE phase2_deleted_at IS NULL AND order_id IS NOT NULL
+      GROUP BY order_id HAVING COUNT(*) > 1
+    `;
+    if (activeDupes.rows.length === 0) {
+      await sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_order
+          ON jobs(order_id) WHERE phase2_deleted_at IS NULL
+      `;
+      applied.push('CREATE UNIQUE INDEX uq_jobs_active_order');
+    } else {
+      const ids = activeDupes.rows.map((r) => r.order_id).join(', ');
+      applied.push(
+        `SKIPPED uq_jobs_active_order — orders with >1 active job: [${ids}] — แก้ด้วย /data-doctor แล้วรัน db-migrate ซ้ำ`,
+      );
+    }
+
     // ─── orders ─────────────────────────────────────────────────
     await sql`
       CREATE TABLE IF NOT EXISTS orders (
