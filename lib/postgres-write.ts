@@ -679,14 +679,20 @@ export interface MoveToShippedInput {
   orderId?: number | string | null;
 }
 
-/** Atomic-ish move of a jobs row → shipped. Postgres is authoritative;
- *  no downstream sync.
- *  1. INSERT row into shipped
- *  2. Mark jobs.phase2_deleted_at=NOW() (soft-delete tombstone — permanent
- *     post-§12; nothing hard-deletes tombstoned rows)
- *  /board reads filter `phase2_deleted_at IS NULL` so the card hides instantly.
- *  Returns { ok, found:false } when the job isn't in Postgres — caller
- *  surfaces a 409 to the client. */
+/** Move a jobs row → shipped. Postgres is authoritative; no downstream sync.
+ *
+ *  Race-safe shape (audit H3, 2026-07-21): the CONDITIONAL tombstone runs
+ *  FIRST and doubles as the gate. Statement-level atomicity means that of two
+ *  racing transitions on the same id (ship∥ship, ship∥forward, ship∥cancel)
+ *  exactly one matches `phase2_deleted_at IS NULL` and wins; the loser gets
+ *  rowCount 0 → found:false → caller surfaces a 409. The old shape (SELECT
+ *  check → INSERT → unconditional tombstone) let both racers pass the check
+ *  and land the job in two terminal tables at once.
+ *
+ *  If the shipped INSERT then fails, the tombstone is compensated
+ *  (un-tombstoned) so the job never silently vanishes with no terminal row.
+ *  /board reads filter `phase2_deleted_at IS NULL` so the card hides
+ *  instantly on the winning path. */
 export async function moveToShippedInPostgres(input: MoveToShippedInput): Promise<{
   ok: true;
   found: boolean;
@@ -699,10 +705,16 @@ export async function moveToShippedInPostgres(input: MoveToShippedInput): Promis
     throw new PostgresWriteError('moveToShipped', 'Invalid job id');
   }
 
-  // Verify the job exists before tombstoning. found:false → caller surfaces
-  // a 409 (matches the setCowork/updateJob row-missing contract).
-  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1`;
-  if (cur.rows.length === 0) {
+  // Gate: conditional tombstone — the single atomic statement that decides
+  // which competing transition wins. 0 rows → missing OR already
+  // shipped/cancelled/deleted/forwarded → found:false (caller surfaces 409,
+  // matching the setCowork/updateJob row-missing contract).
+  const gate = await sql<{ id: number }>`
+    UPDATE jobs SET phase2_deleted_at = NOW()
+    WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL
+    RETURNING id
+  `;
+  if (gate.rows.length === 0) {
     return { ok: true, found: false };
   }
 
@@ -719,16 +731,25 @@ export async function moveToShippedInPostgres(input: MoveToShippedInput): Promis
   };
   const shippedRawJson = JSON.stringify(shippedRaw);
 
-  await sql`
-    INSERT INTO shipped (id, order_id, name, shipped_date, raw)
-    VALUES (${idNum}::bigint, ${orderId}::bigint, ${name}, ${shippedDate}, ${shippedRawJson}::jsonb)
-    ON CONFLICT (id) DO UPDATE SET
-      order_id = EXCLUDED.order_id,
-      name = EXCLUDED.name,
-      shipped_date = EXCLUDED.shipped_date,
-      raw = EXCLUDED.raw
-  `;
-  await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
+  try {
+    await sql`
+      INSERT INTO shipped (id, order_id, name, shipped_date, raw)
+      VALUES (${idNum}::bigint, ${orderId}::bigint, ${name}, ${shippedDate}, ${shippedRawJson}::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        order_id = EXCLUDED.order_id,
+        name = EXCLUDED.name,
+        shipped_date = EXCLUDED.shipped_date,
+        raw = EXCLUDED.raw
+    `;
+  } catch (err) {
+    // Compensate: revive the source row so a failed INSERT doesn't leave the
+    // job invisible with no terminal row. Best-effort — if this also fails
+    // the DB is down and the original error is what matters.
+    try {
+      await sql`UPDATE jobs SET phase2_deleted_at = NULL WHERE id = ${idNum}::bigint`;
+    } catch { /* surface the original error */ }
+    throw err;
+  }
 
   return { ok: true, found: true };
 }
@@ -745,8 +766,10 @@ export interface CancelJobInput {
   orderId?: number | string | null;
 }
 
-/** Phase 2 — atomic-ish move of jobs row → cancelled. Same shape as
- *  moveToShippedInPostgres, different target table. */
+/** Phase 2 — move of jobs row → cancelled. Same race-safe gate-first shape as
+ *  moveToShippedInPostgres (audit H3, 2026-07-21), different target table.
+ *  The gate's RETURNING raw also feeds the dept/staff inheritance — no
+ *  separate SELECT needed. */
 export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
   ok: true;
   found: boolean;
@@ -759,11 +782,17 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
     throw new PostgresWriteError('cancelJob', 'Invalid job id');
   }
 
-  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1`;
-  if (cur.rows.length === 0) {
+  // Gate: conditional tombstone (see moveToShippedInPostgres for the race
+  // rationale). RETURNING raw replaces the old pre-check SELECT.
+  const gate = await sql<{ raw: AnyRow | null }>`
+    UPDATE jobs SET phase2_deleted_at = NOW()
+    WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL
+    RETURNING raw
+  `;
+  if (gate.rows.length === 0) {
     return { ok: true, found: false };
   }
-  const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+  const oldRaw = (gate.rows[0]?.raw && typeof gate.rows[0].raw === 'object') ? gate.rows[0].raw : {};
 
   const orderIdRaw = input.orderId == null || input.orderId === '' ? null : Number(input.orderId);
   const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
@@ -786,23 +815,30 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
   };
   const cancelledRawJson = JSON.stringify(cancelledRaw);
 
-  await sql`
-    INSERT INTO cancelled
-      (id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw)
-    VALUES
-      (${idNum}::bigint, ${orderId}::bigint, ${name}, ${dept}, ${staff},
-       ${cancelledBy}, ${cancelledAt}, ${reason}, ${cancelledRawJson}::jsonb)
-    ON CONFLICT (id) DO UPDATE SET
-      order_id = EXCLUDED.order_id,
-      name = EXCLUDED.name,
-      dept = EXCLUDED.dept,
-      staff = EXCLUDED.staff,
-      cancelled_by = EXCLUDED.cancelled_by,
-      cancelled_at = EXCLUDED.cancelled_at,
-      reason = EXCLUDED.reason,
-      raw = EXCLUDED.raw
-  `;
-  await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
+  try {
+    await sql`
+      INSERT INTO cancelled
+        (id, order_id, name, dept, staff, cancelled_by, cancelled_at, reason, raw)
+      VALUES
+        (${idNum}::bigint, ${orderId}::bigint, ${name}, ${dept}, ${staff},
+         ${cancelledBy}, ${cancelledAt}, ${reason}, ${cancelledRawJson}::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        order_id = EXCLUDED.order_id,
+        name = EXCLUDED.name,
+        dept = EXCLUDED.dept,
+        staff = EXCLUDED.staff,
+        cancelled_by = EXCLUDED.cancelled_by,
+        cancelled_at = EXCLUDED.cancelled_at,
+        reason = EXCLUDED.reason,
+        raw = EXCLUDED.raw
+    `;
+  } catch (err) {
+    // Compensate: revive the source row (see moveToShippedInPostgres).
+    try {
+      await sql`UPDATE jobs SET phase2_deleted_at = NULL WHERE id = ${idNum}::bigint`;
+    } catch { /* surface the original error */ }
+    throw err;
+  }
 
   return { ok: true, found: true };
 }
@@ -812,9 +848,13 @@ export async function cancelJobInPostgres(input: CancelJobInput): Promise<{
 /** Soft-delete a job via the tombstone column. Postgres is authoritative;
  *  no downstream sync. /board reads filter `phase2_deleted_at IS NULL` so
  *  the card disappears instantly. Post-§12 the tombstone is permanent —
- *  nothing hard-deletes tombstoned rows. Returns `found:false` when the
- *  row isn't in Postgres — caller surfaces a 409 (matches the
- *  moveToShipped/cancelJob row-missing contract). */
+ *  nothing hard-deletes tombstoned rows.
+ *
+ *  One CONDITIONAL statement (audit H3, 2026-07-21) — the old SELECT-then-
+ *  unconditional-UPDATE pair was a race window vs. concurrent transitions.
+ *  Returns `found:false` when nothing matched (row missing OR already
+ *  transitioned) — caller surfaces a 409 (matches the moveToShipped/
+ *  cancelJob row-missing contract). */
 export async function deleteJobInPostgres(id: number | string): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('deleteJob', 'POSTGRES_URL env var missing');
@@ -824,15 +864,12 @@ export async function deleteJobInPostgres(id: number | string): Promise<{ ok: tr
     throw new PostgresWriteError('deleteJob', 'Invalid job id');
   }
 
-  const cur = await sql<{ id: number }>`
-    SELECT id FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1
+  const gate = await sql<{ id: number }>`
+    UPDATE jobs SET phase2_deleted_at = NOW()
+    WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL
+    RETURNING id
   `;
-  if (cur.rows.length === 0) {
-    return { ok: true, found: false };
-  }
-
-  await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${idNum}::bigint`;
-  return { ok: true, found: true };
+  return { ok: true, found: gate.rows.length > 0 };
 }
 
 // ─── restoreJob (Phase 2 — cancelled → jobs) ─────────────────────
@@ -1089,11 +1126,16 @@ export interface BulkForwardResult {
 }
 
 /** Phase 2 multi-row forward. For each item:
- *  1. Verify oldId exists in Postgres (not tombstoned). If missing, add to
- *     failed[] — caller can fall back to legacy bulkForward Apps Script for
- *     just those items.
- *  2. INSERT newJob (ON CONFLICT DO NOTHING)
- *  3. Tombstone oldJob (UPDATE jobs SET phase2_deleted_at=NOW())
+ *  1. GATE: conditional tombstone of the source row (audit H2, 2026-07-21) —
+ *     `UPDATE ... WHERE id=oldId AND phase2_deleted_at IS NULL RETURNING id`.
+ *     Statement-level atomicity means that of two racing forwards of the same
+ *     job (double-click / two tabs / retry) exactly ONE wins; the loser sees
+ *     0 rows → failed[] — instead of both inserting distinct new cards (the
+ *     old SELECT-check → INSERT → unconditional-tombstone shape let both
+ *     racers through = one source job became two active forwarded jobs).
+ *  2. INSERT newJob (ON CONFLICT DO NOTHING + collision read-back guard).
+ *     On failure the gate's tombstone is COMPENSATED (un-tombstoned) so a
+ *     failed forward leaves the board unchanged.
  *
  *  Best-effort per item — one item's failure doesn't block the others.
  *  Mirrors the Apps Script `bulkForward` semantic from write.ts. */
@@ -1123,17 +1165,19 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
     }
 
     try {
-      // Row-missing check — Phase 1.7 straggler not yet in mirror.
-      const cur = await sql<{ id: number }>`
-        SELECT id FROM jobs
+      // Gate: conditional tombstone FIRST — the atomic statement that makes
+      // racing forwards mutually exclusive. 0 rows → source missing OR
+      // already forwarded/shipped/cancelled by the racing winner.
+      const gate = await sql<{ id: number }>`
+        UPDATE jobs SET phase2_deleted_at = NOW()
         WHERE id = ${oldIdNum}::bigint AND phase2_deleted_at IS NULL
-        LIMIT 1
+        RETURNING id
       `;
-      if (cur.rows.length === 0) {
+      if (gate.rows.length === 0) {
         failed.push({
           oldId: oldIdNum,
           name,
-          error: 'Job not in Postgres mirror — wait for sync or retry',
+          error: 'Job not found or already forwarded — refresh and retry',
         });
         continue;
       }
@@ -1166,22 +1210,27 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
       };
       const newRawJson = JSON.stringify(newRaw);
 
-      // INSERT new + tombstone old. Two statements, not transactional —
-      // retries hit ON CONFLICT DO NOTHING + the tombstone UPDATE is
-      // idempotent (NOW() override is fine).
-      const jobInsert = await sql<{ id: number }>`
-        INSERT INTO jobs
-          (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
-        VALUES
-          (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
-           ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb)
-        ON CONFLICT (id) DO NOTHING
-        RETURNING id
-      `;
-      // Throw lands in the per-item catch below → collision item goes to
-      // failed[] and the old job is NOT tombstoned (next statement skipped).
-      await assertNoIdCollision('bulkForward', 'jobs', jobInsert, newIdNum, { name, orderId });
-      await sql`UPDATE jobs SET phase2_deleted_at = NOW() WHERE id = ${oldIdNum}::bigint`;
+      // INSERT the new job. On any failure (SQL error / minted-ID collision
+      // caught by the read-back guard) compensate the gate's tombstone so a
+      // failed forward leaves the board unchanged, then rethrow into the
+      // per-item catch → failed[].
+      try {
+        const jobInsert = await sql<{ id: number }>`
+          INSERT INTO jobs
+            (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
+          VALUES
+            (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
+             ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb)
+          ON CONFLICT (id) DO NOTHING
+          RETURNING id
+        `;
+        await assertNoIdCollision('bulkForward', 'jobs', jobInsert, newIdNum, { name, orderId });
+      } catch (err) {
+        try {
+          await sql`UPDATE jobs SET phase2_deleted_at = NULL WHERE id = ${oldIdNum}::bigint`;
+        } catch { /* surface the original error */ }
+        throw err;
+      }
 
       succeeded.push({ oldId: oldIdNum, newId: newIdNum, name });
     } catch (err) {

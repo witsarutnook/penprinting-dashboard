@@ -29,9 +29,13 @@ export interface SqlResult {
   rowCount?: number;
 }
 
+/** Queue entry — either a result to resolve with, or an error to reject with
+ *  (via queueError — lets tests exercise compensation/rollback paths). */
+type QueueEntry = { result: SqlResult } | { throwErr: unknown };
+
 const state = {
   calls: [] as SqlCall[],
-  queue: [] as SqlResult[],
+  queue: [] as QueueEntry[],
   configured: true,
 };
 
@@ -44,6 +48,13 @@ interface SqlMock {
   query(text: string, params?: unknown[]): Promise<SqlResult>;
 }
 
+function nextResult(): Promise<SqlResult> {
+  const entry = state.queue.shift();
+  if (!entry) return Promise.resolve({ rows: [], rowCount: 0 });
+  if ('throwErr' in entry) return Promise.reject(entry.throwErr);
+  return Promise.resolve(entry.result);
+}
+
 function makeSqlMock(): SqlMock {
   const tag = (strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult> => {
     let text = strings[0] || '';
@@ -51,13 +62,11 @@ function makeSqlMock(): SqlMock {
       text += `$${i + 1}` + (strings[i + 1] || '');
     }
     state.calls.push({ type: 'tag', text: normaliseSql(text), values });
-    const result = state.queue.shift() || { rows: [], rowCount: 0 };
-    return Promise.resolve(result);
+    return nextResult();
   };
   const query = (text: string, params: unknown[] = []): Promise<SqlResult> => {
     state.calls.push({ type: 'query', text: normaliseSql(text), values: params });
-    const result = state.queue.shift() || { rows: [], rowCount: 0 };
-    return Promise.resolve(result);
+    return nextResult();
   };
   return Object.assign(tag, { query });
 }
@@ -83,7 +92,13 @@ export function resetMockPostgres(): void {
 }
 
 export function queueResult(r: SqlResult): void {
-  state.queue.push(r);
+  state.queue.push({ result: r });
+}
+
+/** Make the NEXT sql call reject with `err` — for testing compensation /
+ *  rollback paths (e.g. tombstone-gate succeeded but terminal INSERT failed). */
+export function queueError(err: unknown): void {
+  state.queue.push({ throwErr: err });
 }
 
 export function setConfigured(b: boolean): void {

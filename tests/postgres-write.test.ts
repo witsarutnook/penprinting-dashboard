@@ -3,6 +3,7 @@ import {
   sqlCalls,
   resetMockPostgres,
   queueResult,
+  queueError,
   setConfigured,
   callsContaining,
   findCallContaining,
@@ -486,34 +487,54 @@ describe('findDuplicateOrdersInPostgres', () => {
 describe('moveToShippedInPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
-  it('returns found:false when job missing — no INSERT, no tombstone', async () => {
-    queueResult({ rows: [], rowCount: 0 });
+  it('returns found:false when gate matches nothing (missing OR already transitioned) — no INSERT', async () => {
+    queueResult({ rows: [], rowCount: 0 }); // conditional tombstone matches 0 rows
     const r = await moveToShippedInPostgres({
       id: 999, name: 'ghost', shippedDate: '11/05/2026',
     });
     expect(r).toEqual({ ok: true, found: false });
-    expect(callsContaining('INSERT INTO shipped'), 'must not insert when job missing').toHaveLength(0);
-    expect(callsContaining('UPDATE jobs SET phase2_deleted_at'), 'must not tombstone missing job').toHaveLength(0);
+    // The gate IS the conditional tombstone — it ran but matched nothing.
+    const gates = callsContaining('UPDATE jobs SET phase2_deleted_at = NOW()');
+    expect(gates, 'gate must be a single conditional tombstone').toHaveLength(1);
+    expect(gates[0].text, 'gate must be conditional (race mutual-exclusion)').toContain('phase2_deleted_at IS NULL');
+    expect(callsContaining('INSERT INTO shipped'), 'must not insert when gate lost').toHaveLength(0);
   });
 
-  it('INSERTs shipped + tombstones jobs row (atomic-ish 2-step)', async () => {
-    queueResult({ rows: [{ raw: { id: 437, dept: 'post', staff: 'top' } }], rowCount: 1 }); // SELECT
+  it('gates via conditional tombstone FIRST, then INSERTs shipped (audit H3 2026-07-21)', async () => {
+    queueResult({ rows: [{ id: 437 }], rowCount: 1 }); // gate UPDATE ... RETURNING id
     queueResult({ rowCount: 1 }); // INSERT shipped
-    queueResult({ rowCount: 1 }); // UPDATE jobs
 
     const r = await moveToShippedInPostgres({
       id: 437, name: 'ใบยืมขวดลัง', shippedDate: '11/05/2026', orderId: 202605061,
     });
     expect(r).toEqual({ ok: true, found: true });
 
-    const shippedInsert = findCallContaining('INSERT INTO shipped');
-    expect(shippedInsert, 'must INSERT into shipped').toBeDefined();
-    expect(shippedInsert!.text, 'shipped INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
-    expect(shippedInsert!.text, 'shipped INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
+    // Order pin: the tombstone gate must run BEFORE the terminal-table INSERT —
+    // that single conditional statement is what makes racing transitions
+    // (ship∥ship, ship∥forward, ship∥cancel) mutually exclusive.
+    const gateIdx = sqlCalls.findIndex((c) => c.text.includes('UPDATE jobs SET phase2_deleted_at = NOW()'));
+    const insertIdx = sqlCalls.findIndex((c) => c.text.includes('INSERT INTO shipped'));
+    expect(gateIdx, 'gate must exist').toBeGreaterThanOrEqual(0);
+    expect(insertIdx, 'shipped INSERT must exist').toBeGreaterThan(gateIdx);
+    expect(sqlCalls[gateIdx].text).toContain('phase2_deleted_at IS NULL');
+    expect(sqlCalls[gateIdx].text).toContain('RETURNING');
 
-    const tombstone = findCallContaining('UPDATE jobs SET phase2_deleted_at');
-    expect(tombstone, 'jobs row must be tombstoned via phase2_deleted_at').toBeDefined();
-    expect(tombstone!.text).toContain('NOW()');
+    const shippedInsert = sqlCalls[insertIdx];
+    expect(shippedInsert.text, 'shipped INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
+    expect(shippedInsert.text, 'shipped INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
+  });
+
+  it('compensates (un-tombstones) and rethrows when the shipped INSERT fails after the gate', async () => {
+    queueResult({ rows: [{ id: 437 }], rowCount: 1 }); // gate wins
+    queueError(new Error('insert exploded'));           // INSERT shipped fails
+    queueResult({ rowCount: 1 });                       // compensating un-tombstone
+
+    await expect(
+      moveToShippedInPostgres({ id: 437, name: 'x', shippedDate: '11/05/2026' }),
+    ).rejects.toThrow('insert exploded');
+
+    const revive = findCallContaining('phase2_deleted_at = NULL');
+    expect(revive, 'failed INSERT must revive the source row (no vanishing job)').toBeDefined();
   });
 
   it('throws on invalid id', async () => {
@@ -526,22 +547,24 @@ describe('moveToShippedInPostgres', () => {
 describe('cancelJobInPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
-  it('returns found:false when job missing', async () => {
-    queueResult({ rows: [], rowCount: 0 });
+  it('returns found:false when gate matches nothing (missing OR already transitioned)', async () => {
+    queueResult({ rows: [], rowCount: 0 }); // conditional tombstone matches 0 rows
     const r = await cancelJobInPostgres({
       id: 999, name: 'x', reason: 'r', cancelledBy: 'u', cancelledAt: 't',
     });
     expect(r).toEqual({ ok: true, found: false });
     expect(callsContaining('INSERT INTO cancelled')).toHaveLength(0);
+    const gates = callsContaining('UPDATE jobs SET phase2_deleted_at = NOW()');
+    expect(gates).toHaveLength(1);
+    expect(gates[0].text, 'gate must be conditional').toContain('phase2_deleted_at IS NULL');
   });
 
-  it('INSERTs cancelled + tombstones jobs row, inherits dept/staff from raw', async () => {
+  it('gates via conditional tombstone (RETURNING raw) then INSERTs cancelled, inherits dept/staff from raw', async () => {
     queueResult({
       rows: [{ raw: { id: 478, dept: 'graphic', staff: 'aor' } }],
       rowCount: 1,
-    });
+    }); // gate UPDATE ... RETURNING raw
     queueResult({ rowCount: 1 }); // INSERT cancelled
-    queueResult({ rowCount: 1 }); // UPDATE jobs
 
     const r = await cancelJobInPostgres({
       id: 478,
@@ -552,28 +575,43 @@ describe('cancelJobInPostgres', () => {
     });
     expect(r).toEqual({ ok: true, found: true });
 
-    const cancelInsert = findCallContaining('INSERT INTO cancelled');
-    expect(cancelInsert, 'must INSERT into cancelled').toBeDefined();
-    expect(cancelInsert!.text, 'cancelled INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
-    expect(cancelInsert!.text, 'cancelled INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
-    // dept/staff inherited from raw (input didn't provide them)
-    const dept = cancelInsert!.values.find((v) => v === 'graphic');
-    expect(dept, 'dept must inherit from raw when not in input').toBe('graphic');
+    // Gate before INSERT (race mutual-exclusion) + RETURNING raw feeds the
+    // dept/staff inheritance without a separate SELECT.
+    const gateIdx = sqlCalls.findIndex((c) => c.text.includes('UPDATE jobs SET phase2_deleted_at = NOW()'));
+    const insertIdx = sqlCalls.findIndex((c) => c.text.includes('INSERT INTO cancelled'));
+    expect(gateIdx).toBeGreaterThanOrEqual(0);
+    expect(insertIdx).toBeGreaterThan(gateIdx);
+    expect(sqlCalls[gateIdx].text).toContain('phase2_deleted_at IS NULL');
+    expect(sqlCalls[gateIdx].text).toContain('RETURNING raw');
 
-    const tombstone = findCallContaining('UPDATE jobs SET phase2_deleted_at');
-    expect(tombstone).toBeDefined();
+    const cancelInsert = sqlCalls[insertIdx];
+    expect(cancelInsert.text, 'cancelled INSERT must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
+    expect(cancelInsert.text, 'cancelled INSERT must be idempotent').toContain('ON CONFLICT (id) DO UPDATE');
+    // dept/staff inherited from raw (input didn't provide them)
+    const dept = cancelInsert.values.find((v) => v === 'graphic');
+    expect(dept, 'dept must inherit from raw when not in input').toBe('graphic');
+  });
+
+  it('compensates (un-tombstones) and rethrows when the cancelled INSERT fails after the gate', async () => {
+    queueResult({ rows: [{ raw: { id: 478 } }], rowCount: 1 }); // gate wins
+    queueError(new Error('insert exploded'));                    // INSERT cancelled fails
+    queueResult({ rowCount: 1 });                                // compensating un-tombstone
+
+    await expect(
+      cancelJobInPostgres({ id: 478, name: 'x', reason: 'r', cancelledBy: 'u', cancelledAt: 't' }),
+    ).rejects.toThrow('insert exploded');
+    expect(findCallContaining('phase2_deleted_at = NULL'), 'must revive source row').toBeDefined();
   });
 });
 
 describe('bulkForwardInPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
-  it('row-missing item goes to failed[] — does NOT block other items', async () => {
-    // Item 1: row exists (SELECT returns row, then INSERT + UPDATE)
+  it('gate-lost item (missing OR already forwarded — double-click loser) goes to failed[] — does NOT block other items', async () => {
+    // Item 1: gate wins (conditional tombstone RETURNING id), then INSERT new
     queueResult({ rows: [{ id: 100 }], rowCount: 1 });
     queueResult({ rows: [{ id: 500 }], rowCount: 1 }); // INSERT new
-    queueResult({ rowCount: 1 }); // UPDATE old (tombstone)
-    // Item 2: row missing (SELECT empty)
+    // Item 2: gate matches 0 rows (missing or already tombstoned by the racing winner)
     queueResult({ rows: [], rowCount: 0 });
 
     const r = await bulkForwardInPostgres([
@@ -584,25 +622,45 @@ describe('bulkForwardInPostgres', () => {
     expect(r.succeeded[0]).toMatchObject({ oldId: 100, newId: 500, name: 'job-A' });
     expect(r.failed).toHaveLength(1);
     expect(r.failed[0].oldId).toBe(999);
-    expect(r.failed[0].error).toMatch(/not in Postgres mirror/i);
+    expect(r.failed[0].error).toMatch(/not found or already forwarded/i);
+    // The loser must NOT have inserted a second card (the H2 double-forward bug).
+    expect(callsContaining('INSERT INTO jobs')).toHaveLength(1);
   });
 
-  it('successful item INSERTs new + tombstones old', async () => {
-    queueResult({ rows: [{ id: 200 }], rowCount: 1 });
-    queueResult({ rows: [{ id: 700 }], rowCount: 1 });
-    queueResult({ rowCount: 1 });
+  it('successful item gates old via conditional tombstone FIRST, then INSERTs new (audit H2 2026-07-21)', async () => {
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 }); // gate
+    queueResult({ rows: [{ id: 700 }], rowCount: 1 }); // INSERT new
 
     await bulkForwardInPostgres([
       { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top', orderId: 202605061 } },
     ]);
 
-    const inserts = callsContaining('INSERT INTO jobs');
-    expect(inserts, 'must INSERT new jobs row').toHaveLength(1);
-    expect(inserts[0].text, 'new job must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
-    expect(inserts[0].text, 'INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
+    // Order pin: conditional tombstone (the race gate) BEFORE the new-job INSERT.
+    const gateIdx = sqlCalls.findIndex((c) => c.text.includes('UPDATE jobs SET phase2_deleted_at = NOW()'));
+    const insertIdx = sqlCalls.findIndex((c) => c.text.includes('INSERT INTO jobs'));
+    expect(gateIdx, 'gate must exist').toBeGreaterThanOrEqual(0);
+    expect(insertIdx, 'INSERT must come after the gate').toBeGreaterThan(gateIdx);
+    expect(sqlCalls[gateIdx].text).toContain('phase2_deleted_at IS NULL');
+    expect(sqlCalls[gateIdx].text).toContain('RETURNING');
 
-    const tombstones = callsContaining('UPDATE jobs SET phase2_deleted_at');
-    expect(tombstones, 'old job must be tombstoned').toHaveLength(1);
+    const insert = sqlCalls[insertIdx];
+    expect(insert.text, 'new job must not write phase2_dirty_at').not.toContain('phase2_dirty_at');
+    expect(insert.text, 'INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
+  });
+
+  it('compensates (un-tombstones old) when the new-job INSERT fails after the gate', async () => {
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 }); // gate wins
+    queueError(new Error('insert exploded'));           // INSERT new fails
+    queueResult({ rowCount: 1 });                       // compensating un-tombstone
+
+    const r = await bulkForwardInPostgres([
+      { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top' } },
+    ]);
+    expect(r.succeeded).toHaveLength(0);
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].error).toMatch(/insert exploded/);
+    // Failed forward must leave the board unchanged — source row revived.
+    expect(findCallContaining('phase2_deleted_at = NULL'), 'must revive old job').toBeDefined();
   });
 
   it('per-item invalid input goes to failed without throwing', async () => {
@@ -707,10 +765,9 @@ describe('cancelOrderInPostgres', () => {
       ],
       rowCount: 2,
     }); // SELECT jobs
-    // For each job in cascade: SELECT raw + INSERT cancelled + UPDATE jobs tombstone (= 3 calls × 2 jobs)
+    // For each job in cascade: gate (conditional tombstone RETURNING raw) + INSERT cancelled (= 2 calls × 2 jobs)
     for (let i = 0; i < 2; i++) {
       queueResult({ rows: [{ raw: { id: 100 + i, name: 'job-' + i } }], rowCount: 1 });
-      queueResult({ rowCount: 1 });
       queueResult({ rowCount: 1 });
     }
     queueResult({ rowCount: 1 }); // UPDATE orders status
@@ -915,23 +972,26 @@ describe('deleteJobInPostgres', () => {
     expect(sqlCalls).toHaveLength(0);
   });
 
-  it('returns found:false WITHOUT issuing UPDATE when row missing in Postgres', async () => {
-    queueResult({ rows: [], rowCount: 0 });  // SELECT returns nothing
+  it('returns found:false when the single conditional UPDATE matches nothing', async () => {
+    queueResult({ rows: [], rowCount: 0 });  // conditional tombstone matches 0 rows
     const r = await deleteJobInPostgres(999);
     expect(r).toEqual({ ok: true, found: false });
-    // Guards the route's fall-through-to-legacy contract for stragglers.
-    expect(callsContaining('SELECT id FROM jobs')).toHaveLength(1);
-    expect(callsContaining('UPDATE jobs')).toHaveLength(0);
+    // One atomic statement — no separate SELECT (audit H3 2026-07-21: the
+    // old SELECT-then-UPDATE pair was a race window).
+    expect(sqlCalls).toHaveLength(1);
+    expect(sqlCalls[0].text).toContain('UPDATE jobs SET phase2_deleted_at = NOW()');
+    expect(sqlCalls[0].text).toContain('phase2_deleted_at IS NULL');
   });
 
-  it('tombstones the row (phase2_deleted_at = NOW()) when it exists', async () => {
-    queueResult({ rows: [{ id: 42 }], rowCount: 1 });  // SELECT
-    queueResult({ rowCount: 1 });  // UPDATE
+  it('tombstones the row via one conditional UPDATE when it exists', async () => {
+    queueResult({ rows: [{ id: 42 }], rowCount: 1 });  // conditional UPDATE ... RETURNING id
     const r = await deleteJobInPostgres(42);
     expect(r).toEqual({ ok: true, found: true });
-    const update = findCallContaining('UPDATE jobs');
-    expect(update).toBeDefined();
-    expect(update!.text).toContain('phase2_deleted_at = NOW()');
+    expect(sqlCalls).toHaveLength(1);
+    const update = sqlCalls[0];
+    expect(update.text).toContain('phase2_deleted_at = NOW()');
+    expect(update.text).toContain('phase2_deleted_at IS NULL');
+    expect(update.text).toContain('RETURNING');
   });
 });
 
@@ -1047,17 +1107,19 @@ describe('ID-collision guard — post-insert read-back (§6/R5)', () => {
     ).rejects.toThrow(/ID collision on job 510/);
   });
 
-  it('bulkForward routes a colliding new-job ID to failed[] and skips tombstoning the old job', async () => {
-    queueResult({ rows: [{ id: 200 }], rowCount: 1 });           // old job SELECT exists
+  it('bulkForward routes a colliding new-job ID to failed[] and revives the old job (compensation)', async () => {
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 });           // gate: old job tombstoned
     queueResult({ rows: [], rowCount: 0 });                      // new job INSERT → conflict
     queueResult({ rows: [{ name: 'unrelated', order_id: 7 }] }); // read-back → mismatch
+    queueResult({ rowCount: 1 });                                // compensating un-tombstone
     const r = await bulkForwardInPostgres([
       { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top', orderId: 202605061 } },
     ]);
     expect(r.succeeded).toHaveLength(0);
     expect(r.failed).toHaveLength(1);
     expect(r.failed[0].error).toMatch(/ID collision on job 700/);
-    // a failed forward must NOT tombstone the old job
-    expect(callsContaining('UPDATE jobs SET phase2_deleted_at')).toHaveLength(0);
+    // a failed forward must leave the board unchanged — the gate-first order
+    // means the old job WAS tombstoned, so compensation must revive it.
+    expect(findCallContaining('phase2_deleted_at = NULL'), 'must revive old job after collision').toBeDefined();
   });
 });
