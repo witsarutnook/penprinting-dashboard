@@ -9,9 +9,7 @@
 > 2. 🟡 **Medium 7 ตัวจาก audit ยัง open** (ดู AUDIT-BACKLOG section "Audit round 2026-07-21 — Medium") — ตัวเด่น: reassign เชื่อ dept จาก client (permission gap) · login ไม่มี IP rate-limit · quote-logs flag index ชนใต้ trim-40 (กระทบเมื่อแชตลูกค้าเกิน ~40 turns) · LINE `/track` ไม่มี PIN (รอคุณนุ๊กตัดสินว่า accepted WP-parity หรือแก้)
 > 3. 💡 optional carryover เดิม: chip smoke check Meta subscription (task_8243d7bb) · smoke slip-metrics `?channel=`
 >
-> **[MEMORY-QUEUE]** (session เครื่อง Mac ถัดไป save เข้า memory จริงแล้วลบ tag):
-> - `context-provider-value-memo-audit` — React context provider ที่ส่ง value เป็น object literal สดจะล้ม memo ของทุก subscriber ทั้ง subtree เงียบๆ; เมื่อ codebase มี provider ที่ memoize ถูกอยู่แล้ว ให้ audit **ทุก sibling provider** ด้วย (เคสนี้ Undo/BulkMode ถูก แต่ PendingMutations หลุดตัวเดียว = การ์ดทั้งบอร์ด re-render ทุก poll โดยไม่มีใครเห็นจาก UI). ก่อนแก้ต้อง verify stability chain ของ deps ทั้งเส้นถึง parent ไม่งั้น memo ไม่ hold จริง.
-> - `conditional-gate-first-transition` — state transition แบบ multi-statement บน autocommit `sql` (ไม่มี transaction layer): ทำ statement ที่มีเงื่อนไข state-precondition (`UPDATE ... WHERE <precondition> RETURNING ...`) เป็น **statement แรก** = gate; atomicity ระดับ statement ให้ mutual exclusion ระหว่าง racing requests โดยไม่ต้องเพิ่ม pooled-client transactions + เขียน compensation (undo gate) เมื่อ statement ถัดไปล้ม. Pin ด้วย test: ลำดับ gate-ก่อน-INSERT + เงื่อนไข WHERE + compensation path (mock ต้องยิง reject ได้ — `queueError`).
+> ~~[MEMORY-QUEUE]~~ ✅ **saved 2026-07-21 (Mac session)** — [[feedback_context_provider_value_memo]] (`context-provider-value-memo-audit`) + [[feedback_conditional_gate_first_transition]] (`conditional-gate-first-transition`) เข้า memory จริง + MEMORY.md index แล้ว
 >
 > ---
 >
