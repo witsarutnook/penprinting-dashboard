@@ -133,6 +133,15 @@ export async function POST(req: Request) {
         { status: 409 },
       );
     }
+    if (r.alreadyPromoted) {
+      // Lost a double-submit race (or retried after success) — honest 409
+      // instead of a second initial job, same semantics as forward/ship
+      // (audit H2/H3 2026-07-21).
+      return NextResponse.json(
+        { error: 'ใบสั่งนี้ถูกส่งเข้าระบบแล้ว — refresh หน้าแล้วลองใหม่' },
+        { status: 409 },
+      );
+    }
     await appendAuditToPostgres({
       action: 'promoteDraft',
       role: session.role,

@@ -952,13 +952,26 @@ export interface PromoteDraftInput {
   };
 }
 
-/** Phase 2 promoteDraft — INSERT new job + flip orders.status='sent'.
- *  Verifies order exists + status='draft' before mutating. */
+/** Phase 2 promoteDraft — race-safe gate-first shape (audit
+ *  M-promote-draft-double-submit, 2026-07-21). The draft→sent flip is the
+ *  CONDITIONAL first statement (`WHERE status = 'draft'`): of N racing
+ *  promotes exactly one wins the flip; losers get 0 rows → probe whether
+ *  the order exists at all → `alreadyPromoted` (caller surfaces 409) or
+ *  `found:false`. The old shape (SELECT check → INSERT job → unconditional
+ *  flip) let two racers pass the route's job-existence read and mint two
+ *  initial jobs for one order.
+ *
+ *  If the job INSERT then fails (SQL error / ID collision), the flip is
+ *  compensated back to 'draft' so the draft never silently becomes a
+ *  jobless 'sent' order. Note the gate now REQUIRES status='draft' — the
+ *  pre-2026-07-21 lenient "let caller decide" semantics are gone (the only
+ *  caller, /api/orders/promote-draft, already enforced draft-only). */
 export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<{
   ok: true;
   orderId: number;
   jobId: number;
   found: boolean;
+  alreadyPromoted: boolean;
 }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('promoteDraft', 'POSTGRES_URL env var missing');
@@ -972,16 +985,6 @@ export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<
     throw new PostgresWriteError('promoteDraft', 'Invalid jobId');
   }
 
-  // Verify order exists (don't require status=draft — let caller decide;
-  // matches Apps Script lenient semantics).
-  const cur = await sql<{ raw: AnyRow | null; status: string | null }>`
-    SELECT raw, status FROM orders WHERE id = ${orderIdNum}::bigint LIMIT 1
-  `;
-  if (cur.rows.length === 0) {
-    return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: false };
-  }
-  const oldOrderRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
-
   const j = input.job;
   const jName = String(j.name || '').trim();
   if (!jName) throw new PostgresWriteError('promoteDraft', 'Missing job name');
@@ -989,6 +992,27 @@ export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<
   const jDateIn = j.dateIn != null ? String(j.dateIn) : null;
   const jStaff = String(j.staff);
   const jDept = String(j.dept);
+
+  // Gate: conditional draft→sent flip — the single atomic statement that
+  // decides which competing promote wins. raw patched in-SQL so the gate
+  // stays one statement (no read-modify-write window).
+  const gate = await sql<{ id: number }>`
+    UPDATE orders SET
+      status = 'sent',
+      raw = COALESCE(raw, '{}'::jsonb) || '{"status":"sent"}'::jsonb
+    WHERE id = ${orderIdNum}::bigint AND status = 'draft'
+    RETURNING id
+  `;
+  if (gate.rows.length === 0) {
+    // Lost the race, or the order never existed — probe to tell the two apart.
+    const probe = await sql<{ status: string | null }>`
+      SELECT status FROM orders WHERE id = ${orderIdNum}::bigint LIMIT 1
+    `;
+    if (probe.rows.length === 0) {
+      return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: false, alreadyPromoted: false };
+    }
+    return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: true, alreadyPromoted: true };
+  }
 
   const jobRaw = {
     id: jobIdNum,
@@ -1002,28 +1026,33 @@ export async function promoteDraftInPostgres(input: PromoteDraftInput): Promise<
   };
   const jobRawJson = JSON.stringify(jobRaw);
 
-  const jobInsert = await sql<{ id: number }>`
-    INSERT INTO jobs
-      (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
-    VALUES
-      (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
-       ${jStaff}, ${jDept}, 'pending', ${null}::jsonb, ${jobRawJson}::jsonb)
-    ON CONFLICT (id) DO NOTHING
-    RETURNING id
-  `;
-  await assertNoIdCollision('promoteDraft', 'jobs', jobInsert, jobIdNum, { name: jName, orderId: orderIdNum });
+  try {
+    const jobInsert = await sql<{ id: number }>`
+      INSERT INTO jobs
+        (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
+      VALUES
+        (${jobIdNum}::bigint, ${orderIdNum}::bigint, ${jName}, ${jDate}, ${jDateIn},
+         ${jStaff}, ${jDept}, 'pending', ${null}::jsonb, ${jobRawJson}::jsonb)
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id
+    `;
+    await assertNoIdCollision('promoteDraft', 'jobs', jobInsert, jobIdNum, { name: jName, orderId: orderIdNum });
+  } catch (err) {
+    // Compensate: un-flip so the draft isn't silently promoted with no job.
+    // Best-effort — if this also fails the DB is down and the original
+    // error is what matters.
+    try {
+      await sql`
+        UPDATE orders SET
+          status = 'draft',
+          raw = COALESCE(raw, '{}'::jsonb) || '{"status":"draft"}'::jsonb
+        WHERE id = ${orderIdNum}::bigint
+      `;
+    } catch { /* surface the original error */ }
+    throw err;
+  }
 
-  // Flip order status draft→sent.
-  const newOrderRaw = { ...oldOrderRaw, status: 'sent' };
-  const newOrderRawJson = JSON.stringify(newOrderRaw);
-  await sql`
-    UPDATE orders SET
-      status = 'sent',
-      raw = ${newOrderRawJson}::jsonb
-    WHERE id = ${orderIdNum}::bigint
-  `;
-
-  return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: true };
+  return { ok: true, orderId: orderIdNum, jobId: jobIdNum, found: true, alreadyPromoted: false };
 }
 
 // ─── cancelOrder (cascade-cancel jobs + flip order status) ────────

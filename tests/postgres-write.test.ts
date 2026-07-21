@@ -710,38 +710,78 @@ describe('updateOrderInPostgres', () => {
 describe('promoteDraftInPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
-  it('returns found:false when order missing', async () => {
-    queueResult({ rows: [], rowCount: 0 });
-    const r = await promoteDraftInPostgres({
-      orderId: 999, jobId: 500,
-      job: { name: 'x', dept: 'graphic', staff: 'aor' },
-    });
-    expect(r.found).toBe(false);
-    expect(callsContaining('INSERT INTO jobs')).toHaveLength(0);
-    expect(callsContaining('UPDATE orders')).toHaveLength(0);
-  });
+  // M-promote-draft-double-submit (audit 2026-07-21): the old shape was
+  // SELECT order → INSERT job → unconditional flip. Two concurrent promotes
+  // both passed the route's job-existence read → 2 initial jobs. New shape:
+  // the draft→sent flip IS the gate and runs FIRST — statement atomicity
+  // makes racing promotes mutual-exclusive (conditional-gate-first, same
+  // pattern as H2/H3 forward/ship/cancel).
 
-  it('INSERTs job + flips order to sent', async () => {
-    queueResult({ rows: [{ raw: { id: 202605061, status: 'draft', name: 'order-X' }, status: 'draft' }], rowCount: 1 });
-    queueResult({ rows: [{ id: 510 }], rowCount: 1 });  // INSERT jobs
-    queueResult({ rowCount: 1 });  // UPDATE orders
+  it('gate-first: conditional draft→sent flip runs BEFORE the job INSERT', async () => {
+    queueResult({ rows: [{ id: 202605061 }], rowCount: 1 }); // gate: flip won
+    queueResult({ rows: [{ id: 510 }], rowCount: 1 });       // INSERT jobs
 
     const r = await promoteDraftInPostgres({
       orderId: 202605061,
       jobId: 510,
       job: { name: 'order-X', dept: 'graphic', staff: 'aor', dateIn: '2026-05-11' },
     });
-    expect(r).toEqual({ ok: true, orderId: 202605061, jobId: 510, found: true });
+    expect(r).toEqual({
+      ok: true, orderId: 202605061, jobId: 510, found: true, alreadyPromoted: false,
+    });
+
+    const gate = sqlCalls[0];
+    expect(gate.text, 'first statement must be the conditional flip').toContain('UPDATE orders');
+    expect(gate.text, 'gate must require draft state').toContain("status = 'draft'");
+    expect(gate.text).toMatch(/status\s*=\s*'sent'/);
+    expect(gate.text, 'gate needs RETURNING to detect the loser').toContain('RETURNING');
+    expect(gate.text).not.toContain('phase2_dirty_at');
 
     const jobInsert = findCallContaining('INSERT INTO jobs');
     expect(jobInsert, 'must INSERT new job').toBeDefined();
     expect(jobInsert!.text).not.toContain('phase2_dirty_at');
     expect(jobInsert!.text).toContain('ON CONFLICT (id) DO NOTHING');
+    expect(sqlCalls.indexOf(jobInsert!), 'INSERT must come after the gate').toBeGreaterThan(0);
+  });
 
-    const orderUpdate = findCallContaining('UPDATE orders SET');
-    expect(orderUpdate, 'must flip order status').toBeDefined();
-    expect(orderUpdate!.text, "must set status='sent'").toMatch(/status\s*=\s*'sent'/);
-    expect(orderUpdate!.text).not.toContain('phase2_dirty_at');
+  it('loser: gate 0 rows + order exists → alreadyPromoted, no job INSERT', async () => {
+    queueResult({ rows: [], rowCount: 0 });                      // gate: lost the race
+    queueResult({ rows: [{ status: 'sent' }], rowCount: 1 });    // probe: order exists
+
+    const r = await promoteDraftInPostgres({
+      orderId: 202605061, jobId: 511,
+      job: { name: 'order-X', dept: 'graphic', staff: 'aor' },
+    });
+    expect(r.found).toBe(true);
+    expect(r.alreadyPromoted).toBe(true);
+    expect(callsContaining('INSERT INTO jobs')).toHaveLength(0);
+  });
+
+  it('returns found:false when order missing', async () => {
+    queueResult({ rows: [], rowCount: 0 }); // gate: no match
+    queueResult({ rows: [], rowCount: 0 }); // probe: no order at all
+    const r = await promoteDraftInPostgres({
+      orderId: 999, jobId: 500,
+      job: { name: 'x', dept: 'graphic', staff: 'aor' },
+    });
+    expect(r.found).toBe(false);
+    expect(callsContaining('INSERT INTO jobs')).toHaveLength(0);
+  });
+
+  it('compensates the flip back to draft when the job INSERT fails', async () => {
+    queueResult({ rows: [{ id: 202605061 }], rowCount: 1 }); // gate: flip won
+    queueError(new Error('insert exploded'));                 // INSERT jobs → SQL error
+    queueResult({ rowCount: 1 });                             // compensating un-flip
+
+    await expect(
+      promoteDraftInPostgres({
+        orderId: 202605061, jobId: 512,
+        job: { name: 'order-X', dept: 'graphic', staff: 'aor' },
+      }),
+    ).rejects.toThrow('insert exploded');
+
+    const unflip = callsContaining('UPDATE orders').find((c) => c.text.includes("'draft'"));
+    expect(unflip, 'must flip the order back to draft so the draft is not lost').toBeDefined();
   });
 });
 
@@ -1096,15 +1136,20 @@ describe('ID-collision guard — post-insert read-back (§6/R5)', () => {
   });
 
   it('promoteDraft throws when the minted job ID collides with a different job', async () => {
-    queueResult({ rows: [{ raw: { id: 202605061, status: 'draft', name: 'order-X' }, status: 'draft' }], rowCount: 1 }); // order SELECT
-    queueResult({ rows: [], rowCount: 0 });                               // job INSERT → conflict
+    queueResult({ rows: [{ id: 202605061 }], rowCount: 1 });               // gate: flip won
+    queueResult({ rows: [], rowCount: 0 });                                // job INSERT → conflict
     queueResult({ rows: [{ name: 'someone elses job', order_id: 999 }] }); // read-back → mismatch
+    queueResult({ rowCount: 1 });                                          // compensating un-flip
     await expect(
       promoteDraftInPostgres({
         orderId: 202605061, jobId: 510,
         job: { name: 'order-X', dept: 'graphic', staff: 'aor' },
       }),
     ).rejects.toThrow(/ID collision on job 510/);
+    // Gate-first means the flip already happened — collision must un-flip
+    // so the draft isn't silently promoted with no job.
+    const unflip = callsContaining('UPDATE orders').find((c) => c.text.includes("'draft'"));
+    expect(unflip, 'must compensate the flip on collision').toBeDefined();
   });
 
   it('bulkForward routes a colliding new-job ID to failed[] and revives the old job (compensation)', async () => {
