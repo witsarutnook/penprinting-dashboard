@@ -74,8 +74,9 @@ export default async function AnalyticsPage(
 
   return (
     <DashboardShell user={session.user} role={session.role}>
-      {/* /analytics caches at 60s ISR — fresh aggregate report on each
-       *  revalidation tick is enough; no need for the auto-sync poll. */}
+      {/* /analytics renders dynamically (cookies() opts the route out of
+       *  ISR); data reads still coalesce via loadAllCached (15s tag cache),
+       *  so a fresh aggregate per view is cheap — no auto-sync poll needed. */}
       <header className="border-b border-stone-100 bg-white">
         <div className="px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-xl font-bold text-stone-900">รายงาน</h1>

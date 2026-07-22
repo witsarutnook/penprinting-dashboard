@@ -67,10 +67,14 @@ export async function deleteRegistration(id: number): Promise<void> {
 }
 
 export async function listDistinctCustomers(): Promise<string[]> {
+  // Read the slim `customer` column, not raw->>'customer' — the JSONB path
+  // detoasted every order's full raw blob just to list names (audit L-misc
+  // 2026-07-21). Writers keep the column in sync (findDuplicateOrders
+  // already depends on it). Same DISTINCT TRIM semantics as before.
   const { rows } = await sql<{ c: string }>`
-    SELECT DISTINCT TRIM(raw->>'customer') AS c
+    SELECT DISTINCT TRIM(customer) AS c
     FROM orders
-    WHERE TRIM(COALESCE(raw->>'customer', '')) <> ''
+    WHERE TRIM(COALESCE(customer, '')) <> ''
     ORDER BY c`;
   return rows.map((r) => r.c);
 }

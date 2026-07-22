@@ -17,9 +17,11 @@ export const runtime = 'edge';
  *
  * Body: { id, pin }
  * Returns redacted order data + status + step. Hides price, spec, full
- * staff names, internal flags. Rate-limit 15/hr per browser via signed
- * cookie (auditor H1 — in-memory Map didn't survive Vercel serverless
- * cold starts; cookie state is stable across instances). */
+ * staff names, internal flags. Rate-limit 15/hr per browser via a
+ * PLAINTEXT httpOnly cookie (auditor H1 — in-memory Map didn't survive
+ * Vercel serverless cold starts; cookie state is stable across
+ * instances). A tampered/cleared cookie only resets Layer 2 — Layer 1
+ * (per-IP KV) and Layer 3 (per-id PIN lockout) still bound attempts. */
 
 const RATE_COOKIE = 'pp_track_rl';
 const WINDOW_MS = 60 * 60 * 1000; // 1h

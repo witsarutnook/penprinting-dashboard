@@ -61,4 +61,16 @@ describe('registrations', () => {
     sqlMock.mockResolvedValue({ rows: [{ c: 'บ.เอ' }, { c: 'บ.บี' }] });
     expect(await listDistinctCustomers()).toEqual(['บ.เอ', 'บ.บี']);
   });
+
+  it('listDistinctCustomers reads the plain customer column, never the raw JSONB', async () => {
+    // L-misc (audit 2026-07-21): raw->>'customer' detoasts every order's
+    // full JSONB just to list names — the slim `customer` column carries
+    // the same value (writers keep it in sync; findDuplicateOrders already
+    // relies on it).
+    sqlMock.mockResolvedValue({ rows: [] });
+    await listDistinctCustomers();
+    const text = (sqlMock.mock.calls[0][0] as string[]).join('?');
+    expect(text).not.toContain('raw');
+    expect(text).toContain('customer');
+  });
 });

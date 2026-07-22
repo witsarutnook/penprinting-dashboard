@@ -53,7 +53,11 @@ function logAuthEvent(
 }
 
 /**
- * Login rate-limit via signed httpOnly cookie (auditor M-login-ratelimit-map).
+ * Login rate-limit via PLAINTEXT httpOnly cookie (auditor
+ * M-login-ratelimit-map). Not signed — a client that forges or drops it
+ * resets only this layer; the IP failure-lockout below (peekRateLimit +
+ * recordFailure) still bounds guessing. The SESSION cookie is the signed
+ * one.
  *
  * The previous in-memory Map didn't survive Vercel cold starts or work
  * across regions — a brute-forcer hitting different instances saw a
