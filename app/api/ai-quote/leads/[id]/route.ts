@@ -1,13 +1,27 @@
 // app/api/ai-quote/leads/[id]/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
-import { claimLead, updateLead, deleteLead, releaseLead } from '@/lib/ai-quote/db';
+import { claimLead, updateLead, deleteLead, releaseLead, loadConversation } from '@/lib/ai-quote/db';
 import type { LeadStatus } from '@/lib/ai-quote/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const VALID: LeadStatus[] = ['ใหม่', 'กำลังติดตาม', 'ปิดการขาย', 'ไม่สนใจ', 'escalated', 'abandoned'];
+
+// Lazy transcript for the /quote-leads expand — the list endpoint is slim
+// (L-listleads-eager-conversation), so the full conversation fetches here,
+// one lead at a time, only when staff actually opens a row.
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }): Promise<NextResponse> {
+  const session = await requireSession(['admin', 'sales']);
+  if (session instanceof NextResponse) return session;
+  const { id } = await props.params;
+  const sid = Number(id);
+  if (!sid) return NextResponse.json({ error: 'bad id' }, { status: 400 });
+  const conversation = await loadConversation(sid);
+  if (conversation === null) return NextResponse.json({ error: 'ไม่พบ lead นี้' }, { status: 404 });
+  return NextResponse.json({ conversation });
+}
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }): Promise<NextResponse> {
   const session = await requireSession(['admin', 'sales']);

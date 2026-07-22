@@ -12,11 +12,13 @@ const claimMock = vi.fn();
 const updateMock = vi.fn();
 const releaseMock = vi.fn();
 const deleteMock = vi.fn();
+const convMock = vi.fn();
 vi.mock('@/lib/ai-quote/db', () => ({
   claimLead: (...a: unknown[]) => claimMock(...a),
   updateLead: (...a: unknown[]) => updateMock(...a),
   releaseLead: (...a: unknown[]) => releaseMock(...a),
   deleteLead: (...a: unknown[]) => deleteMock(...a),
+  loadConversation: (...a: unknown[]) => convMock(...a),
 }));
 
 const sessionMock = vi.fn();
@@ -24,7 +26,7 @@ vi.mock('@/lib/route-helpers', () => ({
   requireSession: (...a: unknown[]) => sessionMock(...a),
 }));
 
-import { PATCH } from '@/app/api/ai-quote/leads/[id]/route';
+import { PATCH, GET } from '@/app/api/ai-quote/leads/[id]/route';
 
 function mkReq(body: unknown): Request {
   return new Request('http://localhost/api/ai-quote/leads/7', {
@@ -64,5 +66,34 @@ describe('PATCH /api/ai-quote/leads/[id] — claim owner', () => {
     expect(res.status).toBe(200);
     expect(claimMock).not.toHaveBeenCalled();
     expect(updateMock).toHaveBeenCalledWith(7, expect.objectContaining({ leadStatus: 'กำลังติดตาม' }));
+  });
+});
+
+describe('GET /api/ai-quote/leads/[id] — lazy conversation for expand', () => {
+  beforeEach(() => {
+    sessionMock.mockResolvedValue({ role: 'sales', user: 'สมชาย' });
+  });
+
+  function getReq(): Request {
+    return new Request('http://localhost/api/ai-quote/leads/7', { method: 'GET' });
+  }
+
+  it('returns the conversation of the one lead', async () => {
+    convMock.mockResolvedValue([{ role: 'user', text: 'ขอราคา' }]);
+
+    const res = await GET(getReq() as never, params);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.conversation).toEqual([{ role: 'user', text: 'ขอราคา' }]);
+    expect(convMock).toHaveBeenCalledWith(7);
+  });
+
+  it('404s when the lead does not exist', async () => {
+    convMock.mockResolvedValue(null);
+
+    const res = await GET(getReq() as never, params);
+
+    expect(res.status).toBe(404);
   });
 });

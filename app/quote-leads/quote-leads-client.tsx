@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { displayDateTime } from '@/lib/jobs';
 import { useConfirm } from '@/components/confirm-provider';
 import { IconTrash } from '@/lib/icons';
-import type { LeadRow, LeadStatus } from '@/lib/ai-quote/types';
+import type { ConversationTurn, LeadRow, LeadStatus } from '@/lib/ai-quote/types';
 
 const STATUSES: LeadStatus[] = ['ใหม่', 'กำลังติดตาม', 'ปิดการขาย', 'ไม่สนใจ', 'escalated', 'abandoned'];
 
@@ -38,7 +38,32 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
   const { confirm } = useConfirm();
   const isAdmin = currentRole === 'admin';
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // Transcripts lazy-fetch per lead on expand (the list payload is slim —
+  // L-listleads-eager-conversation) and cache here for re-expands.
+  const [convs, setConvs] = useState<Record<number, ConversationTurn[]>>({});
+  const [convLoadingId, setConvLoadingId] = useState<number | null>(null);
   const colSpan = isAdmin ? 8 : 7;
+
+  async function toggleExpand(id: number) {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(id);
+    if (convs[id]) return; // cached from a previous expand
+    setConvLoadingId(id);
+    try {
+      const res = await fetch(`/api/ai-quote/leads/${id}`, { cache: 'no-store' });
+      const d = (await res.json().catch(() => ({}))) as { conversation?: ConversationTurn[]; error?: string };
+      if (!res.ok) throw new Error(d.error || `โหลดบทสนทนาไม่สำเร็จ (${res.status})`);
+      setConvs((m) => ({ ...m, [id]: d.conversation ?? [] }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setExpandedId((cur) => (cur === id ? null : cur));
+    } finally {
+      setConvLoadingId((cur) => (cur === id ? null : cur));
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,11 +217,11 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                     <td className="px-3 py-2.5 max-w-[18rem]">
                       <button
                         type="button"
-                        onClick={() => setExpandedId((cur) => (cur === l.id ? null : l.id))}
+                        onClick={() => void toggleExpand(l.id)}
                         className="text-left text-stone-600 hover:text-accent w-full truncate"
                         title="กดเพื่อดูบทสนทนาทั้งหมด"
                       >
-                        {l.conversation.length > 0 ? (expandedId === l.id ? '▾ ' : '▸ ') : ''}
+                        {l.turnCount > 0 ? (expandedId === l.id ? '▾ ' : '▸ ') : ''}
                         {l.lastMessage || '—'}
                       </button>
                       {isAdmin && (
@@ -265,10 +290,12 @@ export function QuoteLeadsClient({ currentUser, currentRole }: { currentUser: st
                     <tr className="bg-stone-50/60">
                       <td colSpan={colSpan} className="px-3 pb-3 pt-0">
                         <div className="rounded-xl border border-stone-200 bg-white p-3 space-y-2 max-h-80 overflow-y-auto">
-                          {l.conversation.length === 0 ? (
+                          {convLoadingId === l.id ? (
+                            <div className="text-xs text-stone-400">กำลังโหลดบทสนทนา…</div>
+                          ) : (convs[l.id]?.length ?? 0) === 0 ? (
                             <div className="text-xs text-stone-400">ไม่มีบทสนทนา</div>
                           ) : (
-                            l.conversation.map((m, i) => (
+                            (convs[l.id] ?? []).map((m, i) => (
                               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 <div
                                   className={`max-w-[80%] rounded-2xl px-3 py-2 text-xs whitespace-pre-wrap break-words ${

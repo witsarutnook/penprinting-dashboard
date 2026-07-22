@@ -63,10 +63,16 @@ export interface AiQuoteSession {
 
 /** A lead row for the /quote-leads table — a session plus derived counts.
  *  Defined here (not db.ts) so the client table can import the type without
- *  pulling in the `server-only` db module. */
-export interface LeadRow extends AiQuoteSession {
+ *  pulling in the `server-only` db module. Slim by design
+ *  (L-listleads-eager-conversation): the transcript never rides the list —
+ *  lastMessage/turnCount are SQL-derived and the full conversation
+ *  lazy-fetches per lead via GET /api/ai-quote/leads/[id] on expand. */
+export interface LeadRow extends Omit<AiQuoteSession, 'conversation'> {
   quoteCount: number;
   lastMessage: string | null;
+  /** jsonb_array_length(conversation) — drives the expand arrow without
+   *  shipping the turns. */
+  turnCount: number;
 }
 
 /** POST /api/ai-quote request + response.

@@ -113,17 +113,43 @@ export async function markEscalated(sessionId: number): Promise<void> {
 }
 
 export async function listLeads(): Promise<LeadRow[]> {
+  // Slim projection (L-listleads-eager-conversation): the /quote-leads table
+  // shows one last message + counts per row, so the full conversation JSONB
+  // (up to 200 leads × 40 turns) must never ride the list into the route
+  // response / browser payload. lastMessage + turnCount derive in SQL
+  // (`-> -1` = last array element, NULL for empty); the full transcript
+  // lazy-fetches per lead via loadConversation on expand (pattern PERF-H2).
   const { rows } = await sql`
-    SELECT s.*, COALESCE(q.cnt, 0) AS quote_count
+    SELECT s.id, s.channel, s.line_user_id, s.extracted_spec, s.customer_name,
+           s.customer_contact, s.lead_status, s.assigned_to, s.converted_order_id,
+           s.created_at, s.updated_at,
+           s.conversation -> -1 ->> 'text'                  AS last_message,
+           COALESCE(jsonb_array_length(s.conversation), 0)  AS turn_count,
+           COALESCE(q.cnt, 0)                               AS quote_count
       FROM ai_quote_sessions s
       LEFT JOIN (SELECT session_id, COUNT(*) cnt FROM ai_quotes GROUP BY session_id) q ON q.session_id = s.id
      ORDER BY s.updated_at DESC
      LIMIT 200`;
   return rows.map((r) => {
-    const s = rowToSession(r);
-    const conv = s.conversation;
-    return { ...s, quoteCount: Number(r.quote_count) || 0, lastMessage: conv.length ? conv[conv.length - 1].text : null };
+    const { conversation, ...s } = rowToSession(r);
+    void conversation; // slim row never carries the transcript
+    return {
+      ...s,
+      quoteCount: Number(r.quote_count) || 0,
+      lastMessage: (r.last_message as string | null) ?? null,
+      turnCount: Number(r.turn_count) || 0,
+    };
   });
+}
+
+/** Transcript-only lookup for the /quote-leads lazy expand. Staff surface —
+ *  intentionally unscoped by channel (staff legitimately open LINE/Messenger
+ *  leads; the route gates admin+sales). Returns null when the session does
+ *  not exist, [] when it exists with no turns. */
+export async function loadConversation(id: number): Promise<ConversationTurn[] | null> {
+  const { rows } = await sql`SELECT conversation FROM ai_quote_sessions WHERE id = ${id}`;
+  if (!rows[0]) return null;
+  return ((rows[0] as Record<string, unknown>).conversation as ConversationTurn[]) ?? [];
 }
 
 /** Hard-delete a lead (its ai_quotes rows go too via ON DELETE CASCADE).
