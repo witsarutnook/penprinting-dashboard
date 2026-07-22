@@ -27,9 +27,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   // Claiming a lead is a conditional, race-safe write (audit M4) — handled
   // apart from the COALESCE updateLead so two staff can't silently overwrite
   // each other's claim. 409 tells the loser someone already holds it.
-  const claimUser = typeof body.assignedTo === 'string' ? body.assignedTo.trim() : '';
-  if (claimUser) {
-    const claimed = await claimLead(sid, claimUser);
+  // Server-authoritative owner (audit L-leadclaim-body-owner): body.assignedTo
+  // is only the *intent* signal ("หยิบงาน") — the recorded owner is always the
+  // verified session user, same rule as reassign (38c6593).
+  const wantsClaim = typeof body.assignedTo === 'string' && body.assignedTo.trim() !== '';
+  if (wantsClaim) {
+    const claimed = await claimLead(sid, session.user);
     if (!claimed) return NextResponse.json({ error: 'มีคนหยิบงานนี้ไปแล้ว' }, { status: 409 });
   }
 
