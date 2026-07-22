@@ -143,6 +143,21 @@ export async function peekRateLimit(
   return { ok: true, remaining: Math.max(0, opts.limit - n), resetIn: opts.windowSec };
 }
 
+/** Hand back one attempt reserved by a `checkRateLimit` gate. Pattern for
+ *  atomic failure-only counting (L-track-pin-lockout-toctou): gate with
+ *  checkRateLimit (INCR+compare — race-free, unlike peek-then-record),
+ *  then refund on every outcome that should NOT consume budget (e.g. a
+ *  correct PIN). If the counter went negative — the window expired between
+ *  the INCR and this refund — delete the stray key (a TTL-less negative
+ *  key would otherwise skew future windows). Fails open. */
+export async function refundAttempt(key: string): Promise<void> {
+  const cfg = configured();
+  if (!cfg) return;
+  const fullKey = `rl:${key}`;
+  const n = await upstash<number>(cfg, 'DECR', fullKey);
+  if (n != null && n < 0) await upstash(cfg, 'DEL', fullKey);
+}
+
 /** Increment a failure counter. Use after an action fails so subsequent
  *  `peekRateLimit` checks see the bump. Combined pattern: peek before
  *  action, recordFailure after fail, do nothing after success. Fails

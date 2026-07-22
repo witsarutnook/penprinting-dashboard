@@ -3,7 +3,7 @@ import { loadOrder, AppsScriptError } from '@/lib/api';
 import { getBangkokToday } from '@/lib/calendar';
 import type { Job, Shipped, Cancelled } from '@/lib/types';
 import { buildTrackResult } from '@/lib/track-result';
-import { checkRateLimit, peekRateLimit, recordFailure } from '@/lib/rate-limit';
+import { checkRateLimit, refundAttempt } from '@/lib/rate-limit';
 
 // Public route — no auth, no Node-specific deps. Run on Vercel's Edge
 // runtime to skip Node.js cold starts (~150-300ms saved on the first
@@ -128,15 +128,20 @@ export async function POST(req: Request) {
 
   // Layer 3 — Per-id PIN-failure lockout. Independent of IP/cookie: even
   // if an attacker rotates both, 5 failed PIN attempts on the SAME order
-  // id within 1h lock that id out for the remainder. The 4-digit PIN
-  // space (10k) means ~5 guesses with effectively 0 hit-rate per attempt
-  // before being locked out. PEEK here so a legitimate lookup with the
-  // correct PIN doesn't burn the counter — only `recordFailure` below on
-  // PIN mismatch increments. (Auditor A04-1.)
-  const pinLockState = await peekRateLimit(`track:pin-fail:${id}`, { limit: 5, windowSec: 3600 });
-  if (!pinLockState.ok) {
+  // id within 1h lock that id out for the remainder. Atomic INCR+compare
+  // gate (L-track-pin-lockout-toctou — the old peek-then-record let
+  // concurrent requests slip past a stale read and only locked after the
+  // 6th failure, not the 5th). The INCR *reserves* an attempt; every
+  // outcome below that is NOT a wrong PIN refunds it via `refundAttempt`,
+  // so only PIN failures consume the budget — same failure-only semantics
+  // as before, race-free. Retrying while locked refreshes the TTL
+  // (sliding lock) — acceptable: only wrong-PIN spam ever reaches that
+  // state. Layer 1 (IP) + Layer 2 (cookie) still bound total attempts.
+  const pinKey = `track:pin-fail:${id}`;
+  const pinGate = await checkRateLimit(pinKey, { limit: 5, windowSec: 3600 });
+  if (!pinGate.ok) {
     return respond(
-      { error: `ใบสั่งงาน #${id} ถูกล็อกชั่วคราว (ใส่ PIN ผิดเกินกำหนด) — รออีก ${Math.ceil(pinLockState.retryIn / 60)} นาที` },
+      { error: `ใบสั่งงาน #${id} ถูกล็อกชั่วคราว (ใส่ PIN ผิดเกินกำหนด) — รออีก ${Math.ceil(pinGate.retryIn / 60)} นาที` },
       429,
     );
   }
@@ -149,12 +154,16 @@ export async function POST(req: Request) {
   try {
     lookup = await loadOrder(id);
   } catch (err) {
+    // Not a PIN failure — refund the reserved attempt so an outage can't
+    // lock a legitimate customer's order id for an hour.
+    void refundAttempt(pinKey);
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);
   }
 
   const order = lookup.order;
   if (!order) {
+    void refundAttempt(pinKey); // wrong id, not a PIN failure
     return respond({ error: 'ไม่พบใบสั่งงานนี้' }, 404);
   }
 
@@ -165,10 +174,9 @@ export async function POST(req: Request) {
   // Constant-time PIN compare to defend against timing oracle. With the
   // rate limits above this is mostly belt-and-suspenders, but cheap.
   if (!storedPin || !timingSafeStringEqual(storedPin, pin)) {
-    // Record the PIN failure so the per-id lockout (Layer 3 above) sees
-    // it on subsequent attempts. Fire-and-forget — even if Upstash is
-    // down we return 401 immediately so the user sees a fast response.
-    void recordFailure(`track:pin-fail:${id}`, { windowSec: 3600 });
+    // PIN failure — the attempt reserved by the Layer-3 gate stays
+    // consumed (no refund). Nothing else to record: the gate's INCR
+    // already counted this attempt atomically.
     return respond({ error: 'PIN ไม่ถูกต้อง' }, 401);
   }
 
@@ -184,5 +192,8 @@ export async function POST(req: Request) {
   // card and the customer job list use, so all three surfaces agree.
   const result = buildTrackResult(order, job, shipped, cancelled, getBangkokToday());
 
+  // Correct PIN — refund the reserved attempt so legitimate lookups never
+  // burn lockout budget. Fire-and-forget: the response must not wait on KV.
+  void refundAttempt(pinKey);
   return respond({ ok: true, result });
 }
