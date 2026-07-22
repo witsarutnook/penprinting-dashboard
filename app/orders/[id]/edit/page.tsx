@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
-import { loadAll, AppsScriptError } from '@/lib/api';
+import { loadOrder, loadRecentOrdersSlim, AppsScriptError, type RecentOrderSlim } from '@/lib/api';
+import { PostgresReadError } from '@/lib/api-postgres';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { OrderEditClient } from './client';
@@ -29,27 +30,27 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
 
   let initial: OrderSummary | null = null;
   // Slim: rawData NOT included — fetched lazily via /api/orders/raw/[id]
-  let recentOrders: Array<{
-    id: number; name: string; customer: string; hasRawData: boolean;
-  }> = [];
+  let recentOrders: RecentOrderSlim[] = [];
   let errorMessage: string | null = null;
+  let missing = false;
   try {
-    // ONE fetch covers both needs: loadAll() (Postgres-first via Phase 1.7
-    // dual-write mirror, ~200ms warm) returns the full snapshot which
-    // already contains the target order with rawData + recentOrders source.
-    // Phase 1.7 dual-write keeps the mirror current with every Apps Script
-    // write so this snapshot is fresh — no need for the previous "uncached
-    // single-row loadOrder" pattern that bypassed Postgres.
-    const snap = await loadAll();
-    const o = snap.orders.find((x) => Number(x.id) === id);
-    if (!o) notFound();
+    // Slim bootstrap (PERF-H1, ported from /orders/new — this page was the
+    // one loadAll() holdout, audit L-edit-page-loadall): two targeted,
+    // coalesced reads instead of the full every-order snapshot — the ONE
+    // order being edited (with rawData for prefill) + the slim recent-orders
+    // list (id/name/customer/hasRawData) for autocomplete + "ดึงงานล่าสุด".
+    const [lookup, recent] = await Promise.all([
+      loadOrder(id, { orderOnly: true }),
+      loadRecentOrdersSlim(),
+    ]);
+    const o = lookup.order as unknown as Record<string, unknown>;
     initial = {
       id: Number(o.id),
       name: String(o.name || ''),
       customer: String(o.customer || ''),
       dateIn: String(o.dateIn || ''),
       dateDue: String(o.dateDue || ''),
-      price: o.price,
+      price: o.price as OrderSummary['price'],
       assignDept: String(o.assignDept || ''),
       assignStaff: String(o.assignStaff || ''),
       orderer: String(o.orderer || ''),
@@ -57,19 +58,18 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
       details: (o.details && typeof o.details === 'object') ? (o.details as Record<string, unknown>) : null,
       rawData: (o.rawData && typeof o.rawData === 'object') ? (o.rawData as Record<string, unknown>) : null,
     };
-    // Pass recent orders for autocomplete + ดึงล่าสุด button (slim)
-    recentOrders = [...snap.orders]
-      .sort((a, b) => Number(b.id) - Number(a.id))
-      .slice(0, 1000)
-      .map((x) => ({
-        id: Number(x.id),
-        name: String(x.name || ''),
-        customer: String(x.customer || ''),
-        hasRawData: !!(x.rawData && typeof x.rawData === 'object'),
-      }));
+    recentOrders = recent;
   } catch (err) {
-    errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    // Row-not-found → the 404 page. Thrown OUTSIDE the try (below): the old
+    // code called notFound() inside it, so Next's control-flow throw was
+    // swallowed by this catch and rendered as the error banner instead.
+    if (err instanceof PostgresReadError && err.message.includes('not found')) {
+      missing = true;
+    } else {
+      errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    }
   }
+  if (missing) notFound();
 
   if (errorMessage) {
     return (
