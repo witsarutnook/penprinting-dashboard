@@ -1,9 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
 import { IconSparkles, IconX } from '@/lib/icons';
-import { QuoteAssistantClient } from '@/app/quote-assistant/quote-assistant-client';
+
+// Lazy-load the assistant — the FAB mounts on every admin page but the chat
+// panel only renders after a click, so its chunk (assistant + markdown +
+// quote plumbing) shouldn't ride the shared shell bundle. Same pattern as
+// card.tsx's admin-only modals. ssr:false — panel is click-triggered DOM.
+const QuoteAssistantClient = dynamic(
+  () => import('@/app/quote-assistant/quote-assistant-client').then((m) => ({ default: m.QuoteAssistantClient })),
+  { ssr: false, loading: () => <div className="text-sm text-stone-400 p-2">กำลังโหลดผู้ช่วยตีราคา…</div> },
+);
 
 /** Floating AI-quote assistant — a FAB (bottom-right) that opens the quote
  *  chat in a popup panel from any dashboard page, à la PEAK Support's chat
