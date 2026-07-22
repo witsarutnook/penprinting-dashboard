@@ -183,6 +183,12 @@ export async function loadAllWithAudit() { return fetch(`${url}?action=loadAll&t
 - ใน [lib/forward.ts](lib/forward.ts) มี `RESTRICTED_TARGETS = new Set(['outsource', 'diecut_out'])`
 - All forward/reassign routes filter via `getVisibleTargets(fromType, isAdmin)` หรือ `validateForwardTarget(...)` — non-admin ไม่เห็น/ส่งไม่ได้
 
+### 2.4 Atomic failure-only rate gate: `checkRateLimit` reserve + `refundAttempt` (2026-07-22, `1606099`)
+- **ปัญหา**: อยากนับเฉพาะ "ความพยายามที่ล้มเหลว" (PIN ผิด / รหัสผ่านผิด) เข้า lockout counter — pattern เดิม peek-then-record (`peekRateLimit` gate → `recordFailure` หลัง fail) **ไม่ atomic** (requests พร้อมกันอ่านค่า stale หลุด gate) + **off-by-one** (peek deny ที่ `n > limit` = โดนล็อกหลังครั้งที่ limit+1)
+- **Pattern**: gate ด้วย `checkRateLimit` (INCR+compare — atomic ระดับ Redis) = *reserve* หนึ่ง attempt ทันที แล้ว `refundAttempt(key)` (DECR; DEL ถ้าติดลบ) คืน budget ในทุก outcome ที่ไม่ควรนับ (สำเร็จ / 404 / 502) → semantics "นับเฉพาะ fail" เหมือนเดิมแต่ race-free
+- **เมื่อไหร่ใช้อันไหน**: traffic ที่ success กับ fail แชร์ entry point เดียว + ต้องกัน concurrent slip → reserve+refund (เคส `/track` PIN per-id). ถ้า outcome รู้ช้าหรือ refund แพง/ไม่อยาก INCR ก่อน (เคส login shared office NAT — ทุกเช้า login ถูกพร้อมกันหลายคน ไม่อยากให้ INCR ชั่วคราวชน limit) → peek+record เดิมยังโอเค ตราบใดที่ TOCTOU window ยอมรับได้และมี layer อื่น bound
+- อยู่ที่ [lib/rate-limit.ts](lib/rate-limit.ts) `refundAttempt` + ผู้ใช้จริง [app/api/track/lookup/route.ts](app/api/track/lookup/route.ts) Layer 3
+
 ---
 
 ## 3. Frontend state patterns
