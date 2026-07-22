@@ -390,6 +390,7 @@ function schedule() {
 - **Don't loop `await cancelJob(...)` sequentially** — `Promise.allSettled([...])` parallelizes cascade. See `/api/orders/{cancel,delete}` 2026-05-07.
 - **Don't use emoji in UI** — user preference, replaced 43+ instances 2026-05-06. See §4.1.
 - **Don't delete on Apps Script "New deployment"** — URL changes, frontends 404. Always "Edit existing → New version".
+- **Don't call `notFound()`/`redirect()` inside a `try` that catches generic errors** — Next's control-flow throws get swallowed by the catch and render as your error UI instead of the 404/redirect. Set a flag in the try, throw outside. (Latent bug in /orders/[id]/edit — caught while porting PERF-H1, `2988153` 2026-07-22.)
 - **Don't change cookie name without re-login plan** — WP did this in v5.3.0 to force re-login (intentional). Plan it.
 - **Don't `--no-verify` git commits** unless user explicitly asks.
 
