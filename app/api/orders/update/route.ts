@@ -104,17 +104,18 @@ export async function POST(req: Request) {
   // `loadOrderAndJobs(id)` (Postgres-first) for callers that don't pass it
   // (legacy / external).
   const src = body.srcOrder;
-  const oldName = String(src?.name ?? '');
-  const oldDateDue = toISODate(String(src?.dateDue ?? ''));
-  const nameChanged = !!src && oldName !== name;
-  const dueChanged = !!src && oldDateDue !== dateDue;
-  // Cascade rename needs the order's jobs list; skip the read if neither
-  // name nor dateDue changed (the common case — spec-only edits).
-  const needsCascadeRead = !src || nameChanged || dueChanged;
+  // Perf gate ONLY: skip the read when the client snapshot says nothing
+  // cascade-relevant changed (the common case — spec-only edits). The
+  // cascade flags themselves are derived AFTER the read below, from the
+  // freshest baseline we hold — pre-fix, a caller without srcOrder got
+  // hard-false flags and the jobs cascade was silently skipped
+  // (audit L-orders-update-cascade-skip).
+  const srcUnchanged =
+    !!src && String(src.name ?? '') === name && toISODate(String(src.dateDue ?? '')) === dateDue;
 
   let cascadeJobs: Job[] = [];
   let existing: SrcOrderSnapshot;
-  if (needsCascadeRead) {
+  if (!srcUnchanged) {
     let snap: Awaited<ReturnType<typeof loadOrderAndJobs>>;
     try {
       snap = await loadOrderAndJobs(id);
@@ -130,6 +131,15 @@ export async function POST(req: Request) {
   } else {
     existing = src!;
   }
+
+  // Cascade baseline = `existing` (the DB row whenever we read one; the
+  // client snapshot only on the read-skip path, where it equals the new
+  // values anyway). Jobs are matched by name = oldName, so the baseline
+  // must be the name the jobs actually carry — the fresh DB value.
+  const oldName = String(existing.name ?? '');
+  const oldDateDue = toISODate(String(existing.dateDue ?? ''));
+  const nameChanged = oldName !== name;
+  const dueChanged = oldDateDue !== dateDue;
 
   const existingRaw = (existing.rawData && typeof existing.rawData === 'object'
     ? existing.rawData
