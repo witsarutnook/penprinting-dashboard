@@ -4,7 +4,7 @@
 // used). NEVER throws: a metrics failure must not affect the customer reply.
 import 'server-only';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
-import type { ThunderVerifyResponse } from './slip';
+import { slipAccountMatched, type ThunderVerifyResponse } from './slip';
 
 export const SLIP_METRICS_CHANNELS = ['line', 'messenger'] as const;
 export type SlipMetricsChannel = (typeof SLIP_METRICS_CHANNELS)[number];
@@ -79,7 +79,7 @@ export async function recordSlipCheck(ev: SlipCheckEvent): Promise<void> {
         (channel, looks_like_slip, prefilter_answer, thunder_called, thunder_success, is_duplicate, is_account_matched, amount, raw)
       VALUES
         (${ev.channel}, ${ev.looksLikeSlip}, ${ev.prefilterAnswer}, ${ev.looksLikeSlip},
-         ${r ? r.success : null}, ${r?.data?.isDuplicate ?? null}, ${r?.data?.isAccountMatched ?? null}, ${amount},
+         ${r ? r.success : null}, ${r?.data?.isDuplicate ?? null}, ${r ? slipAccountMatched(r) : null}, ${amount},
          ${r ? JSON.stringify(r) : null}::jsonb)`;
   } catch (e) {
     console.error('[ai-quote] recordSlipCheck failed:', e instanceof Error ? e.message : e);

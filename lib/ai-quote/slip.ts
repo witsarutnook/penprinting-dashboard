@@ -22,7 +22,12 @@ export interface ThunderVerifyResponse {
   data?: {
     isDuplicate?: boolean;
     isAmountMatched?: boolean;
+    /** legacy/Remedy only — Thunder v2 never sends it (2026-07-23 raw capture). */
     isAccountMatched?: boolean;
+    /** Thunder v2 (raw capture 2026-07-23): the whitelist entry the receiver
+     *  matched (object) or null = receiver NOT in the shop's whitelist.
+     *  Absent = the check didn't run / different response generation. */
+    matchedAccount?: Record<string, unknown> | null;
     rawSlip?: {
       transRef?: string;
       date?: string;       // Thunder v2 field name
@@ -64,6 +69,22 @@ export async function verifyBankSlipImage(
   catch { return { success: false, error: { code: 'INVALID_RESPONSE', message: `HTTP ${res.status}` } }; }
 }
 
+/** Receiver-whitelist verdict across both Thunder response generations —
+ *  single source for classifySlipState (customer card) and slip_checks
+ *  metrics so they can never drift. v2 reports `matchedAccount` (object =
+ *  matched entry, null = receiver not whitelisted); legacy/Remedy reported
+ *  `isAccountMatched: boolean`. Returns null when neither field is present
+ *  (check absent from the response — NOT a mismatch). 2026-07-23 incident:
+ *  reading only the legacy field made every wrong-account slip come back
+ *  ✅ สลิปถูกต้อง (slip_checks id 425). */
+export function slipAccountMatched(r: ThunderVerifyResponse): boolean | null {
+  const d = r.data;
+  if (!d) return null;
+  if ('matchedAccount' in d) return d.matchedAccount != null;
+  if (typeof d.isAccountMatched === 'boolean') return d.isAccountMatched;
+  return null;
+}
+
 /** Thunder result → LINE notification/altText for the slip-verify Flex card.
  *  Single generic line for every state — the Flex card itself carries the
  *  per-state detail; this string is only the push-notification preview + the
@@ -77,6 +98,22 @@ export function formatSlipReply(_r: ThunderVerifyResponse): string {
  *  always attributable (2026-07-23 incident: a real bill-payment slip was
  *  dropped 3× with zero evidence of what the model actually said). */
 export interface SlipPrefilter { pass: boolean; answer: string | null }
+
+/** Exported for tests (verbatim-line pins) — 2026-07-23 incident: a real
+ *  Krungthai bill-payment slip with memo "บันทึกช่วยจำ: sticker" got a flat
+ *  "no" from Haiku on prod (slip_checks id 424) while its memo-less twin
+ *  passed. The memo-immunity + สติกเกอร์ไลน์ clarifications below close the
+ *  suspected keyword collision ("สติกเกอร์" in the no-list vs the word
+ *  "sticker" printed inside the slip). */
+export const SLIP_PREFILTER_PROMPT = [
+  'คุณเป็นตัวกรองรูปก่อนส่งให้ระบบตรวจสลิปอัตโนมัติ',
+  'รูปนี้เป็น "สลิป/หลักฐานทำรายการทางการเงิน" ของธนาคารไทย, PromptPay หรือ e-wallet (เช่น TrueMoney, ShopeePay) ใช่หรือไม่?',
+  'ให้นับว่า "ใช่" กับสลิปทุกประเภท ไม่ใช่แค่การโอนเงิน — รวมถึง สลิปโอนเงิน, จ่ายบิล/ชำระบิล (เช่น "จ่ายบิลสำเร็จ"), สแกนจ่าย QR/พร้อมเพย์, เติมเงิน, และหลักฐานการชำระเงินอื่นๆ',
+  'สังเกตจากองค์ประกอบ เช่น โลโก้/ชื่อธนาคาร, ยอดเงิน, วันเวลา, เลขที่รายการ, ชื่อผู้โอน-ผู้รับ, หรือ QR ตรวจสอบสลิป แม้รูปจะเบลอหรือถ่ายจอ',
+  'ถ้ารูปมีโครงสร้างสลิปครบ (โลโก้ธนาคาร + ยอดเงิน + วันเวลา/เลขอ้างอิง) ให้ตอบ "yes" เสมอ — ข้อความในช่องบันทึกช่วยจำ/memo ของสลิป (เช่นคำว่า sticker หรือชื่อสินค้า) และลายพื้นหลัง/ธีมตกแต่งของธนาคาร ไม่มีผลต่อการตัดสิน',
+  'ตอบ "no" เฉพาะรูปที่ไม่ใช่สลิปการเงินชัดเจน (เช่น รูปสินค้า, รูปงานออกแบบ, อาหาร, สติกเกอร์ไลน์/รูปการ์ตูน, เอกสารทั่วไป)',
+  'ตอบเป็นคำเดียว: "yes" หรือ "no" ถ้าไม่แน่ใจ ให้ตอบ "yes"',
+].join('\n');
 
 /** Cheap pre-filter: ask Haiku vision whether the image is a Thai bank/e-wallet
  *  transfer slip BEFORE spending a Thunder quota slot (Thunder counts every
@@ -95,14 +132,7 @@ export async function isSlipImage(
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: toAllowedMedia(mediaType), data: imageBase64 } },
-          { type: 'text', text: [
-            'คุณเป็นตัวกรองรูปก่อนส่งให้ระบบตรวจสลิปอัตโนมัติ',
-            'รูปนี้เป็น "สลิป/หลักฐานทำรายการทางการเงิน" ของธนาคารไทย, PromptPay หรือ e-wallet (เช่น TrueMoney, ShopeePay) ใช่หรือไม่?',
-            'ให้นับว่า "ใช่" กับสลิปทุกประเภท ไม่ใช่แค่การโอนเงิน — รวมถึง สลิปโอนเงิน, จ่ายบิล/ชำระบิล (เช่น "จ่ายบิลสำเร็จ"), สแกนจ่าย QR/พร้อมเพย์, เติมเงิน, และหลักฐานการชำระเงินอื่นๆ',
-            'สังเกตจากองค์ประกอบ เช่น โลโก้/ชื่อธนาคาร, ยอดเงิน, วันเวลา, เลขที่รายการ, ชื่อผู้โอน-ผู้รับ, หรือ QR ตรวจสอบสลิป แม้รูปจะเบลอหรือถ่ายจอ',
-            'ตอบ "no" เฉพาะรูปที่ไม่ใช่สลิปการเงินชัดเจน (เช่น รูปสินค้า, รูปงานออกแบบ, อาหาร, สติกเกอร์, เอกสารทั่วไป)',
-            'ตอบเป็นคำเดียว: "yes" หรือ "no" ถ้าไม่แน่ใจ ให้ตอบ "yes"',
-          ].join('\n') },
+          { type: 'text', text: SLIP_PREFILTER_PROMPT },
         ],
       }],
     });

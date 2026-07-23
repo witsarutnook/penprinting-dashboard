@@ -84,6 +84,20 @@ describe('recordSlipCheck (raw evidence capture)', () => {
     expect(call.values).toContain('no, artwork');
     expect(call.values).not.toContain('{}');
   });
+
+  // Param order: channel, looks_like_slip, prefilter_answer, thunder_called,
+  // thunder_success, is_duplicate, is_account_matched, amount, raw
+  it('is_account_matched derives from v2 matchedAccount (was always NULL under the legacy read)', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    await recordSlipCheck({ channel: 'line', looksLikeSlip: true, prefilterAnswer: 'yes',
+      result: { success: true, data: { isDuplicate: false, matchedAccount: null } } as never });
+    expect(sqlCalls[0].values[6]).toBe(false);
+
+    queueResult({ rows: [], rowCount: 0 });
+    await recordSlipCheck({ channel: 'line', looksLikeSlip: true, prefilterAnswer: 'yes',
+      result: { success: true, data: { isDuplicate: false, matchedAccount: { nameTh: 'เพ็ญพรินติ้ง' } } } as never });
+    expect(sqlCalls[1].values[6]).toBe(true);
+  });
 });
 
 describe('loadRecentSlipChecks', () => {

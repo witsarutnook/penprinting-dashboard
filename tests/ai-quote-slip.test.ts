@@ -22,7 +22,35 @@ describe('formatSlipReply', () => {
   });
 });
 
-import { isSlipImage } from '@/lib/ai-quote/slip';
+import { isSlipImage, SLIP_PREFILTER_PROMPT, slipAccountMatched } from '@/lib/ai-quote/slip';
+
+describe('slipAccountMatched (Thunder v2 + legacy dual-read)', () => {
+  it('v2: matchedAccount object → true, null → false', () => {
+    expect(slipAccountMatched({ success: true, data: { matchedAccount: { nameTh: 'บริษัท เพ็ญพรินติ้ง จำกัด' } } } as never)).toBe(true);
+    expect(slipAccountMatched({ success: true, data: { matchedAccount: null } } as never)).toBe(false);
+  });
+  it('legacy: isAccountMatched boolean passthrough when matchedAccount absent', () => {
+    expect(slipAccountMatched({ success: true, data: { isAccountMatched: true } })).toBe(true);
+    expect(slipAccountMatched({ success: true, data: { isAccountMatched: false } })).toBe(false);
+  });
+  it('neither field / no data → null (check not performed — never a mismatch)', () => {
+    expect(slipAccountMatched({ success: true, data: { isDuplicate: false } })).toBeNull();
+    expect(slipAccountMatched({ success: false })).toBeNull();
+  });
+});
+
+describe('SLIP_PREFILTER_PROMPT (2026-07-23 incident pins)', () => {
+  it('memo/theme immunity — a slip whose memo says "sticker" must not be judged by it (prod drop, slip_checks id 424)', () => {
+    expect(SLIP_PREFILTER_PROMPT).toContain('ข้อความในช่องบันทึกช่วยจำ/memo ของสลิป (เช่นคำว่า sticker หรือชื่อสินค้า) และลายพื้นหลัง/ธีมตกแต่งของธนาคาร ไม่มีผลต่อการตัดสิน');
+  });
+  it('the no-list says สติกเกอร์ไลน์/รูปการ์ตูน — never the bare word สติกเกอร์ (collides with slip memo text)', () => {
+    expect(SLIP_PREFILTER_PROMPT).toContain('สติกเกอร์ไลน์/รูปการ์ตูน');
+    expect(SLIP_PREFILTER_PROMPT).not.toMatch(/สติกเกอร์[,)]/);
+  });
+  it('bill-payment slips stay explicitly in-scope', () => {
+    expect(SLIP_PREFILTER_PROMPT).toContain('จ่ายบิลสำเร็จ');
+  });
+});
 
 function fakeClient(replyText: string) {
   return { messages: { create: async () => ({ content: [{ type: 'text', text: replyText }] }) } } as never;
