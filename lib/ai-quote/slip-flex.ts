@@ -4,7 +4,7 @@
 // text when a device can't render Flex). Mirrors the buildOrderFlex pattern in track-flex.ts.
 // Also exports the shared classify/format helpers (classifySlipState, fmtAmount, fmtDate,
 // partyName, bankName) consumed by slip-messenger.ts so both channels render identical copy.
-import { formatSlipReply, type ThunderVerifyResponse, type ThunderParty } from './slip';
+import { formatSlipReply, slipAccountMatched, type ThunderVerifyResponse, type ThunderParty } from './slip';
 
 export type SlipState = 'success' | 'duplicate' | 'mismatch' | 'unreadable';
 
@@ -23,11 +23,14 @@ const SEP = { type: 'separator', margin: 'md', color: '#eceae4' } as const;
 
 type Party = ThunderParty;
 
-/** Mirror formatSlipReply priority exactly so the card + its altText always agree. */
+/** Mirror formatSlipReply priority exactly so the card + its altText always agree.
+ *  Receiver check goes through slipAccountMatched (v2 matchedAccount + legacy
+ *  isAccountMatched dual-read) — 2026-07-23 incident: the legacy-only read let
+ *  slips paid to the wrong account render the ✅ success card. */
 export function classifySlipState(r: ThunderVerifyResponse): SlipState {
   if (r.success && r.data) {
     if (r.data.isDuplicate) return 'duplicate';
-    if (r.data.isAccountMatched === false) return 'mismatch';
+    if (slipAccountMatched(r) === false) return 'mismatch';
     return 'success';
   }
   return 'unreadable';

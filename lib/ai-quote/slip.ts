@@ -22,7 +22,12 @@ export interface ThunderVerifyResponse {
   data?: {
     isDuplicate?: boolean;
     isAmountMatched?: boolean;
+    /** legacy/Remedy only — Thunder v2 never sends it (2026-07-23 raw capture). */
     isAccountMatched?: boolean;
+    /** Thunder v2 (raw capture 2026-07-23): the whitelist entry the receiver
+     *  matched (object) or null = receiver NOT in the shop's whitelist.
+     *  Absent = the check didn't run / different response generation. */
+    matchedAccount?: Record<string, unknown> | null;
     rawSlip?: {
       transRef?: string;
       date?: string;       // Thunder v2 field name
@@ -62,6 +67,22 @@ export async function verifyBankSlipImage(
   }
   try { return (await res.json()) as ThunderVerifyResponse; }
   catch { return { success: false, error: { code: 'INVALID_RESPONSE', message: `HTTP ${res.status}` } }; }
+}
+
+/** Receiver-whitelist verdict across both Thunder response generations —
+ *  single source for classifySlipState (customer card) and slip_checks
+ *  metrics so they can never drift. v2 reports `matchedAccount` (object =
+ *  matched entry, null = receiver not whitelisted); legacy/Remedy reported
+ *  `isAccountMatched: boolean`. Returns null when neither field is present
+ *  (check absent from the response — NOT a mismatch). 2026-07-23 incident:
+ *  reading only the legacy field made every wrong-account slip come back
+ *  ✅ สลิปถูกต้อง (slip_checks id 425). */
+export function slipAccountMatched(r: ThunderVerifyResponse): boolean | null {
+  const d = r.data;
+  if (!d) return null;
+  if ('matchedAccount' in d) return d.matchedAccount != null;
+  if (typeof d.isAccountMatched === 'boolean') return d.isAccountMatched;
+  return null;
 }
 
 /** Thunder result → LINE notification/altText for the slip-verify Flex card.
