@@ -6,7 +6,7 @@ import { resetMockPostgres, queueResult, sqlCalls } from './helpers/mock-postgre
 
 vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 
-import { loadSlipMetrics, parseSlipMetricsChannel } from '@/lib/ai-quote/slip-metrics';
+import { loadSlipMetrics, loadRecentSlipChecks, parseSlipMetricsChannel, recordSlipCheck } from '@/lib/ai-quote/slip-metrics';
 
 describe('parseSlipMetricsChannel', () => {
   it('absent param → ok, no filter (aggregate — พฤติกรรมเดิม)', () => {
@@ -57,5 +57,54 @@ describe('loadSlipMetrics', () => {
     expect(out.windowDays).toBe(30);
     expect(out.days).toHaveLength(2);
     expect(sqlCalls[0].text).toContain("INTERVAL '30 days'");
+  });
+});
+
+// Diagnosability columns (2026-07-23 slip incident): the Haiku answer + full
+// Thunder response are persisted per event so silent drops and response-contract
+// drift are provable from data — Vercel logs retain only a short window.
+describe('recordSlipCheck (raw evidence capture)', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('verified slip → stores prefilter answer + full Thunder response as jsonb', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const result = { success: true, data: { isDuplicate: false, isAccountMatched: null, rawSlip: { amount: { amount: 580 } } } };
+    await recordSlipCheck({ channel: 'line', looksLikeSlip: true, prefilterAnswer: 'yes', result } as never);
+    const call = sqlCalls[0];
+    expect(call.text).toContain('prefilter_answer');
+    expect(call.text).toContain('raw');
+    expect(call.values).toContain('yes');
+    expect(call.values).toContain(JSON.stringify(result));
+  });
+
+  it('pre-filter drop → refusal answer kept, raw NULL (no Thunder call to record)', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    await recordSlipCheck({ channel: 'line', looksLikeSlip: false, prefilterAnswer: 'no, artwork', result: null });
+    const call = sqlCalls[0];
+    expect(call.values).toContain('no, artwork');
+    expect(call.values).not.toContain('{}');
+  });
+});
+
+describe('loadRecentSlipChecks', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('selects newest-first with prefilter_answer + raw, bound LIMIT', async () => {
+    queueResult({ rows: [{ id: 1 }], rowCount: 1 });
+    const rows = await loadRecentSlipChecks('line', 20);
+    const call = sqlCalls[0];
+    expect(call.text).toContain('prefilter_answer');
+    expect(call.text).toContain('raw');
+    expect(call.text).toContain('ORDER BY created_at DESC');
+    expect(call.values).toContain('line');
+    expect(call.values).toContain(20);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('no channel → NULL param disables the filter (mirror loadSlipMetrics)', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    await loadRecentSlipChecks(undefined, 10);
+    expect(sqlCalls[0].values).toContain(null);
+    expect(sqlCalls[0].values).not.toContain('line');
   });
 });

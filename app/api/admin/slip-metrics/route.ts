@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isPostgresConfigured } from '@/lib/postgres';
 import { requireSession } from '@/lib/route-helpers';
-import { loadSlipMetrics, parseSlipMetricsChannel } from '@/lib/ai-quote/slip-metrics';
+import { loadRecentSlipChecks, loadSlipMetrics, parseSlipMetricsChannel } from '@/lib/ai-quote/slip-metrics';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +20,11 @@ export const dynamic = 'force-dynamic';
  * ไม่ส่ง ?channel= = aggregate ทุก channel (พฤติกรรมเดิม, response เพิ่ม
  * field `channel: 'all'`). ค่าอื่นนอกจาก line/messenger → 400.
  * Days are bucketed by the Bangkok calendar. Last 30 days, newest first.
+ *
+ * GET /api/admin/slip-metrics?recent=N[&channel=...]
+ *   → last N raw slip_checks rows (newest first) incl. prefilter_answer +
+ *   full Thunder response (`raw`) — browser-readable evidence for slip
+ *   incidents without DB console access. N = 1..100, else 400.
  */
 export async function GET(request: NextRequest) {
   const session = await requireSession(['admin']);
@@ -35,6 +40,16 @@ export async function GET(request: NextRequest) {
       { error: "invalid channel — use 'line' or 'messenger'" },
       { status: 400 },
     );
+  }
+
+  const recentRaw = request.nextUrl.searchParams.get('recent');
+  if (recentRaw !== null) {
+    const n = Number(recentRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      return NextResponse.json({ error: 'invalid recent — use an integer 1..100' }, { status: 400 });
+    }
+    const recent = await loadRecentSlipChecks(parsed.channel, n);
+    return NextResponse.json({ ok: true, channel: parsed.channel ?? 'all', recent });
   }
 
   const metrics = await loadSlipMetrics(parsed.channel);

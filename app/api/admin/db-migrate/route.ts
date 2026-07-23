@@ -454,6 +454,16 @@ export async function GET() {
     await sql`CREATE INDEX IF NOT EXISTS idx_slip_checks_created ON slip_checks(created_at DESC)`;
     applied.push('idx_slip_checks_created');
 
+    // Diagnosability columns (2026-07-23 slip incident): the Haiku pre-filter's
+    // raw answer + the full Thunder response per event. Proves WHY a silent
+    // drop happened (prefilter_answer) and pins the live Thunder response
+    // contract (raw — e.g. whether isAccountMatched is ever present) without
+    // relying on Vercel's short log window.
+    await sql`ALTER TABLE slip_checks ADD COLUMN IF NOT EXISTS prefilter_answer TEXT`;
+    applied.push('slip_checks.prefilter_answer column');
+    await sql`ALTER TABLE slip_checks ADD COLUMN IF NOT EXISTS raw JSONB`;
+    applied.push('slip_checks.raw column');
+
     // ─── customer_registrations (LINE group / web token → customer name set) ───
     // ผูก identity (กลุ่ม LINE ของลูกค้า หรือลิงก์ web เฉพาะตัว) เข้ากับชุดชื่อลูกค้า
     // ที่ตรงกับ orders.raw->>'customer' — ใช้ค้นงาน active ทั้งหมดของลูกค้ารายนั้น.

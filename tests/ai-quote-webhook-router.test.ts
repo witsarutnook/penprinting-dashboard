@@ -51,7 +51,7 @@ function stubDeps(over: Record<string, unknown> = {}) {
         push: async () => {},
       },
       blobToBase64: async () => ({ data: 'AAA', mediaType: 'image/jpeg' }),
-      isSlipImage: async () => true,
+      isSlipImage: async () => ({ pass: true, answer: 'yes' }),
       verifyBankSlipImage: async () => ({ success: true, data: { isDuplicate: false, isAccountMatched: true, rawSlip: { amount: { amount: 50 } } } }),
       buildSlipFlex: () => ({ type: 'flex', altText: 'SLIP_OK' }),
       loadOrder: async () => ({ order: { name: 'งานเอ' }, job: null, shipped: null, cancelled: null }),
@@ -76,27 +76,42 @@ describe('handleInbound', () => {
   it('skips Thunder when the pre-filter says the image is NOT a slip', async () => {
     let thunderCalled = false;
     const { replies, deps } = stubDeps({
-      isSlipImage: async () => false,
+      isSlipImage: async () => ({ pass: false, answer: 'no' }),
       verifyBankSlipImage: async () => { thunderCalled = true; return { success: false }; },
     });
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, deps as never);
     expect(thunderCalled).toBe(false);
     expect(replies.length).toBe(0); // เงียบ (ไม่ใช่สลิป → ประหยัด Thunder quota)
   });
-  it('records one metric row per image (pass → result, drop → null)', async () => {
-    const events: Array<{ looksLikeSlip: boolean; result: unknown }> = [];
-    const recordSlipCheck = async (ev: { channel: string; looksLikeSlip: boolean; result: unknown }) => { events.push(ev); };
+  it('records one metric row per image (pass → result, drop → null) incl. the pre-filter answer', async () => {
+    const events: Array<{ looksLikeSlip: boolean; prefilterAnswer: string | null; result: unknown }> = [];
+    const recordSlipCheck = async (ev: { channel: string; looksLikeSlip: boolean; prefilterAnswer: string | null; result: unknown }) => { events.push(ev); };
 
     const pass = stubDeps({ recordSlipCheck });
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, pass.deps as never);
 
-    const drop = stubDeps({ recordSlipCheck, isSlipImage: async () => false });
+    const drop = stubDeps({ recordSlipCheck, isSlipImage: async () => ({ pass: false, answer: 'no, artwork' }) });
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, drop.deps as never);
 
     expect(events.length).toBe(2);
-    expect(events[0]).toMatchObject({ looksLikeSlip: true });
+    expect(events[0]).toMatchObject({ looksLikeSlip: true, prefilterAnswer: 'yes' });
     expect(events[0].result).not.toBeNull();          // verified → Thunder result attached
-    expect(events[1]).toMatchObject({ looksLikeSlip: false, result: null }); // dropped → no Thunder call
+    expect(events[1]).toMatchObject({ looksLikeSlip: false, prefilterAnswer: 'no, artwork', result: null }); // dropped → no Thunder call
+  });
+  it('records the metric row BEFORE the reply — a failed send must not lose the evidence row (2026-07-23 incident)', async () => {
+    const events: unknown[] = [];
+    const { deps } = stubDeps({
+      recordSlipCheck: async (ev: unknown) => { events.push(ev); },
+      adapter: {
+        downloadImage: async () => new Blob(['x']),
+        reply: async () => { throw new Error('LINE reply HTTP 500'); },
+        push: async () => {},
+      },
+    });
+    await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'image', imageMessageId: 'i', replyToken: 'rt' }, deps as never)
+      .catch(() => { /* reply throw propagates to the route's catch — expected */ });
+    expect(events.length).toBe(1);
+    expect(events[0]).toMatchObject({ looksLikeSlip: true });
   });
   it('answers /track with a flex card', async () => {
     const { replies, deps } = stubDeps();

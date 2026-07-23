@@ -72,15 +72,21 @@ export function formatSlipReply(_r: ThunderVerifyResponse): string {
   return 'อัพเดทผลการตรวจสอบสลิป';
 }
 
+/** Pre-filter verdict + the model's raw answer (trimmed, lowercased) — the
+ *  answer is persisted to slip_checks.prefilter_answer so a silent drop is
+ *  always attributable (2026-07-23 incident: a real bill-payment slip was
+ *  dropped 3× with zero evidence of what the model actually said). */
+export interface SlipPrefilter { pass: boolean; answer: string | null }
+
 /** Cheap pre-filter: ask Haiku vision whether the image is a Thai bank/e-wallet
  *  transfer slip BEFORE spending a Thunder quota slot (Thunder counts every
- *  request incl. non-slips). Fail-safe = true on any error (a wasted quota slot
+ *  request incl. non-slips). Fail-safe = pass on any error (a wasted quota slot
  *  is cheaper than dropping a real customer slip). client injected for tests. */
 export async function isSlipImage(
   imageBase64: string,
   mediaType: string,
   deps: { client: Anthropic; model: string },
-): Promise<boolean> {
+): Promise<SlipPrefilter> {
   try {
     const res = await deps.client.messages.create({
       model: deps.model,
@@ -102,11 +108,16 @@ export async function isSlipImage(
     });
     const text = (res.content as Array<{ type: string; text?: string }>)
       .filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ').trim().toLowerCase();
-    if (!text) return true; // empty/text-less response → fail-safe (don't drop a possible slip)
+    if (!text) return { pass: true, answer: '' }; // empty/text-less response → fail-safe (don't drop a possible slip)
     // fail-safe: pass everything EXCEPT an explicit refusal — keeps real slips
     // (incl. "รูปนี้เป็นสลิป" / "น่าจะใช่") from being silently dropped.
-    return !(text.startsWith('no') || text.startsWith('ไม่'));
+    // Refusal = the word "no" / "ไม่ใช่" / bare "ไม่" ONLY. A prefix match on
+    // "ไม่"/"no" used to read hedges — "ไม่แน่ใจ", "not sure" — as refusals and
+    // silently drop real slips (2026-07-23): unsure must fall through to pass,
+    // matching the prompt's own "ถ้าไม่แน่ใจ ให้ตอบ yes" instruction.
+    const refused = /^no\b/.test(text) || text.startsWith('ไม่ใช่') || text === 'ไม่';
+    return { pass: !refused, answer: text };
   } catch {
-    return true; // fail-safe
+    return { pass: true, answer: null }; // fail-safe
   }
 }
