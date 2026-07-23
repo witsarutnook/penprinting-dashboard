@@ -298,22 +298,32 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   const text = m.text!;
   const sid = sessionId;
   const escalate = async (trigger: TriggerType, conv: ConversationTurn[], replyText: string) => {
-    await ai.saveConversation(sid, conv);
-    await ai.updateLeadStatus(sid, trigger === 'order_intent' ? 'กำลังติดตาม' : 'escalated');
+    // Parallel persists (perf M-webhook 2026-07-23): the three DB ops are
+    // independent (different tables / read-only), so they run concurrently —
+    // the customer is waiting on this chain on top of the LLM latency.
     // ราคา AI ถ้ามี (spec §4) — best-effort จาก DB: quotes ของ turn นี้ถูก save
     // ก่อนถึง trigger ②③ แล้ว ส่วน ①④ ใช้ของ turn ก่อนหน้า. Fail = การ์ดไม่มีราคา.
-    let lastQuote: { productType: string; unitPrice: number } | null = null;
-    try { lastQuote = await ai.loadLastQuote(sid); } catch { /* best-effort */ }
-    if (ai.pushStaff) {
-      try {
-        await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, channel: m.channel, channelUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
-      } catch (err) {
-        console.error(`[ai-quote/${m.channel}] escalation push failed:`, err instanceof Error ? err.message : err);
-      }
-    } else {
-      console.error(`[ai-quote/${m.channel}] LINE_STAFF_GROUP_ID unset — escalation NOT pushed (lead #${sid})`);
-    }
-    await ai.exitMode(uid);
+    const [, , lastQuote] = await Promise.all([
+      ai.saveConversation(sid, conv),
+      ai.updateLeadStatus(sid, trigger === 'order_intent' ? 'กำลังติดตาม' : 'escalated'),
+      ai.loadLastQuote(sid).catch((): null => null),
+    ]);
+    // Staff push + mode exit are independent of each other; both must still
+    // COMPLETE before the customer reply (evidence/side-effects before reply).
+    await Promise.all([
+      (async () => {
+        if (ai.pushStaff) {
+          try {
+            await ai.pushStaff(ai.buildEscalationFlex({ trigger, customerName, channel: m.channel, channelUserId: uid, lastUserText: text, lastQuote, sessionId: sid }));
+          } catch (err) {
+            console.error(`[ai-quote/${m.channel}] escalation push failed:`, err instanceof Error ? err.message : err);
+          }
+        } else {
+          console.error(`[ai-quote/${m.channel}] LINE_STAFF_GROUP_ID unset — escalation NOT pushed (lead #${sid})`);
+        }
+      })(),
+      ai.exitMode(uid),
+    ]);
     await deps.adapter.reply(m, replyText);
   };
 
@@ -369,7 +379,12 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     return;
   }
 
-  await ai.saveConversation(sid, persistedConv(out.reply));
-  await ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds });
+  // Parallel persists (perf M-webhook 2026-07-23): conversation and mode live
+  // in different tables with no ordering dependency — run concurrently, but
+  // both must land BEFORE the reply (persist-before-reply, 7/23 incident rule).
+  await Promise.all([
+    ai.saveConversation(sid, persistedConv(out.reply)),
+    ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds }),
+  ]);
   await deps.adapter.reply(m, out.reply);
 }

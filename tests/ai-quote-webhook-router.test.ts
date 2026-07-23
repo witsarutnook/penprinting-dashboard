@@ -452,6 +452,46 @@ describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
   });
 });
 
+describe('handleInbound — parallel persists before reply (perf M-webhook 2026-07-23)', () => {
+  it('happy path: touchMode is still attempted when saveConversation rejects (parallel, not serial)', async () => {
+    const { ai, calls } = stubAi({ saveConversation: async () => { throw new Error('db down'); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000 ใบ'), deps as never).catch(() => { /* persist failure propagates */ });
+    // Serial shape awaited saveConversation first, so its failure skipped
+    // touchMode entirely; the parallel shape must attempt both.
+    expect(calls, 'parallel persists: touchMode must fire even when saveConversation fails').toContain('touch');
+    expect(replies.length, 'persist-before-reply: failed persist must not send the reply').toBe(0);
+  });
+
+  it('escalate: updateLeadStatus is still attempted when saveConversation rejects (parallel, not serial)', async () => {
+    const { ai, calls } = stubAi({ saveConversation: async () => { throw new Error('db down'); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอคุยกับพนักงานค่ะ'), deps as never).catch(() => { /* persist failure propagates */ });
+    expect(calls, 'parallel escalate persists: lead status must still be attempted').toContain('status:escalated');
+    expect(replies.length, 'persist-before-reply: failed persist must not send the reply').toBe(0);
+  });
+
+  it('escalate ordering pin: staff push + exitMode complete BEFORE the customer reply', async () => {
+    const order: string[] = [];
+    const { ai } = stubAi({
+      pushStaff: async () => { order.push('push-staff'); },
+      exitMode: async () => { order.push('exit'); },
+    });
+    const { deps } = stubDeps({
+      aiEnabled: true,
+      aiCustomer: ai,
+      adapter: {
+        downloadImage: async () => new Blob(['x']),
+        reply: async () => { order.push('reply'); },
+        push: async () => {},
+      },
+    });
+    await handleInbound(text1on1('ขอคุยกับพนักงานค่ะ'), deps as never);
+    expect(order.indexOf('push-staff'), 'staff must be notified before the customer reply').toBeLessThan(order.indexOf('reply'));
+    expect(order.indexOf('exit'), 'mode must be exited before the customer reply').toBeLessThan(order.indexOf('reply'));
+  });
+});
+
 describe('routeInbound (Messenger — trackEnabled=false, spec 1c §1)', () => {
   const msgr = { channel: 'messenger' as const, channelUserId: 'PSID1' };
   it('routes images to slip', () => {
