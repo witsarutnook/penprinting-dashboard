@@ -30,18 +30,33 @@ function fakeClient(replyText: string) {
 
 describe('isSlipImage (Haiku vision pre-filter)', () => {
   const b64 = 'iVBORw0KGgo=';
-  it('returns true when the model answers yes', async () => {
-    expect(await isSlipImage(b64, 'image/png', { client: fakeClient('yes'), model: 'm' })).toBe(true);
+  it('passes when the model answers yes — answer captured for slip_checks', async () => {
+    expect(await isSlipImage(b64, 'image/png', { client: fakeClient('yes'), model: 'm' }))
+      .toEqual({ pass: true, answer: 'yes' });
   });
-  it('returns false when the model answers no', async () => {
-    expect(await isSlipImage(b64, 'image/png', { client: fakeClient('no, this is food'), model: 'm' })).toBe(false);
+  it('drops on an explicit English refusal ("no ...")', async () => {
+    expect(await isSlipImage(b64, 'image/png', { client: fakeClient('no, this is food'), model: 'm' }))
+      .toEqual({ pass: false, answer: 'no, this is food' });
   });
-  it('fail-safe: returns true when the model call throws (better waste 1 quota than miss a slip)', async () => {
+  it('drops on an explicit Thai refusal ("ไม่ใช่..." / bare "ไม่")', async () => {
+    expect((await isSlipImage(b64, 'image/png', { client: fakeClient('ไม่ใช่สลิป'), model: 'm' })).pass).toBe(false);
+    expect((await isSlipImage(b64, 'image/png', { client: fakeClient('ไม่'), model: 'm' })).pass).toBe(false);
+  });
+  it('"ไม่แน่ใจ" (unsure) must fail-safe to PASS — 2026-07-23 incident: startsWith("ไม่") read it as a refusal and silently dropped a real slip', async () => {
+    expect(await isSlipImage(b64, 'image/png', { client: fakeClient('ไม่แน่ใจ'), model: 'm' }))
+      .toEqual({ pass: true, answer: 'ไม่แน่ใจ' });
+  });
+  it('"not sure" must fail-safe to PASS — refusal needs the word "no", not the prefix', async () => {
+    expect((await isSlipImage(b64, 'image/png', { client: fakeClient('not sure'), model: 'm' })).pass).toBe(true);
+  });
+  it('fail-safe: passes when the model call throws (better waste 1 quota than miss a slip) — answer null', async () => {
     const throwing = { messages: { create: async () => { throw new Error('boom'); } } } as never;
-    expect(await isSlipImage(b64, 'image/png', { client: throwing, model: 'm' })).toBe(true);
+    expect(await isSlipImage(b64, 'image/png', { client: throwing, model: 'm' }))
+      .toEqual({ pass: true, answer: null });
   });
-  it('fail-safe: returns true when the model returns no text blocks', async () => {
+  it('fail-safe: passes when the model returns no text blocks', async () => {
     const noText = { messages: { create: async () => ({ content: [] }) } } as never;
-    expect(await isSlipImage(b64, 'image/png', { client: noText, model: 'm' })).toBe(true);
+    expect(await isSlipImage(b64, 'image/png', { client: noText, model: 'm' }))
+      .toEqual({ pass: true, answer: '' });
   });
 });

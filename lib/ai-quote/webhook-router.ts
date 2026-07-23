@@ -89,7 +89,7 @@ export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean; trac
 export interface HandleDeps {
   adapter: Pick<ChannelAdapter, 'downloadImage' | 'reply' | 'push'>;
   blobToBase64: (b: Blob) => Promise<{ data: string; mediaType: string }>;
-  isSlipImage: (b64: string, mediaType: string, d: { client: unknown; model: string }) => Promise<boolean>;
+  isSlipImage: (b64: string, mediaType: string, d: { client: unknown; model: string }) => Promise<{ pass: boolean; answer: string | null }>;
   verifyBankSlipImage: (image: Blob, opts?: { matchAccount?: boolean }) => Promise<ThunderVerifyResponse>;
   buildSlipFlex: (r: ThunderVerifyResponse) => Record<string, unknown>;
   loadOrder: (id: number) => Promise<{ order: unknown } & Record<string, unknown>>;
@@ -104,7 +104,7 @@ export interface HandleDeps {
   trackEnabled?: boolean;
   // Optional best-effort metrics sink (one row per inbound slip image). Omitted
   // in tests; wired to Postgres in the LINE route. Must never throw.
-  recordSlipCheck?: (ev: { channel: string; looksLikeSlip: boolean; result: ThunderVerifyResponse | null }) => Promise<void>;
+  recordSlipCheck?: (ev: { channel: string; looksLikeSlip: boolean; prefilterAnswer: string | null; result: ThunderVerifyResponse | null }) => Promise<void>;
   // 1b-B customer AI arms — absent = flag off / env missing (1b-A behaviour).
   aiCustomer?: CustomerAiDeps;
 }
@@ -184,14 +184,14 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     // images). Tuned to err toward "yes": only an explicit "no"/"ไม่" drops the
     // image, and the prompt explicitly counts bill-payment/QR/top-up slips as slips.
     const { data, mediaType } = await deps.blobToBase64(blob);
-    const looksLikeSlip = await deps.isSlipImage(data, mediaType, { client: deps.anthropic, model: deps.visionModel });
+    const pre = await deps.isSlipImage(data, mediaType, { client: deps.anthropic, model: deps.visionModel });
     let result: ThunderVerifyResponse | null = null;
-    if (looksLikeSlip) {
-      result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
-      await deps.adapter.reply(m, deps.buildSlipFlex(result));
-    }
-    // record one metric row per image (pass or drop) — best-effort, never throws
-    await deps.recordSlipCheck?.({ channel: m.channel, looksLikeSlip, result });
+    if (pre.pass) result = await deps.verifyBankSlipImage(blob, { matchAccount: true });
+    // record one metric row per image (pass or drop) BEFORE the reply — the
+    // sink never throws, and a failed send must not lose the evidence row
+    // (2026-07-23 incident: record-after-reply left silent failures unprovable)
+    await deps.recordSlipCheck?.({ channel: m.channel, looksLikeSlip: pre.pass, prefilterAnswer: pre.answer, result });
+    if (result) await deps.adapter.reply(m, deps.buildSlipFlex(result));
     return;
   }
   if (route === 'track') {

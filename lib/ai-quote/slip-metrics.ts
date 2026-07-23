@@ -59,12 +59,16 @@ export async function loadSlipMetrics(channel: SlipMetricsChannel | undefined) {
 export interface SlipCheckEvent {
   channel: string;
   looksLikeSlip: boolean;                  // Haiku pre-filter verdict
+  prefilterAnswer: string | null;          // Haiku's raw answer (null = model call failed → fail-safe pass)
   result: ThunderVerifyResponse | null;    // null when the pre-filter dropped it (no Thunder call)
 }
 
 /** Persist one slip-check event. `thunder_called` mirrors `looksLikeSlip`
  *  (Thunder is only hit when the pre-filter passes), so summing it gives the
- *  Thunder quota consumed. Swallows every error. */
+ *  Thunder quota consumed. `prefilter_answer` + `raw` are the diagnosability
+ *  columns (2026-07-23 incident): the Haiku answer proves WHY a drop happened,
+ *  the full Thunder response pins the live API contract (e.g. whether
+ *  isAccountMatched is ever present). Swallows every error. */
 export async function recordSlipCheck(ev: SlipCheckEvent): Promise<void> {
   if (!isPostgresConfigured()) return;
   const r = ev.result;
@@ -72,11 +76,28 @@ export async function recordSlipCheck(ev: SlipCheckEvent): Promise<void> {
   try {
     await sql`
       INSERT INTO slip_checks
-        (channel, looks_like_slip, thunder_called, thunder_success, is_duplicate, is_account_matched, amount)
+        (channel, looks_like_slip, prefilter_answer, thunder_called, thunder_success, is_duplicate, is_account_matched, amount, raw)
       VALUES
-        (${ev.channel}, ${ev.looksLikeSlip}, ${ev.looksLikeSlip},
-         ${r ? r.success : null}, ${r?.data?.isDuplicate ?? null}, ${r?.data?.isAccountMatched ?? null}, ${amount})`;
+        (${ev.channel}, ${ev.looksLikeSlip}, ${ev.prefilterAnswer}, ${ev.looksLikeSlip},
+         ${r ? r.success : null}, ${r?.data?.isDuplicate ?? null}, ${r?.data?.isAccountMatched ?? null}, ${amount},
+         ${r ? JSON.stringify(r) : null}::jsonb)`;
   } catch (e) {
     console.error('[ai-quote] recordSlipCheck failed:', e instanceof Error ? e.message : e);
   }
+}
+
+/** Newest-first raw slip-check rows for /api/admin/slip-metrics?recent=N —
+ *  browser-readable evidence (prefilter answer + full Thunder response) without
+ *  needing DB console access. NULL channel param disables the filter in-query
+ *  (mirror loadSlipMetrics). */
+export async function loadRecentSlipChecks(channel: SlipMetricsChannel | undefined, limit: number) {
+  const ch = channel ?? null;
+  const { rows } = await sql`
+    SELECT id, created_at, channel, looks_like_slip, prefilter_answer,
+           thunder_called, thunder_success, is_duplicate, is_account_matched, amount, raw
+    FROM slip_checks
+    WHERE (${ch}::text IS NULL OR channel = ${ch})
+    ORDER BY created_at DESC
+    LIMIT ${limit}`;
+  return rows;
 }
