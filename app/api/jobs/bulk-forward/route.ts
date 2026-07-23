@@ -3,7 +3,7 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { validateForwardTarget } from '@/lib/forward';
 import { mintJobIds } from '@/lib/id-allocation';
-import { bulkForwardInPostgres, appendAuditToPostgres, type BulkForwardItem } from '@/lib/postgres-write';
+import { bulkForwardInPostgres, appendAuditBatchToPostgres, type BulkForwardItem } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
 
@@ -129,15 +129,15 @@ export async function POST(req: Request) {
   }));
   const r = await bulkForwardInPostgres(phase2Items);
   // Audit per successful item — each new job's history tab gets its own entry.
-  for (const s of r.succeeded) {
-    await appendAuditToPostgres({
-      action: 'bulkForward',
-      role: session.role,
-      user: session.user,
-      targetId: s.newId,
-      summary: `ส่งต่องาน "${s.name}" id=${s.oldId}→${s.newId}`,
-    });
-  }
+  // One multi-row INSERT for the whole batch (perf H-bulkforward 2026-07-23 —
+  // the per-item await loop cost +1 round-trip per job).
+  await appendAuditBatchToPostgres(r.succeeded.map((s) => ({
+    action: 'bulkForward',
+    role: session.role,
+    user: session.user,
+    targetId: s.newId,
+    summary: `ส่งต่องาน "${s.name}" id=${s.oldId}→${s.newId}`,
+  })));
   try {
     const { revalidatePath, revalidateTag } = await import('next/cache');
     revalidateTag('load-all'); // bust loadAll() snapshot cache

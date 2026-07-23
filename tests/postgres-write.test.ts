@@ -27,6 +27,7 @@ import {
   restoreJobInPostgres,
   isActiveJobConflict,
   appendAuditToPostgres,
+  appendAuditBatchToPostgres,
   addTemplateToPostgres,
   deleteTemplateFromPostgres,
   PostgresWriteError,
@@ -608,12 +609,32 @@ describe('cancelJobInPostgres', () => {
 describe('bulkForwardInPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
+  it('batches the whole run: ONE ANY() gate + ONE multi-row INSERT regardless of item count (perf H-bulkforward 2026-07-23)', async () => {
+    // Single gate statement tombstones both sources at once…
+    queueResult({ rows: [{ id: 100 }, { id: 101 }], rowCount: 2 });
+    // …and a single multi-row INSERT writes both new jobs.
+    queueResult({ rows: [{ id: 500 }, { id: 501 }], rowCount: 2 });
+
+    const r = await bulkForwardInPostgres([
+      { oldId: 100, newJob: { id: 500, name: 'job-A', dept: 'print', staff: 'mo' } },
+      { oldId: 101, newJob: { id: 501, name: 'job-B', dept: 'print', staff: 'mo' } },
+    ]);
+    expect(r.succeeded).toHaveLength(2);
+    expect(r.failed).toHaveLength(0);
+    // The old shape ran 2 statements PER ITEM (≈75 round-trips for a 25-item
+    // batch). The batch shape must stay flat: exactly 1 gate + 1 INSERT.
+    expect(callsContaining('UPDATE jobs SET phase2_deleted_at = NOW()')).toHaveLength(1);
+    expect(callsContaining('INSERT INTO jobs')).toHaveLength(1);
+    const gate = findCallContaining('UPDATE jobs SET phase2_deleted_at = NOW()');
+    expect(gate!.text, 'gate must cover all ids in one ANY()').toContain('ANY(');
+    expect(gate!.text).toContain('phase2_deleted_at IS NULL');
+    expect(gate!.text).toContain('RETURNING');
+  });
+
   it('gate-lost item (missing OR already forwarded — double-click loser) goes to failed[] — does NOT block other items', async () => {
-    // Item 1: gate wins (conditional tombstone RETURNING id), then INSERT new
+    // Gate: only oldId 100 wins; 999 is missing or already tombstoned.
     queueResult({ rows: [{ id: 100 }], rowCount: 1 });
-    queueResult({ rows: [{ id: 500 }], rowCount: 1 }); // INSERT new
-    // Item 2: gate matches 0 rows (missing or already tombstoned by the racing winner)
-    queueResult({ rows: [], rowCount: 0 });
+    queueResult({ rows: [{ id: 500 }], rowCount: 1 }); // INSERT for the winner only
 
     const r = await bulkForwardInPostgres([
       { oldId: 100, newJob: { id: 500, name: 'job-A', dept: 'print', staff: 'mo' } },
@@ -624,8 +645,9 @@ describe('bulkForwardInPostgres', () => {
     expect(r.failed).toHaveLength(1);
     expect(r.failed[0].oldId).toBe(999);
     expect(r.failed[0].error).toMatch(/not found or already forwarded/i);
-    // The loser must NOT have inserted a second card (the H2 double-forward bug).
-    expect(callsContaining('INSERT INTO jobs')).toHaveLength(1);
+    // The loser must NOT get a card inserted (the H2 double-forward bug).
+    const insert = findCallContaining('INSERT INTO jobs');
+    expect(insert!.values, 'loser newId must not be in the INSERT params').not.toContain(501);
   });
 
   it('successful item gates old via conditional tombstone FIRST, then INSERTs new (audit H2 2026-07-21)', async () => {
@@ -649,19 +671,37 @@ describe('bulkForwardInPostgres', () => {
     expect(insert.text, 'INSERT must be idempotent').toContain('ON CONFLICT (id) DO NOTHING');
   });
 
-  it('compensates (un-tombstones old) when the new-job INSERT fails after the gate', async () => {
-    queueResult({ rows: [{ id: 200 }], rowCount: 1 }); // gate wins
-    queueError(new Error('insert exploded'));           // INSERT new fails
-    queueResult({ rowCount: 1 });                       // compensating un-tombstone
+  it('compensates ALL winners (un-tombstone via ANY) when the batch INSERT fails', async () => {
+    queueResult({ rows: [{ id: 200 }, { id: 201 }], rowCount: 2 }); // gate: both win
+    queueError(new Error('insert exploded'));                        // batch INSERT fails
+    queueResult({ rowCount: 2 });                                    // compensating un-tombstone
 
     const r = await bulkForwardInPostgres([
-      { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top' } },
+      { oldId: 200, newJob: { id: 700, name: 'fwd-A', dept: 'post', staff: 'top' } },
+      { oldId: 201, newJob: { id: 701, name: 'fwd-B', dept: 'post', staff: 'top' } },
     ]);
     expect(r.succeeded).toHaveLength(0);
-    expect(r.failed).toHaveLength(1);
+    expect(r.failed).toHaveLength(2);
     expect(r.failed[0].error).toMatch(/insert exploded/);
-    // Failed forward must leave the board unchanged — source row revived.
-    expect(findCallContaining('phase2_deleted_at = NULL'), 'must revive old job').toBeDefined();
+    expect(r.failed[1].error).toMatch(/insert exploded/);
+    // Failed forward must leave the board unchanged — ALL tombstoned sources revived.
+    const comp = findCallContaining('phase2_deleted_at = NULL');
+    expect(comp, 'must revive old jobs').toBeDefined();
+    expect(comp!.text, 'compensation must cover all winners in one ANY()').toContain('ANY(');
+  });
+
+  it('duplicate oldId within one batch — first occurrence proceeds, the rest fail as gate losers', async () => {
+    queueResult({ rows: [{ id: 100 }], rowCount: 1 }); // gate (id appears once in ANY)
+    queueResult({ rows: [{ id: 500 }], rowCount: 1 }); // INSERT winner only
+
+    const r = await bulkForwardInPostgres([
+      { oldId: 100, newJob: { id: 500, name: 'job-A', dept: 'print', staff: 'mo' } },
+      { oldId: 100, newJob: { id: 501, name: 'job-A', dept: 'print', staff: 'mo' } },
+    ]);
+    expect(r.succeeded).toHaveLength(1);
+    expect(r.succeeded[0]).toMatchObject({ oldId: 100, newId: 500 });
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].error).toMatch(/not found or already forwarded/i);
   });
 
   it('per-item invalid input goes to failed without throwing', async () => {
@@ -677,6 +717,36 @@ describe('bulkForwardInPostgres', () => {
     expect(r.failed[2].error).toMatch(/Missing job name/);
     // No SQL ran for invalid items
     expect(sqlCalls).toHaveLength(0);
+  });
+});
+
+describe('appendAuditBatchToPostgres', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('writes N entries in ONE multi-row INSERT (perf H-bulkforward 2026-07-23)', async () => {
+    queueResult({ rowCount: 2 });
+    await appendAuditBatchToPostgres([
+      { action: 'bulkForward', role: 'admin', user: 'nook', targetId: 500, summary: 's1' },
+      { action: 'bulkForward', role: 'admin', user: 'nook', targetId: 501, summary: 's2' },
+    ]);
+    const inserts = callsContaining('INSERT INTO audit_log');
+    expect(inserts, 'must be a single statement, not one per entry').toHaveLength(1);
+    expect(inserts[0].values).toContain('s1');
+    expect(inserts[0].values).toContain('s2');
+    expect(inserts[0].values, 'actor formatted role:user').toContain('admin:nook');
+    expect(inserts[0].text).toContain("'postgres'");
+  });
+
+  it('empty input is a no-op (no SQL)', async () => {
+    await appendAuditBatchToPostgres([]);
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('never throws — SQL failure is swallowed (audit must not break the mutation)', async () => {
+    queueError(new Error('boom'));
+    await expect(
+      appendAuditBatchToPostgres([{ action: 'x', role: 'admin', targetId: 1 }]),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -1243,5 +1313,32 @@ describe('ID-collision guard — post-insert read-back (§6/R5)', () => {
     // a failed forward must leave the board unchanged — the gate-first order
     // means the old job WAS tombstoned, so compensation must revive it.
     expect(findCallContaining('phase2_deleted_at = NULL'), 'must revive old job after collision').toBeDefined();
+  });
+
+  it('bulkForward partial collision: colliding item fails + revives, the rest of the batch still succeeds', async () => {
+    queueResult({ rows: [{ id: 200 }, { id: 201 }], rowCount: 2 }); // gate: both tombstoned
+    queueResult({ rows: [{ id: 700 }], rowCount: 1 });               // batch INSERT: 701 swallowed by conflict
+    queueResult({ rows: [{ name: 'unrelated', order_id: 7 }] });     // read-back 701 → mismatch
+    queueResult({ rowCount: 1 });                                    // un-tombstone 201 only
+    const r = await bulkForwardInPostgres([
+      { oldId: 200, newJob: { id: 700, name: 'fwd-A', dept: 'post', staff: 'top' } },
+      { oldId: 201, newJob: { id: 701, name: 'fwd-B', dept: 'post', staff: 'top', orderId: 202605061 } },
+    ]);
+    expect(r.succeeded).toHaveLength(1);
+    expect(r.succeeded[0]).toMatchObject({ oldId: 200, newId: 700 });
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].oldId).toBe(201);
+    expect(r.failed[0].error).toMatch(/ID collision on job 701/);
+  });
+
+  it('bulkForward identical colliding row (idempotent retry) still counts as succeeded', async () => {
+    queueResult({ rows: [{ id: 200 }], rowCount: 1 });                 // gate
+    queueResult({ rows: [], rowCount: 0 });                            // INSERT swallowed
+    queueResult({ rows: [{ name: 'fwd', order_id: 202605061 }] });     // read-back → identical row
+    const r = await bulkForwardInPostgres([
+      { oldId: 200, newJob: { id: 700, name: 'fwd', dept: 'post', staff: 'top', orderId: 202605061 } },
+    ]);
+    expect(r.succeeded).toHaveLength(1);
+    expect(r.failed).toHaveLength(0);
   });
 });

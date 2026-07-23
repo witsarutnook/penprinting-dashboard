@@ -1180,17 +1180,26 @@ export interface BulkForwardResult {
   failed: Array<{ oldId: number; name: string; error: string }>;
 }
 
-/** Phase 2 multi-row forward. For each item:
- *  1. GATE: conditional tombstone of the source row (audit H2, 2026-07-21) —
- *     `UPDATE ... WHERE id=oldId AND phase2_deleted_at IS NULL RETURNING id`.
- *     Statement-level atomicity means that of two racing forwards of the same
- *     job (double-click / two tabs / retry) exactly ONE wins; the loser sees
- *     0 rows → failed[] — instead of both inserting distinct new cards (the
- *     old SELECT-check → INSERT → unconditional-tombstone shape let both
- *     racers through = one source job became two active forwarded jobs).
- *  2. INSERT newJob (ON CONFLICT DO NOTHING + collision read-back guard).
- *     On failure the gate's tombstone is COMPENSATED (un-tombstoned) so a
- *     failed forward leaves the board unchanged.
+/** Phase 2 multi-row forward — BATCH shape (perf H-bulkforward, 2026-07-23).
+ *
+ *  The 2026-07-21 per-item shape ran 2 statements per job (+1 audit in the
+ *  route) = ~75 sequential Neon round-trips for a 25-job batch (~1-4s user
+ *  wait). The batch shape keeps the exact same semantics in ~2 statements:
+ *
+ *  1. GATE (one statement, audit H2 semantics preserved): conditional
+ *     tombstone of ALL source rows —
+ *     `UPDATE ... WHERE id = ANY(oldIds) AND phase2_deleted_at IS NULL
+ *      RETURNING id`.
+ *     Statement-level atomicity still applies PER ROW: of two racing
+ *     forwards of the same job, exactly one statement's WHERE matches the
+ *     row; the loser's id is absent from RETURNING → failed[].
+ *  2. INSERT all new jobs in ONE multi-VALUES statement (ON CONFLICT DO
+ *     NOTHING + RETURNING id). Ids missing from RETURNING hit the same
+ *     read-back guard as before (identical row = idempotent retry →
+ *     succeeded; different row = minted-ID collision → failed). On failure
+ *     the gate's tombstones are COMPENSATED (un-tombstoned) — whole-batch
+ *     on SQL error, per-item on collision — so a failed forward leaves the
+ *     board unchanged.
  *
  *  Best-effort per item — one item's failure doesn't block the others.
  *  Mirrors the Apps Script `bulkForward` semantic from write.ts. */
@@ -1200,7 +1209,19 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
   }
   const succeeded: BulkForwardResult['succeeded'] = [];
   const failed: BulkForwardResult['failed'] = [];
+  const GATE_LOST = 'Job not found or already forwarded — refresh and retry';
 
+  // ── Validate (no SQL for invalid items) + dedupe oldIds. A duplicate
+  // oldId within one batch is the same class as a gate loser: under the old
+  // per-item loop the second occurrence lost the conditional gate; here it
+  // fails up-front with the same message.
+  interface ValidItem {
+    oldId: number; newId: number; name: string; orderId: number | null;
+    date: string | null; dateIn: string | null; staff: string; dept: string;
+    status: string; coworkJson: string | null; rawJson: string;
+  }
+  const valid: ValidItem[] = [];
+  const seenOldIds = new Set<number>();
   for (const item of items) {
     const oldIdNum = Number(item.oldId);
     const newIdNum = Number(item.newJob.id);
@@ -1218,79 +1239,108 @@ export async function bulkForwardInPostgres(items: BulkForwardItem[]): Promise<B
       failed.push({ oldId: oldIdNum, name: '', error: 'Missing job name' });
       continue;
     }
+    if (seenOldIds.has(oldIdNum)) {
+      failed.push({ oldId: oldIdNum, name, error: GATE_LOST });
+      continue;
+    }
+    seenOldIds.add(oldIdNum);
 
+    const orderIdRaw = item.newJob.orderId == null || item.newJob.orderId === ''
+      ? null
+      : Number(item.newJob.orderId);
+    const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
+    const date = item.newJob.date != null ? String(item.newJob.date) : null;
+    const dateIn = item.newJob.dateIn != null ? String(item.newJob.dateIn) : null;
+    const staff = String(item.newJob.staff);
+    const dept = String(item.newJob.dept);
+    const status = String(item.newJob.status || 'pending');
+    // cowork — forward callers omit it (cleared on forward); forward-undo
+    // passes the pre-forward snapshot's cowork to restore collaborators.
+    const cowork = item.newJob.cowork ?? null;
+    const coworkJson = cowork == null ? null : JSON.stringify(cowork);
+    const rawJson = JSON.stringify({
+      id: newIdNum, name, date, dateIn, dept, staff, status, orderId,
+      ...(cowork != null ? { cowork } : {}),
+    });
+
+    valid.push({ oldId: oldIdNum, newId: newIdNum, name, orderId, date, dateIn, staff, dept, status, coworkJson, rawJson });
+  }
+  if (valid.length === 0) return { ok: true, succeeded, failed };
+
+  // ── Gate: one conditional tombstone covering every source row. Ids absent
+  // from RETURNING are missing OR already forwarded/shipped/cancelled by a
+  // racing winner → failed[] (H2 mutual exclusion, now per-row in one hop).
+  let wonIds: Set<number>;
+  try {
+    const oldIds = valid.map((v) => v.oldId);
+    const gate = await sql<{ id: number | string }>`
+      UPDATE jobs SET phase2_deleted_at = NOW()
+      WHERE id = ANY(${oldIds as unknown as string}::bigint[]) AND phase2_deleted_at IS NULL
+      RETURNING id
+    `;
+    wonIds = new Set(gate.rows.map((r) => Number(r.id)));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    for (const v of valid) failed.push({ oldId: v.oldId, name: v.name, error: msg });
+    return { ok: true, succeeded, failed };
+  }
+
+  const winners = valid.filter((v) => wonIds.has(v.oldId));
+  for (const v of valid) {
+    if (!wonIds.has(v.oldId)) failed.push({ oldId: v.oldId, name: v.name, error: GATE_LOST });
+  }
+  if (winners.length === 0) return { ok: true, succeeded, failed };
+
+  // ── One multi-VALUES INSERT for every gate winner. Per-value casts are
+  // identical to the old single-row statement (bigint/jsonb) — sql.query is
+  // used because a template literal can't express a dynamic VALUES list.
+  const placeholders: string[] = [];
+  const params: unknown[] = [];
+  winners.forEach((v, i) => {
+    const b = i * 10;
+    placeholders.push(
+      `($${b + 1}::bigint, $${b + 2}::bigint, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}::jsonb, $${b + 10}::jsonb)`,
+    );
+    params.push(v.newId, v.orderId, v.name, v.date, v.dateIn, v.staff, v.dept, v.status, v.coworkJson, v.rawJson);
+  });
+  let insertedIds: Set<number>;
+  try {
+    const ins = await sql.query(
+      `INSERT INTO jobs (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id`,
+      params,
+    );
+    insertedIds = new Set(((ins.rows ?? []) as Array<{ id: number | string }>).map((r) => Number(r.id)));
+  } catch (err) {
+    // Whole statement failed → nothing was inserted → revive ALL tombstoned
+    // sources so a failed forward leaves the board unchanged.
     try {
-      // Gate: conditional tombstone FIRST — the atomic statement that makes
-      // racing forwards mutually exclusive. 0 rows → source missing OR
-      // already forwarded/shipped/cancelled by the racing winner.
-      const gate = await sql<{ id: number }>`
-        UPDATE jobs SET phase2_deleted_at = NOW()
-        WHERE id = ${oldIdNum}::bigint AND phase2_deleted_at IS NULL
-        RETURNING id
-      `;
-      if (gate.rows.length === 0) {
-        failed.push({
-          oldId: oldIdNum,
-          name,
-          error: 'Job not found or already forwarded — refresh and retry',
-        });
-        continue;
-      }
+      const winnerOldIds = winners.map((v) => v.oldId);
+      await sql`UPDATE jobs SET phase2_deleted_at = NULL WHERE id = ANY(${winnerOldIds as unknown as string}::bigint[])`;
+    } catch { /* surface the original error */ }
+    const msg = err instanceof Error ? err.message : String(err);
+    for (const v of winners) failed.push({ oldId: v.oldId, name: v.name, error: msg });
+    return { ok: true, succeeded, failed };
+  }
 
-      // Build new job row.
-      const orderIdRaw = item.newJob.orderId == null || item.newJob.orderId === ''
-        ? null
-        : Number(item.newJob.orderId);
-      const orderId = Number.isFinite(orderIdRaw) && orderIdRaw !== 0 ? orderIdRaw : null;
-      const date = item.newJob.date != null ? String(item.newJob.date) : null;
-      const dateIn = item.newJob.dateIn != null ? String(item.newJob.dateIn) : null;
-      const staff = String(item.newJob.staff);
-      const dept = String(item.newJob.dept);
-      const status = String(item.newJob.status || 'pending');
-      // cowork — forward callers omit it (cleared on forward); forward-undo
-      // passes the pre-forward snapshot's cowork to restore collaborators.
-      const cowork = item.newJob.cowork ?? null;
-      const coworkJson = cowork == null ? null : JSON.stringify(cowork);
-
-      const newRaw = {
-        id: newIdNum,
-        name,
-        date,
-        dateIn,
-        dept,
-        staff,
-        status,
-        orderId,
-        ...(cowork != null ? { cowork } : {}),
-      };
-      const newRawJson = JSON.stringify(newRaw);
-
-      // INSERT the new job. On any failure (SQL error / minted-ID collision
-      // caught by the read-back guard) compensate the gate's tombstone so a
-      // failed forward leaves the board unchanged, then rethrow into the
-      // per-item catch → failed[].
-      try {
-        const jobInsert = await sql<{ id: number }>`
-          INSERT INTO jobs
-            (id, order_id, name, date, date_in, staff, dept, status, cowork, raw)
-          VALUES
-            (${newIdNum}::bigint, ${orderId}::bigint, ${name}, ${date}, ${dateIn},
-             ${staff}, ${dept}, ${status}, ${coworkJson}::jsonb, ${newRawJson}::jsonb)
-          ON CONFLICT (id) DO NOTHING
-          RETURNING id
-        `;
-        await assertNoIdCollision('bulkForward', 'jobs', jobInsert, newIdNum, { name, orderId });
-      } catch (err) {
-        try {
-          await sql`UPDATE jobs SET phase2_deleted_at = NULL WHERE id = ${oldIdNum}::bigint`;
-        } catch { /* surface the original error */ }
-        throw err;
-      }
-
-      succeeded.push({ oldId: oldIdNum, newId: newIdNum, name });
+  // ── Read-back guard — only ids swallowed by ON CONFLICT reach here (rare):
+  // identical existing row = idempotent retry → succeeded; different row =
+  // minted-ID collision → un-tombstone that source + failed[].
+  for (const v of winners) {
+    if (insertedIds.has(v.newId)) {
+      succeeded.push({ oldId: v.oldId, newId: v.newId, name: v.name });
+      continue;
+    }
+    try {
+      await assertNoIdCollision('bulkForward', 'jobs', { rows: [] }, v.newId, { name: v.name, orderId: v.orderId });
+      succeeded.push({ oldId: v.oldId, newId: v.newId, name: v.name });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      failed.push({ oldId: oldIdNum, name, error: msg });
+      try {
+        await sql`UPDATE jobs SET phase2_deleted_at = NULL WHERE id = ${v.oldId}::bigint`;
+      } catch { /* surface the original error */ }
+      failed.push({ oldId: v.oldId, name: v.name, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -1374,6 +1424,45 @@ export async function appendAuditToPostgres(input: AuditInput): Promise<void> {
     try {
       const Sentry = await import('@sentry/nextjs');
       Sentry.captureException(err, { tags: { layer: 'phase2-audit', action: input.action } });
+    } catch { /* ignore */ }
+  }
+}
+
+/** Batch variant of appendAuditToPostgres — N entries in ONE multi-row
+ *  INSERT (perf H-bulkforward 2026-07-23: the bulk-forward route used to
+ *  await one audit INSERT per succeeded item = +1 round-trip per job).
+ *  Same contract: never throws — audit failure must not break the mutation. */
+export async function appendAuditBatchToPostgres(inputs: AuditInput[]): Promise<void> {
+  if (!isPostgresConfigured() || inputs.length === 0) return;
+  try {
+    const placeholders: string[] = [];
+    const params: unknown[] = [];
+    inputs.forEach((input, i) => {
+      const targetIdNum = input.targetId != null && String(input.targetId).trim()
+        ? Number(String(input.targetId).replace(/[^\d]/g, ''))
+        : null;
+      const targetId = Number.isFinite(targetIdNum) && targetIdNum ? targetIdNum : null;
+      const b = i * 5;
+      placeholders.push(`(NOW(), $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}::bigint, $${b + 5}, 'postgres')`);
+      params.push(
+        formatActor(input.role, input.user),
+        input.user || null,
+        input.action,
+        targetId,
+        generateAuditSummary(input),
+      );
+    });
+    await sql.query(
+      `INSERT INTO audit_log (timestamp, role, user_name, action, target_id, summary, source)
+       VALUES ${placeholders.join(', ')}`,
+      params,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[phase2-audit] appendAuditBatchToPostgres failed (${inputs.length} entries):`, msg);
+    try {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureException(err, { tags: { layer: 'phase2-audit', action: 'batch' } });
     } catch { /* ignore */ }
   }
 }
