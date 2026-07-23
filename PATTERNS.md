@@ -160,6 +160,26 @@ export async function loadAllWithAudit() { return fetch(`${url}?action=loadAll&t
 - **Saving**: 1 round-trip; modal opens instantly with data ready
 - **เมื่อไหร่ไม่ใช้**: Audit data that's expensive to compute (e.g. cross-archive scan) — defer to dedicated endpoint with own cache
 
+### 1.13 Batch round-trip collapse: ANY() gate + multi-VALUES INSERT (2026-07-23, `0df9efd`)
+- **ปัญหา**: per-item loop ที่แต่ละ item ยิง 2-3 statements = round-trips โตเชิงเส้นตาม batch size (bulk forward 25 งาน ≈ 75 hops ≈ 1-4s บน Neon HTTP driver)
+- **Recipe** (คง statement-level race gate ของ §H2 ไว้ครบ):
+  1. Validate + dedupe ทั้ง batch ใน JS ก่อน (item เสีย → failed[] โดยไม่แตะ SQL; oldId ซ้ำใน batch = gate-loser class เดิม)
+  2. **Gate เดียวครอบทุก row**: `UPDATE ... SET tombstone WHERE id = ANY(${ids}::bigint[]) AND <precondition> RETURNING id` — statement atomicity ยังใช้ต่อ row: id ที่หายจาก RETURNING = แพ้ race → failed[] (ข้อความเดิม)
+  3. **INSERT ทุก winner ใน statement เดียว**: `sql.query('INSERT ... VALUES ($1..$10),($11..$20),... ON CONFLICT DO NOTHING RETURNING id', flatParams)` — casts ต่อ value เหมือน template เดิมเป๊ะ (template literal เขียน dynamic VALUES ไม่ได้ — `sql.query` คือทางออก, mock harness รองรับอยู่แล้ว)
+  4. **Read-back guard เฉพาะ id ที่โดน ON CONFLICT กลืน** (rare path — reuse `assertNoIdCollision` ต่อ id ได้ ไม่ต้อง batch): identical row = idempotent retry → succeeded; ต่างจริง = collision → compensate + failed
+  5. **Compensation 2 ระดับ**: statement ล้มทั้งก้อน → un-tombstone ทุก winner ผ่าน `ANY()`; collision รายตัว → un-tombstone เฉพาะ id นั้น
+  6. Side-tables (audit log) → multi-row INSERT function แยก (never-throws contract เดิม)
+- **TDD pin**: `callsContaining(gate)/(INSERT)` ต้อง `toHaveLength(1)` ไม่ว่า batch โตแค่ไหน + reject-injection ทดสอบ compensation ทั้ง 2 ระดับ
+- **Driver notes**: `ANY(${jsArray}::bigint[])` พิสูจน์บน prod แล้ว (track-customer) — cast ใน template เป็น compile-only, driver ส่ง array ตรงเข้า pg
+- **เมื่อไหร่ไม่ใช้**: batch ปกติ ≤1 item เสมอ (เช่น saveQuote/turn) — กำไร ≈ 0 ไม่คุ้ม blast radius ของการแตะ interface
+
+### 1.14 Parallel independent persists before reply (2026-07-23, `14013e1`)
+- **ปัญหา**: webhook hot path await DB writes เรียงกันทั้งที่เขียนคนละตาราง ไม่ dependent กัน — ลูกค้ารอ +150-400ms/turn ทับบน LLM latency
+- **Recipe**: จัดกลุ่ม ops ตาม dependency จริง → กลุ่มที่ไม่พึ่งกันรวมใน `Promise.all` เดียว; ลำดับข้ามกลุ่มที่เป็น contract (persist-before-reply — กฎ incident 7/23) คงไว้เป็น stage: `all(persists) → all(side-effects) → reply`
+- **Semantics ที่เปลี่ยนโดยตั้งใจ**: ตัวใดตัวหนึ่ง reject = ตัวอื่นในกลุ่มยัง**ถูก attempt** (เดิม serial = โดน skip เงียบ) — reply ยังไม่ถูกส่งเหมือนเดิม (Promise.all reject ก่อนถึง reply)
+- **TDD pin สำหรับ parallelism** (black-box): mock ตัวแรกให้ reject แล้ว assert ว่าตัวที่สองยังถูกเรียก — ใต้ serial shape เดิม test นี้ RED เอง
+- **เมื่อไหร่ไม่ใช้**: writes ที่ order เป็น invariant จริง (เช่น saveQuote ต้องมาก่อน trigger ที่ `loadLastQuote`) — อ่าน dependency จากโค้ดก่อน อย่าเหมารวม
+
 ---
 
 ## 2. Permission gating patterns
