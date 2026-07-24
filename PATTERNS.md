@@ -173,6 +173,18 @@ export async function loadAllWithAudit() { return fetch(`${url}?action=loadAll&t
 - **Driver notes**: `ANY(${jsArray}::bigint[])` พิสูจน์บน prod แล้ว (track-customer) — cast ใน template เป็น compile-only, driver ส่ง array ตรงเข้า pg
 - **เมื่อไหร่ไม่ใช้**: batch ปกติ ≤1 item เสมอ (เช่น saveQuote/turn) — กำไร ≈ 0 ไม่คุ้ม blast radius ของการแตะ interface
 
+### 1.15 Windowed list reads + check/reconcile delete detection (2026-07-24, `29baea0` + `b56b156` + `3923558`)
+- **ปัญหา 3 หน้าเดียวกัน**: list-shaped reads ที่ payload/queries โตเชิงเส้นตาม row count ตลอดไป — bootstrap ไม่มี LIMIT · poll ส่ง id array เต็มเพื่อจับ hard-delete ที่นานๆ เกิด · bootstrap ไม่ coalesce ข้าม tabs
+- **Recipe window (ที่ DB ไม่ใช่ client)**:
+  1. เลือก **window เดียว** (`LIST_WINDOW = '12 months'`) แล้ว apply กับ *ทุกชิ้นที่ cross-reference กัน* — rows, id sets, checks, orderId sets. Half-windowed pair = badge/orphan logic เพี้ยนเงียบ
+  2. **Invariant ที่ทำให้ window ปลอดภัย**: event rows (ship/cancel) เกิด*หลัง* order creation เสมอ ⟹ order อยู่ใน window ⟹ event rows อยู่ด้วย — พิสูจน์ก่อนตัด อย่าเดา
+  3. Rows ที่ foreign key ยังอ้างถึง (orders ของ active jobs) → **UNION เข้า window เสมอ** ไม่ว่าอายุเท่าไหร่
+  4. เลือก timestamp ให้ตรง semantic: id scheme ที่ encode เดือน (YYYYMM×1000) = เดือนจริง ดีกว่า `imported_at` ที่เป็น backfill date ของ rows ที่ bulk-migrate
+  5. Incremental delta ไม่ต้อง window (cursor ครอบแล้ว) — pin ด้วย test กัน over-apply
+- **Recipe check/reconcile (แทน full id array ทุก poll)**: default poll ส่ง `{count, maxId}` windowed (~30B); client เทียบกับ merged state ผ่าน pure fn → mismatch = re-poll พร้อม `?ids=1` **ครั้งเดียว** แล้วใช้ allow-list drop เดิม. Row aging out ของ window ก็ heal ผ่านเส้นเดียวกัน. ไม่มี tight loop by construction: reconcile response ทำให้ state match checks ของ response ตัวเอง
+- **Recipe coalesce**: bootstrap ผ่าน `unstable_cache` (tag เดียวกับ write invalidation, revalidate = poll floor) — cursor stale ≤ revalidate แค่ over-fetch poll แรก (merge idempotent). **อย่า cache payload ที่เสี่ยงเกิน ~2MB data-cache entry limit** (fullLists) — ตัดสินต่อ variant ไม่ใช่เหมารวม
+- **TDD pin**: SQL shape (window param ใน values + `id >=` ใน text) · pure fns (staleness matrix: clean/deficit/maxId-drift/empty) · cache routing ผ่าน passthrough mock ที่ record registrations (`tests/helpers/mock-next-cache.ts`)
+
 ### 1.14 Parallel independent persists before reply (2026-07-23, `14013e1`)
 - **ปัญหา**: webhook hot path await DB writes เรียงกันทั้งที่เขียนคนละตาราง ไม่ dependent กัน — ลูกค้ารอ +150-400ms/turn ทับบน LLM latency
 - **Recipe**: จัดกลุ่ม ops ตาม dependency จริง → กลุ่มที่ไม่พึ่งกันรวมใน `Promise.all` เดียว; ลำดับข้ามกลุ่มที่เป็น contract (persist-before-reply — กฎ incident 7/23) คงไว้เป็น stage: `all(persists) → all(side-effects) → reply`
