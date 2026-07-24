@@ -78,6 +78,43 @@ async function upstash<T>(cfg: { url: string; token: string }, ...command: (stri
   }
 }
 
+/** Run several Upstash commands in ONE `/pipeline` REST request
+ *  (L-ratelimit-serial-upstash-hops — the limiter sits on modal opens and
+ *  the AI webhook hot path, so each saved hop is 50-150ms off a user-facing
+ *  wait). Returns one result slot per command; a slot is null when that
+ *  command errored. Whole-request failure → null, callers fail open. */
+async function upstashPipeline(
+  cfg: { url: string; token: string },
+  commands: (string | number)[][],
+): Promise<(unknown | null)[] | null> {
+  try {
+    const res = await fetch(`${cfg.url}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commands),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as Array<{ result?: unknown; error?: string }>;
+    if (!Array.isArray(body)) return null;
+    return body.map((slot) => (slot && !slot.error ? slot.result ?? null : null));
+  } catch {
+    return null;
+  }
+}
+
+/** Coerce an Upstash result slot to a finite number (REST returns GET
+ *  values as strings, INCR/TTL as numbers). Null when not numeric. */
+function asNumber(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v !== '' && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
 /** Check + increment a fixed-window counter. Returns ok: true if the caller
  *  is within the limit, ok: false with retryIn (seconds) if rate-limited.
  *
@@ -95,21 +132,24 @@ export async function checkRateLimit(
   }
 
   const fullKey = `rl:${key}`;
-  // Sliding-window counter: every hit refreshes the TTL. This keeps the
-  // INCR + EXPIRE pair effectively atomic from the caller's standpoint —
-  // even if the EXPIRE call fails on one hit, the next hit will retry it
-  // before the orphan key matters. A simple "INCR + EXPIRE every time" is
-  // idempotent on Upstash; cost is one extra REST hop per call but matches
-  // Upstash's own ratelimit reference recipe.
-  const count = await upstash<number>(cfg, 'INCR', fullKey);
+  // Sliding-window counter: every hit refreshes the TTL ("INCR + EXPIRE
+  // every time" is idempotent on Upstash and matches their ratelimit
+  // reference recipe). All three commands ride ONE /pipeline request —
+  // the TTL slot is only read on the over-limit branch but costs nothing
+  // extra inside the same round-trip.
+  const slots = await upstashPipeline(cfg, [
+    ['INCR', fullKey],
+    ['EXPIRE', fullKey, opts.windowSec],
+    ['TTL', fullKey],
+  ]);
+  const count = slots ? asNumber(slots[0]) : null;
   if (count == null) {
     return { ok: true, remaining: opts.limit, resetIn: opts.windowSec };
   }
-  await upstash(cfg, 'EXPIRE', fullKey, opts.windowSec);
 
   if (count > opts.limit) {
-    const ttl = await upstash<number>(cfg, 'TTL', fullKey);
-    const retryIn = typeof ttl === 'number' && ttl > 0 ? ttl : opts.windowSec;
+    const ttl = asNumber(slots![2]);
+    const retryIn = ttl != null && ttl > 0 ? ttl : opts.windowSec;
     return { ok: false, retryIn };
   }
 
@@ -130,14 +170,19 @@ export async function peekRateLimit(
     return { ok: true, remaining: opts.limit, resetIn: opts.windowSec };
   }
   const fullKey = `rl:${key}`;
-  const count = await upstash<number>(cfg, 'GET', fullKey);
-  const n = typeof count === 'number' ? count : (count != null ? Number(count) : 0);
-  if (!Number.isFinite(n) || n <= 0) {
+  // GET + TTL in one /pipeline request — TTL read only on the over-limit
+  // branch, same round-trip either way.
+  const slots = await upstashPipeline(cfg, [
+    ['GET', fullKey],
+    ['TTL', fullKey],
+  ]);
+  const n = slots ? asNumber(slots[0]) : null;
+  if (n == null || n <= 0) {
     return { ok: true, remaining: opts.limit, resetIn: opts.windowSec };
   }
   if (n > opts.limit) {
-    const ttl = await upstash<number>(cfg, 'TTL', fullKey);
-    const retryIn = typeof ttl === 'number' && ttl > 0 ? ttl : opts.windowSec;
+    const ttl = asNumber(slots![1]);
+    const retryIn = ttl != null && ttl > 0 ? ttl : opts.windowSec;
     return { ok: false, retryIn };
   }
   return { ok: true, remaining: Math.max(0, opts.limit - n), resetIn: opts.windowSec };
@@ -169,8 +214,10 @@ export async function recordFailure(
   const cfg = configured();
   if (!cfg) return null;
   const fullKey = `rl:${key}`;
-  const count = await upstash<number>(cfg, 'INCR', fullKey);
-  if (count == null) return null;
-  await upstash(cfg, 'EXPIRE', fullKey, opts.windowSec);
-  return count;
+  // INCR + EXPIRE in one /pipeline request.
+  const slots = await upstashPipeline(cfg, [
+    ['INCR', fullKey],
+    ['EXPIRE', fullKey, opts.windowSec],
+  ]);
+  return slots ? asNumber(slots[0]) : null;
 }
