@@ -14,8 +14,8 @@ export const maxDuration = 30;
  *  user. rawData carries the order's full spec (paper, plate, colors, etc.)
  *  with no internal-only fields.
  *
- *  Perf: uses Apps Script `getOrder` (single-row read) instead of
- *  `loadAll` (~200KB snapshot). Roughly 600ms → 200ms per modal open. */
+ *  Perf: `loadOrder(id, { orderOnly: true })` is a Postgres single-row
+ *  read (Apps Script left this path in Phase 4.2) — no snapshot fetch. */
 export async function GET(_req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const session = await requireSession();
@@ -39,17 +39,14 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
 
   let result;
   try {
-    // 30s ISR — modal opens often hit the same order repeatedly (user
-    // browses the orders list and reopens to glance at spec). The
-    // revalidatePath('/orders') call from PATHS_BY_ACTION after order
-    // edits invalidates the page cache that ultimately feeds back into
-    // here, so 30s of staleness is the worst case if a user edits and
-    // immediately reopens — acceptable for spec-display.
+    // Fresh single-row Postgres read on every hit — no caching layer
+    // (spec must reflect an edit immediately when the modal reopens).
     //
     // Note (2026-05-08): /orders detail modal now reads rawData inline
-    // from the page-level loadAll snapshot (matches /board card detail),
-    // so this route is rarely hit on the happy path — only as fallback
-    // when the inline rawData is missing or empty.
+    // from the page-level snapshot (matches /board card detail), so this
+    // route is rarely hit on the happy path — only as fallback when the
+    // inline rawData is missing or empty, plus the /orders/new
+    // "ดึงงานล่าสุด" button and lazy spec fetches.
     result = await loadOrder(id, { orderOnly: true });
   } catch (err) {
     const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);

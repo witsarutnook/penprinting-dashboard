@@ -412,6 +412,14 @@ export async function GET() {
     await sql`CREATE INDEX IF NOT EXISTS idx_ai_quotes_session ON ai_quotes(session_id)`;
     applied.push('idx_ai_quotes_session');
 
+    // /quote-logs list orders by updated_at DESC on every page view
+    // (L-quotelogs-order-by-no-index — added 2026-07-24 while the table is
+    // still small, so the sort never degrades as sessions reach thousands).
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_ai_quote_sessions_updated
+      ON ai_quote_sessions(updated_at DESC)`;
+    applied.push('idx_ai_quote_sessions_updated');
+
     // ─── ai_quote_turn_flags (quote-logs 2026-07-20) ────────────────
     // Tag "AI ตอบผิด" ระดับข้อความ — snapshot role+text กัน turn_index drift
     // (dashboard history โดน trim ที่ 40 turns ได้). ลบ session → flags ตามไป.
