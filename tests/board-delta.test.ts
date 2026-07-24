@@ -13,7 +13,7 @@ vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 // under vitest, and so the bootstrap-coalescing tests can pin routing + config.
 vi.mock('next/cache', () => import('./helpers/mock-next-cache'));
 
-import { resetCacheCalls } from './helpers/mock-next-cache';
+import { resetCacheCalls, findCacheRegistration } from './helpers/mock-next-cache';
 import { loadBoardDelta, ordersCutoffId, BoardDeltaError } from '@/lib/board-delta';
 
 describe('loadBoardDelta', () => {
@@ -401,6 +401,64 @@ describe('loadBoardDelta', () => {
         expect(c.text).toContain('imported_at > NOW() -');
         expect(c.values).toContain('12 months');
       }
+    });
+  });
+
+  // M-board-bootstrap-not-coalesced: every /board /orders /calendar
+  // navigation used to fire a fresh full-scan bootstrap — N morning tabs =
+  // N duplicate query sets (the old loadAll era coalesced these; the
+  // 5.6GB/8d lesson). The bootstrap now routes through unstable_cache
+  // (15s + LOAD_ALL_TAG so any write invalidates it immediately); a ≤15s
+  // stale serverTime cursor only makes the first delta poll over-fetch,
+  // which mergeDelta upserts idempotently. fullLists bootstrap is
+  // deliberately NOT cached: its payload can exceed the ~2MB data-cache
+  // entry limit and /shipped + /cancelled are rarely opened concurrently.
+  describe('coalesced bootstrap (M-board-bootstrap-not-coalesced)', () => {
+    it('plain bootstrap routes through the cache wrapper — tags + revalidate pinned', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null);
+      const reg = findCacheRegistration('board-delta-bootstrap');
+      expect(reg).toBeDefined();
+      expect(reg!.opts.tags).toEqual(['load-all']);
+      expect(reg!.opts.revalidate).toBe(15);
+      expect(reg!.calls).toHaveLength(1);
+    });
+
+    it('lists bootstrap routes through the SAME wrapper with a distinct key arg', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // sets shipped
+      queueResult({ rows: [], rowCount: 0 }); // sets cancelled
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null, { lists: true });
+      const reg = findCacheRegistration('board-delta-bootstrap');
+      expect(reg!.calls).toHaveLength(1);
+      // the lists flag is a cache-key argument — plain and lists bootstraps
+      // must not share an entry (different payload shapes)
+      expect(reg!.calls[0]).toEqual([true]);
+    });
+
+    it('fullLists bootstrap bypasses the cache wrapper', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // shipped full
+      queueResult({ rows: [], rowCount: 0 }); // cancelled full
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null, { fullLists: true });
+      expect(findCacheRegistration('board-delta-bootstrap')!.calls).toHaveLength(0);
+    });
+
+    it('incremental polls bypass the cache wrapper', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      queueResult({ rows: [], rowCount: 0 }); // tombstones
+      await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'));
+      expect(findCacheRegistration('board-delta-bootstrap')!.calls).toHaveLength(0);
+    });
+
+    it('not-configured throws BEFORE touching the cache (no poisoned entry)', async () => {
+      setConfigured(false);
+      await expect(loadBoardDelta(null)).rejects.toBeInstanceOf(BoardDeltaError);
+      expect(findCacheRegistration('board-delta-bootstrap')!.calls).toHaveLength(0);
     });
   });
 });

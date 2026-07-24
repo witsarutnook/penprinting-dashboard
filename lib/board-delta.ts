@@ -156,15 +156,31 @@ export interface BoardDelta {
  *                (client bootstrap). Otherwise return rows changed since.
  *  @param opts   `{ lists: true }` adds shippedOrderIds / cancelledOrderIds
  *                (used by /orders). `{ fullLists: true }` adds full shipped
- *                / cancelled rows + their PK ID set (used by /shipped +
- *                /cancelled). `fullLists` supersedes `lists`.
+ *                / cancelled rows + their PK ID set / checks (used by
+ *                /shipped + /cancelled). `fullLists` supersedes `lists`.
+ *                `{ withIds: true }` (with fullLists incremental) adds the
+ *                full windowed id sets — the client's reconcile poll.
+ *
+ *  Bootstrap calls (since=null, no fullLists) are coalesced through
+ *  unstable_cache — see loadBootstrapCached below
+ *  (M-board-bootstrap-not-coalesced).
  */
 export async function loadBoardDelta(
   since: Date | null,
   opts: { lists?: boolean; fullLists?: boolean; withIds?: boolean } = {},
 ): Promise<BoardDelta> {
+  // Checked HERE, not inside the cached fn — a not-configured throw must
+  // never race a cache fill, and misconfiguration should fail every call.
   if (!isPostgresConfigured()) throw new BoardDeltaError('Postgres not configured');
+  if (since === null && !opts.fullLists) return loadBootstrapCached(!!opts.lists);
+  return loadBoardDeltaLive(since, opts);
+}
 
+/** Uncached implementation — everything below hits Postgres directly. */
+async function loadBoardDeltaLive(
+  since: Date | null,
+  opts: { lists?: boolean; fullLists?: boolean; withIds?: boolean } = {},
+): Promise<BoardDelta> {
   // Snapshot serverTime BEFORE the queries so a write that lands mid-query
   // is guaranteed to be picked up by the next delta call (next cursor is
   // older than the row that just landed → row is included). The opposite
@@ -361,3 +377,27 @@ export async function loadBoardDelta(
 
   return delta;
 }
+
+/** Coalesced bootstrap (M-board-bootstrap-not-coalesced) — every /board,
+ *  /orders, /calendar navigation (SSR page or the API route's no-`since`
+ *  path) shares one cache entry per shape instead of firing its own
+ *  full-scan query set (the loadAll era coalesced these; 5.6GB/8d lesson).
+ *
+ *  - key arg `withLists` splits the /orders shape from the /board//calendar
+ *    shape — different payloads must not share an entry.
+ *  - tag LOAD_ALL_TAG: every write route revalidates it, so a mutation
+ *    invalidates the bootstrap immediately (same contract as loadAllCached).
+ *  - revalidate 15s: matches the delta-poll floor. A cached serverTime
+ *    cursor is ≤15s stale, which only makes a client's FIRST delta poll
+ *    over-fetch rows changed inside that window — mergeDelta upserts are
+ *    idempotent, so no write loss (serverTime is snapshotted before the
+ *    queries; see above).
+ *  - fullLists bootstrap stays UNCACHED on purpose: full shipped/cancelled
+ *    rows can exceed the ~2MB data-cache entry limit, and /shipped +
+ *    /cancelled are rarely opened by many users at once. */
+const loadBootstrapCached = unstable_cache(
+  async (withLists: boolean): Promise<BoardDelta> =>
+    loadBoardDeltaLive(null, withLists ? { lists: true } : {}),
+  ['board-delta-bootstrap'],
+  { tags: [LOAD_ALL_TAG], revalidate: 15 },
+);
