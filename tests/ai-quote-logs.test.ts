@@ -2,11 +2,11 @@
 // Pin: single-query list (no N+1) + parameterized filters + flag snapshot
 // from DB (not caller) + assistant-only + mergeTimeline placement.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { resetMockPostgres, queueResult, findCallContaining, sqlCalls } from './helpers/mock-postgres';
+import { resetMockPostgres, queueResult, queueError, findCallContaining, sqlCalls } from './helpers/mock-postgres';
 
 vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 
-import { loadQuoteLogSessions, flagTurn, mergeTimeline } from '@/lib/ai-quote/logs';
+import { loadQuoteLogSessions, loadQuoteLogDetail, flagTurn, mergeTimeline } from '@/lib/ai-quote/logs';
 import type { QuoteLogQuote } from '@/lib/ai-quote/logs';
 
 describe('loadQuoteLogSessions', () => {
@@ -72,6 +72,29 @@ describe('flagTurn', () => {
     queueResult({ rows: [{ conversation: conv }], rowCount: 1 });
     queueResult({ rows: [], rowCount: 0 });
     expect(await flagTurn(7, 1, null, 'นุ๊ก')).toBe('duplicate');
+  });
+});
+
+// L-quotelog-detail-serial: after the session row (which gates the
+// not-found early return), the quotes + flags queries are independent —
+// they must fire in ONE parallel batch.
+describe('loadQuoteLogDetail', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('fires quotes + flags in parallel after the session row', async () => {
+    queueResult({ rows: [{ id: 7, channel: 'line', conversation: [] }], rowCount: 1 }); // session
+    queueError(new Error('boom'));                                                      // quotes rejects
+    queueResult({ rows: [], rowCount: 0 });                                             // flags (must still fire)
+
+    await expect(loadQuoteLogDetail(7)).rejects.toThrow('boom');
+    expect(findCallContaining('FROM ai_quote_turn_flags')).toBeDefined();
+  });
+
+  it('missing session → null without touching quotes/flags', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    const r = await loadQuoteLogDetail(999);
+    expect(r).toBeNull();
+    expect(sqlCalls).toHaveLength(1);
   });
 });
 

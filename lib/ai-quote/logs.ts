@@ -101,11 +101,16 @@ export async function loadQuoteLogDetail(id: number): Promise<QuoteLogDetail | n
   const { rows } = await sql`SELECT * FROM ai_quote_sessions WHERE id = ${id}`;
   if (rows.length === 0) return null;
   const s = rows[0];
-  const { rows: qs } = await sql`
-    SELECT id, product_type, spec, unit_price, created_at FROM ai_quotes
-    WHERE session_id = ${id} ORDER BY created_at ASC`;
-  const { rows: fs } = await sql`
-    SELECT * FROM ai_quote_turn_flags WHERE session_id = ${id} ORDER BY turn_index ASC`;
+  // quotes + flags are independent — one parallel batch after the session
+  // row (which gates the not-found early return) saves a sequential hop
+  // (L-quotelog-detail-serial).
+  const [{ rows: qs }, { rows: fs }] = await Promise.all([
+    sql`
+      SELECT id, product_type, spec, unit_price, created_at FROM ai_quotes
+      WHERE session_id = ${id} ORDER BY created_at ASC`,
+    sql`
+      SELECT * FROM ai_quote_turn_flags WHERE session_id = ${id} ORDER BY turn_index ASC`,
+  ]);
   return {
     id: Number(s.id),
     channel: String(s.channel),
