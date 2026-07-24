@@ -87,9 +87,12 @@ const loadOrderIdSetsCached = unstable_cache(
  *   plus the current PK ID list for delete detection. Used by /shipped +
  *   /cancelled which need every row, not just the orderId set.
  *   - Bootstrap (since=null): LIST_WINDOW-windowed read of both rows + IDs.
- *   - Incremental: `imported_at > since` new rows + the full current ID
- *     list (so the client can drop tombstoned rows after a /restore
- *     hard-deletes them — no tombstone column needed).
+ *   - Incremental: `imported_at > since` new rows + a cheap windowed
+ *     {count, maxId} check per table. The client detects hard-deletes
+ *     (e.g. /restore) by comparing the checks against its merged state and
+ *     re-polls with `withIds: true` to fetch the full current ID list only
+ *     then — no tombstone column needed, and the default poll no longer
+ *     scans + ships every PK (M-fulllists-id-array-every-poll).
  *   - `lists` is ignored when `fullLists` is set (full rows are a
  *     strict superset; the orderId set can be derived client-side).
  */
@@ -99,6 +102,16 @@ export class BoardDeltaError extends Error {
     super(reason);
     this.name = 'BoardDeltaError';
   }
+}
+
+/** Cheap per-table consistency check for the fullLists incremental poll —
+ *  COUNT + MAX(id) over the LIST_WINDOW. The client compares these against
+ *  its merged state; a mismatch (hard-delete from /restore, or a row aging
+ *  out of the window) triggers ONE reconcile poll with `withIds` to fetch
+ *  the full id set. Normal polls ship ~30 bytes instead of every PK. */
+export interface ListCheck {
+  count: number;
+  maxId: number;
 }
 
 export interface BoardDelta {
@@ -122,12 +135,19 @@ export interface BoardDelta {
    *  `{ fullLists: true }`. */
   shipped?: Shipped[];
   cancelled?: Cancelled[];
-  /** Full PK ID set of the shipped / cancelled tables AT POLL TIME — the
-   *  client diffs this against its known IDs to drop rows that were
-   *  hard-deleted (e.g. /restore reattaches a cancelled job to /board).
-   *  Populated only when `{ fullLists: true }`. */
+  /** Full PK ID set (within LIST_WINDOW) of the shipped / cancelled tables
+   *  AT POLL TIME — the client diffs this against its known IDs to drop rows
+   *  that were hard-deleted (e.g. /restore reattaches a cancelled job to
+   *  /board). Populated on the fullLists BOOTSTRAP (derived from the rows)
+   *  and on incremental polls that request `{ withIds: true }` — the default
+   *  incremental poll ships the cheap `shippedCheck`/`cancelledCheck`
+   *  instead (M-fulllists-id-array-every-poll). */
   shippedAllIds?: number[];
   cancelledAllIds?: number[];
+  /** Windowed COUNT + MAX(id) checks — populated on every fullLists
+   *  incremental poll. See ListCheck. */
+  shippedCheck?: ListCheck;
+  cancelledCheck?: ListCheck;
 }
 
 /** Load the board delta from Postgres.
@@ -141,7 +161,7 @@ export interface BoardDelta {
  */
 export async function loadBoardDelta(
   since: Date | null,
-  opts: { lists?: boolean; fullLists?: boolean } = {},
+  opts: { lists?: boolean; fullLists?: boolean; withIds?: boolean } = {},
 ): Promise<BoardDelta> {
   if (!isPostgresConfigured()) throw new BoardDeltaError('Postgres not configured');
 
@@ -177,6 +197,7 @@ export async function loadBoardDelta(
           `,
           null,
           null,
+          null, // no stats on bootstrap — the client seeds its id set from the rows
         ])
       : Promise.all([
           sql<{ raw: Shipped }>`
@@ -189,8 +210,42 @@ export async function loadBoardDelta(
             WHERE imported_at > ${since.toISOString()}
             ORDER BY id DESC
           `,
-          sql<{ id: string }>`SELECT id::text AS id FROM shipped ORDER BY id`,
-          sql<{ id: string }>`SELECT id::text AS id FROM cancelled ORDER BY id`,
+          // Full id sets only on an explicit reconcile poll (?ids=1) — the
+          // default poll ships the cheap stats row below instead
+          // (M-fulllists-id-array-every-poll). Windowed to LIST_WINDOW so
+          // the set always matches the bootstrap rows + the checks.
+          opts.withIds
+            ? sql<{ id: string }>`
+                SELECT id::text AS id FROM shipped
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
+                ORDER BY id
+              `
+            : null,
+          opts.withIds
+            ? sql<{ id: string }>`
+                SELECT id::text AS id FROM cancelled
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
+                ORDER BY id
+              `
+            : null,
+          // One stats round-trip covering both tables. NOT transactional
+          // with the id-set queries above — a write landing between the
+          // parallel statements can skew one poll; the client just
+          // reconciles again next tick.
+          sql<{
+            shipped_count: string; shipped_max: string | null;
+            cancelled_count: string; cancelled_max: string | null;
+          }>`
+            SELECT
+              (SELECT COUNT(*) FROM shipped
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS shipped_count,
+              (SELECT MAX(id) FROM shipped
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS shipped_max,
+              (SELECT COUNT(*) FROM cancelled
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS cancelled_count,
+              (SELECT MAX(id) FROM cancelled
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS cancelled_max
+          `,
         ])
     : null;
 
@@ -276,17 +331,25 @@ export async function loadBoardDelta(
   }
 
   if (fullListsP) {
-    const [sR, cR, sAllR, cAllR] = await fullListsP;
+    const [sR, cR, sAllR, cAllR, statsR] = await fullListsP;
     delta.shipped = sR.rows.map((r) => r.raw);
     delta.cancelled = cR.rows.map((r) => r.raw);
     if (sAllR && cAllR) {
-      // incremental — current PK ID set drives client delete detection
+      // reconcile poll (withIds) — current PK ID set drives client delete detection
       delta.shippedAllIds = sAllR.rows.map((r) => Number(r.id));
       delta.cancelledAllIds = cAllR.rows.map((r) => Number(r.id));
-    } else {
+    } else if (!statsR) {
       // bootstrap — every row was just returned; client uses these as the ID set
       delta.shippedAllIds = delta.shipped.map((s) => Number(s.id));
       delta.cancelledAllIds = delta.cancelled.map((c) => Number(c.id));
+    }
+    if (statsR) {
+      // incremental — cheap consistency checks in place of the full id arrays
+      const st = statsR.rows[0];
+      if (st) {
+        delta.shippedCheck = { count: Number(st.shipped_count), maxId: Number(st.shipped_max ?? 0) };
+        delta.cancelledCheck = { count: Number(st.cancelled_count), maxId: Number(st.cancelled_max ?? 0) };
+      }
     }
     // We deliberately do NOT derive shippedOrderIds/cancelledOrderIds here:
     // in incremental mode delta.shipped contains only new rows since the

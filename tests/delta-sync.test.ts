@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeDelta, type DeltaState } from '@/lib/delta-sync';
+import { mergeDelta, fullListsStale, type DeltaState } from '@/lib/delta-sync';
 import type { BoardDelta } from '@/lib/board-delta';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
@@ -260,5 +260,76 @@ describe('mergeDelta — full shipped/cancelled rows (/shipped + /cancelled delt
     }));
     expect(result.shipped.map((x) => x.id)).toEqual([102, 100]);
     expect(result.cancelled.map((x) => x.id)).toEqual([80]);
+  });
+});
+
+// M-fulllists-id-array-every-poll: the incremental fullLists poll no longer
+// ships the full PK id arrays — it ships cheap {count, maxId} checks. New
+// rows still arrive via the imported_at cursor and must be UPSERTED even
+// without an id set; hard-deletes are detected by comparing the checks
+// against the merged state (fullListsStale), which triggers ONE reconcile
+// poll carrying ?ids=1 (the old full-array shape).
+describe('mergeDelta — fullLists rows WITHOUT allIds (checks protocol)', () => {
+  it('upserts new rows when the delta carries rows but no id set', () => {
+    const state = st({ shipped: [s(100)], cancelled: [c(80)] });
+    const result = mergeDelta(state, delta({
+      shipped: [s(102), s(100, 'updated')],
+      cancelled: [],
+    }));
+    expect(result.shipped.map((x) => x.id)).toEqual([102, 100]);
+    expect(result.shipped[1].name).toBe('updated');
+    // no id set → nothing may be dropped
+    expect(result.cancelled).toBe(state.cancelled);
+  });
+
+  it('keeps the SAME state ref on an idle poll (empty rows, checks only)', () => {
+    const state = st({ shipped: [s(100)], cancelled: [c(80)] });
+    const result = mergeDelta(state, delta({
+      shipped: [],
+      cancelled: [],
+      shippedCheck: { count: 1, maxId: 100 },
+      cancelledCheck: { count: 1, maxId: 80 },
+    }));
+    expect(result).toBe(state);
+  });
+});
+
+describe('fullListsStale', () => {
+  it('false when the delta carries no checks (/board-style delta)', () => {
+    const state = st({ shipped: [s(100)] });
+    expect(fullListsStale(state, delta({}))).toBe(false);
+  });
+
+  it('false when count + maxId both match the merged state', () => {
+    const state = st({ shipped: [s(100), s(102)], cancelled: [c(80)] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 2, maxId: 102 },
+      cancelledCheck: { count: 1, maxId: 80 },
+    }))).toBe(false);
+  });
+
+  it('true when the server count is lower (hard-delete from /restore)', () => {
+    const state = st({ shipped: [s(100), s(102)], cancelled: [c(80)] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 2, maxId: 102 },
+      cancelledCheck: { count: 0, maxId: 0 },
+    }))).toBe(true);
+  });
+
+  it('true when maxId disagrees even at equal counts', () => {
+    // delete-oldest + add-newest between polls where the add was missed is
+    // the pathological shape count alone cannot see.
+    const state = st({ shipped: [s(100), s(102)] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 2, maxId: 103 },
+    }))).toBe(true);
+  });
+
+  it('treats an empty list vs zero-check as clean', () => {
+    const state = st({});
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 0, maxId: 0 },
+      cancelledCheck: { count: 0, maxId: 0 },
+    }))).toBe(false);
   });
 });

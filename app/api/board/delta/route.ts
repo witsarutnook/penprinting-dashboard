@@ -25,8 +25,14 @@ export const dynamic = 'force-dynamic';
  * (the /orders list view derives its status badge from them).
  *
  * `?fullLists=1` additionally returns full `shipped[]` / `cancelled[]` rows
- * plus `shippedAllIds` / `cancelledAllIds` (used by /shipped + /cancelled
- * to detect /restore hard-deletes). `fullLists` supersedes `lists`.
+ * plus per-table `{count, maxId}` checks (incremental) or the full
+ * `shippedAllIds` / `cancelledAllIds` id sets (bootstrap). `fullLists`
+ * supersedes `lists`.
+ *
+ * `?ids=1` (with `fullLists=1` + `since`) — reconcile poll: also returns the
+ * full windowed id sets so the client can drop rows hard-deleted by /restore.
+ * The client requests this only when the checks disagree with its state
+ * (M-fulllists-id-array-every-poll).
  *
  * The client persists `serverTime` and passes it back as `since` on the
  * next call. See lib/board-delta.ts for cursor semantics.
@@ -38,6 +44,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const wantLists = url.searchParams.get('lists') === '1';
   const wantFullLists = url.searchParams.get('fullLists') === '1';
+  const wantIds = url.searchParams.get('ids') === '1';
   const sinceParam = url.searchParams.get('since');
   let since: Date | null = null;
   if (sinceParam) {
@@ -49,7 +56,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const delta = await loadBoardDelta(since, { lists: wantLists, fullLists: wantFullLists });
+    const delta = await loadBoardDelta(since, { lists: wantLists, fullLists: wantFullLists, withIds: wantIds });
     // Cursor-specific, per-session payload — must not be cached by browser/CDN/proxy.
     return NextResponse.json(delta, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {

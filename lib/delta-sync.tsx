@@ -60,6 +60,47 @@ function sameIdList(a: number[], b: number[] | undefined): boolean {
   return true;
 }
 
+/** Upsert `newRows` into `current` WITHOUT a drop pass — the default
+ *  incremental fullLists poll carries new rows but no id set
+ *  (M-fulllists-id-array-every-poll); deletes are detected separately via
+ *  `fullListsStale` + a reconcile poll. Same-ref on an idle poll. */
+function upsertRows<T extends { id: number | string }>(
+  current: T[],
+  newRows: T[] | undefined,
+): T[] {
+  if (!newRows || newRows.length === 0) return current;
+  const m = new Map<number, T>();
+  for (const r of current) m.set(Number(r.id), r);
+  for (const r of newRows) m.set(Number(r.id), r);
+  return Array.from(m.values()).sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+/** Largest Number(id) in `rows` — 0 when empty (matches the server's
+ *  COALESCE-to-0 for an empty windowed table). */
+function maxIdOf(rows: Array<{ id: number | string }>): number {
+  let max = 0;
+  for (const r of rows) {
+    const n = Number(r.id);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+/** True when the delta's windowed {count, maxId} checks disagree with the
+ *  (already-merged) state — meaning a row was hard-deleted server-side
+ *  (/restore) or aged out of the server's LIST_WINDOW, and the client needs
+ *  one reconcile poll with `?ids=1` to learn WHICH rows to drop. False when
+ *  the delta carries no checks (non-fullLists consumers). A transient
+ *  mismatch (write landing between the server's parallel statements) just
+ *  costs one extra reconcile poll and heals next tick. */
+export function fullListsStale(state: DeltaState, delta: BoardDelta): boolean {
+  const s = delta.shippedCheck;
+  if (s && (state.shipped.length !== s.count || maxIdOf(state.shipped) !== s.maxId)) return true;
+  const c = delta.cancelledCheck;
+  if (c && (state.cancelled.length !== c.count || maxIdOf(state.cancelled) !== c.maxId)) return true;
+  return false;
+}
+
 /** Apply a fullLists update: drop any current rows whose id is not in
  *  `allowedIds` (server hard-deletes from /restore), then upsert `newRows`
  *  (rows added since the cursor). Returns the SAME `current` reference when
@@ -125,14 +166,16 @@ export function mergeDelta(state: DeltaState, delta: BoardDelta): DeltaState {
     orders = Array.from(m.values()).sort((a, b) => Number(b.id) - Number(a.id));
   }
 
-  // fullLists: rebuild shipped + cancelled when present; same-ref shortcut
-  // inside applyFullList covers the idle case.
+  // fullLists: with an id set (bootstrap / reconcile poll) rebuild via the
+  // allow-list; without one (default incremental poll) upsert-only — deletes
+  // wait for the reconcile poll that fullListsStale triggers. Same-ref
+  // shortcuts inside both helpers cover the idle case.
   const shipped = delta.shippedAllIds !== undefined
     ? applyFullList(state.shipped, delta.shippedAllIds, delta.shipped ?? [])
-    : state.shipped;
+    : upsertRows(state.shipped, delta.shipped);
   const cancelled = delta.cancelledAllIds !== undefined
     ? applyFullList(state.cancelled, delta.cancelledAllIds, delta.cancelled ?? [])
-    : state.cancelled;
+    : upsertRows(state.cancelled, delta.cancelled);
 
   if (
     jobs === state.jobs
@@ -208,12 +251,25 @@ export function useDeltaSync(
   // poll URL.
   const wantListsRef = useRef<boolean>(opts.lists ?? false);
   const wantFullListsRef = useRef<boolean>(opts.fullLists ?? false);
+  // Mirror of `state` for pollOnce — the staleness check below needs the
+  // POST-merge snapshot synchronously, and only pollOnce ever writes this
+  // state (all polls are serialized through pollNow's coalescing chain).
+  const stateRef = useRef<DeltaState>(state);
+  // Set when the fullLists checks disagreed with local state — the next poll
+  // carries `?ids=1` so the server returns the full id set to reconcile
+  // against (M-fulllists-id-array-every-poll).
+  const needIdsRef = useRef<boolean>(false);
+  // Declared before pollOnce so its closure can schedule a follow-up poll;
+  // assigned the real pollNow below (runs before any poll can fire).
+  const pollNowRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // One poll round-trip: fetch the delta since the cursor, merge it, advance
   // the cursor. Ref-stable so the timer effect below never re-subscribes.
   const pollOnce = useCallback(async (): Promise<void> => {
+    const wantIds = wantFullListsRef.current && needIdsRef.current;
     const qs = `since=${encodeURIComponent(cursorRef.current)}`
-      + (wantFullListsRef.current ? '&fullLists=1' : (wantListsRef.current ? '&lists=1' : ''));
+      + (wantFullListsRef.current ? '&fullLists=1' : (wantListsRef.current ? '&lists=1' : ''))
+      + (wantIds ? '&ids=1' : '');
     let res: Response;
     try {
       res = await fetch(`/api/board/delta?${qs}`, {
@@ -234,7 +290,25 @@ export function useDeltaSync(
     // server BEFORE its queries, so the next poll re-covers any write that
     // landed mid-query.
     cursorRef.current = delta.serverTime;
-    setState((prev) => mergeDelta(prev, delta));
+    const next = mergeDelta(stateRef.current, delta);
+    if (next !== stateRef.current) {
+      stateRef.current = next;
+      setState(next);
+    }
+    if (wantFullListsRef.current) {
+      // A response carrying the id set has reconciled us — clear the flag.
+      if (delta.shippedAllIds !== undefined) needIdsRef.current = false;
+      if (fullListsStale(next, delta) && !needIdsRef.current) {
+        // Checks disagree → a row was hard-deleted (/restore) or aged out of
+        // the server window. Chain ONE immediate reconcile poll so e.g. the
+        // row a user just restored in THIS tab drops without waiting a full
+        // backoff tick. No tight loop: the reconcile response's id set makes
+        // the merged state match its own checks by construction; a repeat
+        // requires a genuinely new server-side change.
+        needIdsRef.current = true;
+        void pollNowRef.current();
+      }
+    }
   }, []);
 
   // Coalesced imperative trigger. While a poll is in flight, callers get a
@@ -258,9 +332,9 @@ export function useDeltaSync(
     return run();
   }, [pollOnce]);
 
-  // Ref so the timer effect always calls the latest pollNow without
-  // re-running (and thus without tearing down + rebuilding the channel).
-  const pollNowRef = useRef(pollNow);
+  // Keep the ref pointing at the latest pollNow so the timer effect (and
+  // pollOnce's reconcile follow-up) always call the current instance without
+  // re-subscribing. Declared above pollOnce; assigned here every render.
   pollNowRef.current = pollNow;
 
   useEffect(() => {
