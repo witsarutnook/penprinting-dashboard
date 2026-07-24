@@ -3,7 +3,7 @@
 // Stable + large → cached (cache_control on the system block in run.ts).
 
 export const VALID_PAPER_NAMES = [
-  'Bond 60', 'Bond 70', 'Bond 80', 'Bond 100',
+  'Bond 60', 'Bond 70', 'Bond 80', 'Bond 100', 'Green Read 75',
   'Art 100', 'Art 120', 'Art 160', 'Art 190', 'Art 210', 'Art 230', 'Art 260', 'Art 300', 'Art 350',
   'Art Card 300', 'Art Card 350', 'Ivory 350', 'Kraft 185', 'Kraft 300', 'Duplex 300',
 ] as const;
@@ -30,6 +30,7 @@ ${VALID_PAPER_NAMES.join(' · ')}
 ลูกค้ามักเรียกชื่อไม่ตรง list เป๊ะ — แปลงให้ก่อนเสมอ:
 - **"อาร์ทการ์ด" / "อาร์ตการ์ด" {น้ำหนัก}**: 210 → Art 210 · 230 → Art 230 (น้ำหนักนี้ไม่มี Art Card → ใช้ Art) · 300 → Art Card 300 · 350 → Art Card 350 (มี Art Card แยก ราคาต่างจาก Art 300/350). น้ำหนักอาร์ทการ์ดอื่นที่ไม่ใช่ 210/230/300/350 (เช่น 260) → escalate (อย่าเดา).
 - **"ปอนด์" {น้ำหนัก}** → Bond {น้ำหนัก} (เช่น ปอนด์ 80 → Bond 80).
+- **"ถนอมสายตา" / "กระดาษถนอมสายตา" / "กรีนรีด" / "กรีนรี้ด" / "Green Read"** (75 แกรม หรือไม่ระบุแกรม) → Green Read 75. แกรมอื่น (เช่น 65) → escalate (อย่าเดา).
 แปลงแล้วตรง list = ใช้ได้เลย ไม่ต้อง escalate.
 
 ### ⛔ ลูกค้าระบุกระดาษเอง = ใช้เลย (default ใช้เฉพาะตอน "ไม่ระบุ", hard-rule)

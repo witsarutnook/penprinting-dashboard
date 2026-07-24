@@ -86,3 +86,13 @@ describe('buildCustomerSystemPrompt (1b-B §3)', () => {
     expect(p).toContain('ห้ามนำตัวเลขราคาจากข้อความก่อนหน้า');
   });
 });
+
+// Twin of the staff-prompt Green Read alias (2026-07-24) — customers type
+// "กระดาษถนอมสายตา" or "Green Read 75 แกรม"; both must resolve to the
+// system name instead of falling into the out-of-list escalation path.
+describe('customer prompt — Green Read 75 alias (2026-07-24)', () => {
+  it('maps ถนอมสายตา / กรีนรีด → Green Read 75', () => {
+    expect(p).toMatch(/ถนอมสายตา[^\n]*Green Read 75/);
+    expect(p).toContain('กรีนรีด');
+  });
+});

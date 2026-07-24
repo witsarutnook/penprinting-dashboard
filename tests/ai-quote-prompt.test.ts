@@ -188,3 +188,18 @@ describe('buildSystemPrompt — prices from THIS turn only (staff twin of a52152
     expect(p).toContain('ห้ามนำตัวเลขราคาจากข้อความก่อนหน้า');
   });
 });
+
+// Green Read 75 (กระดาษถนอมสายตา) — added 2026-07-24 from customer case #46
+// (A5 book, inner Green Read 75g → escalated because the paper was unknown).
+// Thai buyers call it "กระดาษถนอมสายตา" / "กรีนรีด" — the prompt must map
+// those to the exact system name so paperName validation passes.
+describe('buildSystemPrompt — Green Read 75 alias (2026-07-24)', () => {
+  const p = buildSystemPrompt();
+  it('VALID_PAPER_NAMES includes Green Read 75', () => {
+    expect(VALID_PAPER_NAMES).toContain('Green Read 75');
+  });
+  it('maps ถนอมสายตา / กรีนรีด → Green Read 75', () => {
+    expect(p).toMatch(/ถนอมสายตา[^\n]*Green Read 75/);
+    expect(p).toContain('กรีนรีด');
+  });
+});
