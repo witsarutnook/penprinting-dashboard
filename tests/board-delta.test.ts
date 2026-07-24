@@ -8,11 +8,19 @@ import {
 } from './helpers/mock-postgres';
 
 vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
+// Passthrough cache mock — records registrations/calls; no cache semantics.
+// Needed so the `lists: true` path (loadOrderIdSetsCached) runs deterministically
+// under vitest, and so the bootstrap-coalescing tests can pin routing + config.
+vi.mock('next/cache', () => import('./helpers/mock-next-cache'));
 
-import { loadBoardDelta, BoardDeltaError } from '@/lib/board-delta';
+import { resetCacheCalls } from './helpers/mock-next-cache';
+import { loadBoardDelta, ordersCutoffId, BoardDeltaError } from '@/lib/board-delta';
 
 describe('loadBoardDelta', () => {
-  beforeEach(() => resetMockPostgres());
+  beforeEach(() => {
+    resetMockPostgres();
+    resetCacheCalls();
+  });
 
   it('throws BoardDeltaError when Postgres is not configured', async () => {
     setConfigured(false);
@@ -38,8 +46,11 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [], rowCount: 0 });
       queueResult({ rows: [], rowCount: 0 });
       await loadBoardDelta(null);
-      // Active-only filter on jobs — board UI never renders tombstones
-      expect(callsContaining('phase2_deleted_at IS NULL')).toHaveLength(1);
+      // Active-only filter on jobs — board UI never renders tombstones.
+      // (The windowed orders query also mentions the filter inside its
+      // active-job subquery, so pin the top-level jobs query specifically.)
+      const jobsCall = callsContaining('SELECT raw FROM jobs')[0];
+      expect(jobsCall.text).toContain('phase2_deleted_at IS NULL');
       // No delta filter when bootstrapping (would lose pre-cursor rows)
       expect(callsContaining('updated_at >')).toHaveLength(0);
     });
@@ -241,6 +252,77 @@ describe('loadBoardDelta', () => {
       const ordersCall = callsContaining('FROM orders')[0];
       expect(ordersCall.text).toContain("- 'rawData'");
       expect(ordersCall.text).toContain('hasSpec');
+    });
+  });
+
+  // M-bootstrap-orders-unbounded: bootstrap payload must stop growing linearly
+  // with table size. Orders are windowed AT THE DB to ~12 months (by the
+  // YYYYMM-encoded PK) UNION orders still referenced by an active job, so
+  // /board cards + /calendar lookups always resolve. shipped/cancelled full
+  // rows + the /orders orderId sets share the SAME 12-month window
+  // (imported_at) — an order inside the window ships/cancels inside the
+  // window too (event follows creation), so /orders status badges + orphan
+  // detection stay consistent across the three windowed pieces.
+  describe('windowed bootstrap (M-bootstrap-orders-unbounded)', () => {
+    describe('ordersCutoffId', () => {
+      it('returns YYYYMM*1000 of the same month last year (Bangkok)', () => {
+        expect(ordersCutoffId(new Date('2026-07-24T05:00:00.000Z'))).toBe(202507000);
+        expect(ordersCutoffId(new Date('2026-01-15T10:00:00.000Z'))).toBe(202501000);
+      });
+
+      it('uses the Bangkok calendar month when it is ahead of UTC', () => {
+        // 2026-07-31 17:30 UTC = 2026-08-01 00:30 Bangkok → cutoff rolls to 08
+        expect(ordersCutoffId(new Date('2026-07-31T17:30:00.000Z'))).toBe(202508000);
+      });
+    });
+
+    it('bootstrap orders: windowed to cutoff id OR referenced by an active job', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null);
+      const ordersCall = callsContaining('FROM orders')[0];
+      expect(ordersCall.text).toContain('id >=');
+      // active-job union — orders referenced by a live job never age out
+      expect(ordersCall.text).toContain('order_id FROM jobs');
+      expect(ordersCall.text).toContain('phase2_deleted_at IS NULL AND order_id IS NOT NULL');
+      expect(ordersCall.values).toContain(ordersCutoffId());
+    });
+
+    it('incremental orders: NOT windowed (cursor already bounds the rows)', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      queueResult({ rows: [], rowCount: 0 }); // tombstones
+      await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'));
+      const ordersCall = callsContaining('FROM orders')[0];
+      expect(ordersCall.text).not.toContain('id >=');
+    });
+
+    it('fullLists bootstrap: shipped + cancelled rows windowed by imported_at', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // shipped full
+      queueResult({ rows: [], rowCount: 0 }); // cancelled full
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null, { fullLists: true });
+      const shippedCall = callsContaining('FROM shipped')[0];
+      const cancelledCall = callsContaining('FROM cancelled')[0];
+      expect(shippedCall.text).toContain('imported_at > NOW() -');
+      expect(shippedCall.values).toContain('12 months');
+      expect(cancelledCall.text).toContain('imported_at > NOW() -');
+      expect(cancelledCall.values).toContain('12 months');
+    });
+
+    it('lists sets: DISTINCT order_id windowed by imported_at (same window)', async () => {
+      queueResult({ rows: [], rowCount: 0 }); // sets shipped
+      queueResult({ rows: [], rowCount: 0 }); // sets cancelled
+      queueResult({ rows: [], rowCount: 0 }); // jobs
+      queueResult({ rows: [], rowCount: 0 }); // orders
+      await loadBoardDelta(null, { lists: true });
+      const setCalls = callsContaining('SELECT DISTINCT order_id');
+      expect(setCalls).toHaveLength(2);
+      for (const c of setCalls) {
+        expect(c.text).toContain('imported_at > NOW() -');
+        expect(c.values).toContain('12 months');
+      }
     });
   });
 });

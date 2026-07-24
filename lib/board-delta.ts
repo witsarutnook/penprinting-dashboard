@@ -4,22 +4,48 @@ import { sql, isPostgresConfigured } from '@/lib/postgres';
 import { LOAD_ALL_TAG } from '@/lib/api';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
-/** Shipped/cancelled order-id sets for the /orders list view — a full
- *  snapshot (not delta): small, and a hard-deleted row (e.g. /restore
- *  pulling a row back out of cancelled) must simply drop out. Cached 15s +
- *  tag-invalidated on every job write (they all call
- *  `revalidateTag(LOAD_ALL_TAG)`), so N tabs polling coalesce to one DISTINCT
- *  scan per window instead of one scan per tab per poll (PERF-M1). */
+/** Rolling window for list-shaped reads (M-bootstrap-orders-unbounded).
+ *  Applies consistently to: the bootstrap orders window (via the YYYYMM id
+ *  cutoff below), the /shipped + /cancelled fullLists bootstrap rows, and
+ *  the /orders orderId sets. Consistency matters: an order inside the window
+ *  ships/cancels inside the window too (the event always follows creation),
+ *  so status badges + orphan detection never see a half-windowed pair.
+ *  Rows older than this are the future §13 archive path's job. */
+const LIST_WINDOW = '12 months';
+
+/** Cutoff order id for the bootstrap window: order ids are YYYYMM*1000+seq
+ *  (WP-era scheme, allocated per Bangkok calendar month by getNextId), so
+ *  `id >= cutoff` windows by TRUE order month — unlike `imported_at`, which
+ *  is a backfill date for rows bulk-migrated from the Sheet in 2026-05.
+ *  Returns the id floor of the same month last year (Bangkok, fixed UTC+7). */
+export function ordersCutoffId(now: Date = new Date()): number {
+  const bkk = new Date(now.getTime() + 7 * 3600_000);
+  const y = bkk.getUTCFullYear() - 1;
+  const m = bkk.getUTCMonth() + 1;
+  return (y * 100 + m) * 1000;
+}
+
+/** Shipped/cancelled order-id sets for the /orders list view — a windowed
+ *  snapshot (not delta): bounded by LIST_WINDOW so it stays small forever,
+ *  and a hard-deleted row (e.g. /restore pulling a row back out of
+ *  cancelled) must simply drop out. Cached 15s + tag-invalidated on every
+ *  job write (they all call `revalidateTag(LOAD_ALL_TAG)`), so N tabs
+ *  polling coalesce to one DISTINCT scan per window instead of one scan per
+ *  tab per poll (PERF-M1). */
 const loadOrderIdSetsCached = unstable_cache(
   async (): Promise<{ shippedOrderIds: number[]; cancelledOrderIds: number[] }> => {
     const [shippedR, cancelledR] = await Promise.all([
       sql<{ order_id: number | string }>`
         SELECT DISTINCT order_id FROM shipped
-        WHERE order_id IS NOT NULL ORDER BY order_id
+        WHERE order_id IS NOT NULL
+          AND imported_at > NOW() - ${LIST_WINDOW}::interval
+        ORDER BY order_id
       `,
       sql<{ order_id: number | string }>`
         SELECT DISTINCT order_id FROM cancelled
-        WHERE order_id IS NOT NULL ORDER BY order_id
+        WHERE order_id IS NOT NULL
+          AND imported_at > NOW() - ${LIST_WINDOW}::interval
+        ORDER BY order_id
       `,
     ]);
     return {
@@ -53,13 +79,14 @@ const loadOrderIdSetsCached = unstable_cache(
  *
  * ── Opts ──
  * `{ lists: true }` (cheap) — additionally returns the shipped/cancelled
- *   orderId sets. Used by /orders to derive its status badge. FULL read
- *   each call; the sets are tiny (~150 rows).
+ *   orderId sets. Used by /orders to derive its status badge. Windowed to
+ *   LIST_WINDOW (matching the orders bootstrap window) so the sets stay
+ *   small no matter how the tables grow.
  *
  * `{ fullLists: true }` (heavier) — returns full shipped + cancelled rows
  *   plus the current PK ID list for delete detection. Used by /shipped +
  *   /cancelled which need every row, not just the orderId set.
- *   - Bootstrap (since=null): full table read of both rows + IDs.
+ *   - Bootstrap (since=null): LIST_WINDOW-windowed read of both rows + IDs.
  *   - Incremental: `imported_at > since` new rows + the full current ID
  *     list (so the client can drop tombstoned rows after a /restore
  *     hard-deletes them — no tombstone column needed).
@@ -138,8 +165,16 @@ export async function loadBoardDelta(
   const fullListsP = opts.fullLists
     ? since === null
       ? Promise.all([
-          sql<{ raw: Shipped }>`SELECT raw FROM shipped ORDER BY id DESC`,
-          sql<{ raw: Cancelled }>`SELECT raw FROM cancelled ORDER BY id DESC`,
+          sql<{ raw: Shipped }>`
+            SELECT raw FROM shipped
+            WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
+            ORDER BY id DESC
+          `,
+          sql<{ raw: Cancelled }>`
+            SELECT raw FROM cancelled
+            WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
+            ORDER BY id DESC
+          `,
           null,
           null,
         ])
@@ -172,6 +207,14 @@ export async function loadBoardDelta(
       // every top-level display field, and re-project the two derived fields
       // the list/board DO need: `pin` (shown in the /orders row) and
       // `hasSpec` (drives the board card's "สเปคงาน" tab visibility).
+      //
+      // M-bootstrap-orders-unbounded: window the bootstrap AT THE DB — the
+      // last ~12 months by YYYYMM id cutoff, UNION any order still referenced
+      // by an active job (board cards / calendar lookups must always resolve,
+      // however old the parent order). Older orders age out of the list pages;
+      // the §13 archive path owns them. Incremental deltas stay unwindowed —
+      // the updated_at cursor already bounds them, and a touched old order
+      // resurfacing client-side until next reload is fine.
       sql<{ raw: Order }>`
         SELECT (raw - 'rawData' - 'details')
           || jsonb_build_object(
@@ -181,7 +224,11 @@ export async function loadBoardDelta(
                  OR COALESCE(raw->'details', '{}'::jsonb) <> '{}'::jsonb
                )
              ) AS raw
-        FROM orders ORDER BY id DESC
+        FROM orders
+        WHERE id >= ${ordersCutoffId()}
+           OR id IN (SELECT order_id FROM jobs
+                     WHERE phase2_deleted_at IS NULL AND order_id IS NOT NULL)
+        ORDER BY id DESC
       `,
     ]);
     jobs = jobsR.rows.map((r) => r.raw);
