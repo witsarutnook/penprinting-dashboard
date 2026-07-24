@@ -158,16 +158,22 @@ export async function loadOrderAndJobs(id: number): Promise<{
   jobs: Array<Record<string, unknown>>;
 }> {
   const { sql } = await import('@/lib/postgres');
-  const oR = await sql<{ raw: Record<string, unknown> | null }>`
-    SELECT raw FROM orders WHERE id = ${id}::bigint LIMIT 1
-  `;
+  // Independent reads on different tables — one parallel batch instead of
+  // two sequential Neon hops (L-loadOrderAndJobs-serial; every cascade
+  // write path pays this). Order-missing keeps the same contract: the jobs
+  // result is discarded (one wasted read on the rare not-found path).
+  const [oR, jR] = await Promise.all([
+    sql<{ raw: Record<string, unknown> | null }>`
+      SELECT raw FROM orders WHERE id = ${id}::bigint LIMIT 1
+    `,
+    sql<{ raw: Record<string, unknown> | null }>`
+      SELECT raw FROM jobs
+      WHERE order_id = ${id}::bigint AND phase2_deleted_at IS NULL
+    `,
+  ]);
   if (!oR.rows[0]?.raw) {
     return { order: null, jobs: [] };
   }
-  const jR = await sql<{ raw: Record<string, unknown> | null }>`
-    SELECT raw FROM jobs
-    WHERE order_id = ${id}::bigint AND phase2_deleted_at IS NULL
-  `;
   return {
     order: oR.rows[0].raw,
     jobs: jR.rows.map((r) => r.raw).filter((r): r is Record<string, unknown> => !!r),
