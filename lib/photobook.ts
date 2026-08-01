@@ -198,6 +198,39 @@ export function orderFormFromRaw(
   return { ...f, ...merge };
 }
 
+/** Compact one-line summary of photobook items for report/list rows —
+ *  deduped sizes + total เล่ม. Reads the same dual storage keys as
+ *  orderFormFromRaw (`photobookItems` legacy / `photobook` canonical).
+ *  Returns null unless rawData flags orderType 'photobook'. */
+export function photobookRowSummary(
+  raw: Record<string, unknown> | null | undefined,
+): { size: string; qty: string } | null {
+  if (!raw || typeof raw !== 'object' || raw.orderType !== 'photobook') return null;
+  const items = Array.isArray(raw.photobookItems)
+    ? raw.photobookItems
+    : Array.isArray(raw.photobook)
+      ? raw.photobook
+      : [];
+  const sizes: string[] = [];
+  let total = 0;
+  let sawQty = false;
+  items.forEach((it) => {
+    if (!it || typeof it !== 'object') return;
+    const o = it as Record<string, unknown>;
+    const size = String(o.size || '').trim();
+    if (size && !sizes.includes(size)) sizes.push(size);
+    const qty = Number(String(o.qty || '').trim());
+    if (!isNaN(qty) && qty > 0) {
+      total += qty;
+      sawQty = true;
+    }
+  });
+  return {
+    size: sizes.length ? sizes.join(', ') : '-',
+    qty: sawQty ? `${total} เล่ม` : '-',
+  };
+}
+
 /** Strip empty rows + ensure required fields present. Returns null if any
  *  remaining item is missing size/binding/qty (server-side use). */
 export interface ValidationResult {

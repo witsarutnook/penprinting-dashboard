@@ -1,4 +1,5 @@
 import type { Order, Job, Shipped, LoadAllResponse } from './types';
+import { photobookRowSummary } from './photobook';
 
 /**
  * Pure analytics computation — port of renderAnalytics() in
@@ -452,6 +453,8 @@ export function computeMonthlyReport(
     const raw = (ord.rawData && typeof ord.rawData === 'object'
       ? ord.rawData as Record<string, unknown>
       : {});
+    // Photobook orders keep specs per-item (top-level size/qty are blank)
+    const pb = photobookRowSummary(raw);
     const sizeStr = String(raw.size || '').trim();
     const sizeUnit = String(raw.sizeUnit || '').trim();
     const qtyStr = String(raw.qty || '').trim();
@@ -461,8 +464,8 @@ export function computeMonthlyReport(
       orderId,
       name: ord.name || '-',
       customer: ord.customer || '-',
-      size: sizeStr ? (sizeUnit ? `${sizeStr} ${sizeUnit}` : sizeStr) : '-',
-      qty: qtyStr ? (qtyUnit ? `${qtyStr} ${qtyUnit}` : qtyStr) : '-',
+      size: pb ? pb.size : sizeStr ? (sizeUnit ? `${sizeStr} ${sizeUnit}` : sizeStr) : '-',
+      qty: pb ? pb.qty : qtyStr ? (qtyUnit ? `${qtyStr} ${qtyUnit}` : qtyStr) : '-',
       status,
     };
   };
