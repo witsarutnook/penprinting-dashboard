@@ -333,14 +333,17 @@ describe('loadBoardDelta', () => {
     });
   });
 
-  // M-bootstrap-orders-unbounded: bootstrap payload must stop growing linearly
-  // with table size. Orders are windowed AT THE DB to ~12 months (by the
-  // YYYYMM-encoded PK) UNION orders still referenced by an active job, so
-  // /board cards + /calendar lookups always resolve. shipped/cancelled full
-  // rows + the /orders orderId sets share the SAME 12-month window
-  // (imported_at) — an order inside the window ships/cancels inside the
-  // window too (event follows creation), so /orders status badges + orphan
-  // detection stay consistent across the three windowed pieces.
+  // M-bootstrap-orders-unbounded + M2-window-invariant (audit 2026-08-03):
+  // bootstrap payload must stop growing linearly with table size, AND the
+  // three windowed pieces must agree. Orders window = YYYYMM id cutoff
+  // UNION active-job refs UNION orders referenced by a windowed ship/cancel
+  // event (so /shipped customer lookup + recently-shipped old orders always
+  // resolve — M1). The orderId sets mirror the SAME arms (cutoff OR recent
+  // event OR active-job ref) so "order visible in /orders ⟹ its ship/cancel
+  // membership visible" holds BY CONSTRUCTION — the old imported_at-only
+  // sets window relied on "event follows creation", which breaks once an
+  // event row ages past the rolling window while its order id is still
+  // inside the cutoff (fake orphans + missing badges from ~2027-05).
   describe('windowed bootstrap (M-bootstrap-orders-unbounded)', () => {
     describe('ordersCutoffId', () => {
       it('returns YYYYMM*1000 of the same month last year (Bangkok)', () => {
@@ -354,7 +357,7 @@ describe('loadBoardDelta', () => {
       });
     });
 
-    it('bootstrap orders: windowed to cutoff id OR referenced by an active job', async () => {
+    it('bootstrap orders: cutoff id OR active-job ref OR windowed ship/cancel event ref', async () => {
       queueResult({ rows: [], rowCount: 0 }); // jobs
       queueResult({ rows: [], rowCount: 0 }); // orders
       await loadBoardDelta(null);
@@ -364,6 +367,11 @@ describe('loadBoardDelta', () => {
       expect(ordersCall.text).toContain('order_id FROM jobs');
       expect(ordersCall.text).toContain('phase2_deleted_at IS NULL AND order_id IS NOT NULL');
       expect(ordersCall.values).toContain(ordersCutoffId());
+      // event-ref union (M1) — every windowed /shipped + /cancelled row's
+      // parent order must resolve (customer column), and an old order that
+      // shipped recently must stay listed with its badge
+      expect(ordersCall.text).toContain('order_id FROM shipped');
+      expect(ordersCall.text).toContain('order_id FROM cancelled');
     });
 
     it('incremental orders: NOT windowed (cursor already bounds the rows)', async () => {
@@ -389,7 +397,7 @@ describe('loadBoardDelta', () => {
       expect(cancelledCall.values).toContain('12 months');
     });
 
-    it('lists sets: DISTINCT order_id windowed by imported_at (same window)', async () => {
+    it('lists sets: mirror the orders window arms — cutoff OR recent event OR active-job ref', async () => {
       queueResult({ rows: [], rowCount: 0 }); // sets shipped
       queueResult({ rows: [], rowCount: 0 }); // sets cancelled
       queueResult({ rows: [], rowCount: 0 }); // jobs
@@ -398,8 +406,17 @@ describe('loadBoardDelta', () => {
       const setCalls = callsContaining('SELECT DISTINCT order_id');
       expect(setCalls).toHaveLength(2);
       for (const c of setCalls) {
+        // cutoff arm — an order inside the id window keeps its badge no
+        // matter how old the event row is (M2: fake-orphan fix)
+        expect(c.text).toContain('order_id >=');
+        expect(c.values).toContain(ordersCutoffId());
+        // recent-event arm — an old order that shipped recently is listed
+        // via the M1 event-ref union, so its membership must be here too
         expect(c.text).toContain('imported_at > NOW() -');
         expect(c.values).toContain('12 months');
+        // active-ref arm — order visible only through a live job still
+        // surfaces its sibling ship/cancel history
+        expect(c.text).toContain('order_id FROM jobs');
       }
     });
   });

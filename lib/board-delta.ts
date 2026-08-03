@@ -5,11 +5,24 @@ import { LOAD_ALL_TAG } from '@/lib/api';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
 /** Rolling window for list-shaped reads (M-bootstrap-orders-unbounded).
- *  Applies consistently to: the bootstrap orders window (via the YYYYMM id
- *  cutoff below), the /shipped + /cancelled fullLists bootstrap rows, and
- *  the /orders orderId sets. Consistency matters: an order inside the window
- *  ships/cancels inside the window too (the event always follows creation),
- *  so status badges + orphan detection never see a half-windowed pair.
+ *  Two window shapes exist, aligned so no consumer ever sees a
+ *  half-windowed pair (M2-window-invariant, audit 2026-08-03):
+ *
+ *  - EVENT window (`imported_at > NOW() - LIST_WINDOW`): the /shipped +
+ *    /cancelled fullLists rows — "shipping activity of the last ~12 months",
+ *    however old the parent order.
+ *  - ORDER window (YYYYMM id cutoff below, UNION active-job refs, UNION
+ *    orders referenced by an EVENT-windowed ship/cancel row): the bootstrap
+ *    orders list. The event-ref arm keeps every fullLists row's parent
+ *    order resolvable (/shipped customer column) and keeps a
+ *    recently-shipped old order listed on /orders.
+ *
+ *  The /orders orderId sets mirror ALL the ORDER-window arms (cutoff OR
+ *  recent event OR active-job ref) — see loadOrderIdSetsCached — so "order
+ *  visible ⟹ its ship/cancel membership visible" holds by construction.
+ *  (The old imported_at-only sets relied on "event follows creation", which
+ *  breaks once an event row ages past the rolling window while its order id
+ *  is still inside the cutoff: fake orphans + missing badges.)
  *  Rows older than this are the future §13 archive path's job. */
 const LIST_WINDOW = '12 months';
 
@@ -26,25 +39,34 @@ export function ordersCutoffId(now: Date = new Date()): number {
 }
 
 /** Shipped/cancelled order-id sets for the /orders list view — a windowed
- *  snapshot (not delta): bounded by LIST_WINDOW so it stays small forever,
- *  and a hard-deleted row (e.g. /restore pulling a row back out of
- *  cancelled) must simply drop out. Cached 15s + tag-invalidated on every
- *  job write (they all call `revalidateTag(LOAD_ALL_TAG)`), so N tabs
- *  polling coalesce to one DISTINCT scan per window instead of one scan per
- *  tab per poll (PERF-M1). */
+ *  snapshot (not delta): bounded so it stays small forever, and a
+ *  hard-deleted row (e.g. /restore pulling a row back out of cancelled)
+ *  must simply drop out. The predicate mirrors the bootstrap ORDER window
+ *  arms (M2-window-invariant): an order id inside the cutoff keeps its
+ *  membership however old the event row is; an old order listed via a
+ *  recent event or a live sibling job surfaces its history too. Cached
+ *  15s + tag-invalidated on every job write (they all call
+ *  `revalidateTag(LOAD_ALL_TAG)`), so N tabs polling coalesce to one
+ *  DISTINCT scan per window instead of one scan per tab per poll (PERF-M1). */
 const loadOrderIdSetsCached = unstable_cache(
   async (): Promise<{ shippedOrderIds: number[]; cancelledOrderIds: number[] }> => {
     const [shippedR, cancelledR] = await Promise.all([
       sql<{ order_id: number | string }>`
         SELECT DISTINCT order_id FROM shipped
         WHERE order_id IS NOT NULL
-          AND imported_at > NOW() - ${LIST_WINDOW}::interval
+          AND (order_id >= ${ordersCutoffId()}
+               OR imported_at > NOW() - ${LIST_WINDOW}::interval
+               OR order_id IN (SELECT order_id FROM jobs
+                               WHERE phase2_deleted_at IS NULL AND order_id IS NOT NULL))
         ORDER BY order_id
       `,
       sql<{ order_id: number | string }>`
         SELECT DISTINCT order_id FROM cancelled
         WHERE order_id IS NOT NULL
-          AND imported_at > NOW() - ${LIST_WINDOW}::interval
+          AND (order_id >= ${ordersCutoffId()}
+               OR imported_at > NOW() - ${LIST_WINDOW}::interval
+               OR order_id IN (SELECT order_id FROM jobs
+                               WHERE phase2_deleted_at IS NULL AND order_id IS NOT NULL))
         ORDER BY order_id
       `,
     ]);
@@ -282,10 +304,14 @@ async function loadBoardDeltaLive(
       // M-bootstrap-orders-unbounded: window the bootstrap AT THE DB — the
       // last ~12 months by YYYYMM id cutoff, UNION any order still referenced
       // by an active job (board cards / calendar lookups must always resolve,
-      // however old the parent order). Older orders age out of the list pages;
-      // the §13 archive path owns them. Incremental deltas stay unwindowed —
-      // the updated_at cursor already bounds them, and a touched old order
-      // resurfacing client-side until next reload is fine.
+      // however old the parent order), UNION any order referenced by an
+      // EVENT-windowed ship/cancel row (M1, audit 2026-08-03: /shipped's
+      // customer column resolves through this list, and an old order that
+      // shipped recently must stay visible on /orders with its badge).
+      // Older orders age out of the list pages; the §13 archive path owns
+      // them. Incremental deltas stay unwindowed — the updated_at cursor
+      // already bounds them, and a touched old order resurfacing client-side
+      // until next reload is fine.
       sql<{ raw: Order }>`
         SELECT (raw - 'rawData' - 'details')
           || jsonb_build_object(
@@ -299,6 +325,12 @@ async function loadBoardDeltaLive(
         WHERE id >= ${ordersCutoffId()}
            OR id IN (SELECT order_id FROM jobs
                      WHERE phase2_deleted_at IS NULL AND order_id IS NOT NULL)
+           OR id IN (SELECT order_id FROM shipped
+                     WHERE order_id IS NOT NULL
+                       AND imported_at > NOW() - ${LIST_WINDOW}::interval)
+           OR id IN (SELECT order_id FROM cancelled
+                     WHERE order_id IS NOT NULL
+                       AND imported_at > NOW() - ${LIST_WINDOW}::interval)
         ORDER BY id DESC
       `,
     ]);
