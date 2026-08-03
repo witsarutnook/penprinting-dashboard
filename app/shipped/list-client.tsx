@@ -39,7 +39,9 @@ export function ShippedListClient({
       cancelled: [],
       serverTime: initialServerTime,
     },
-    { fullLists: true },
+    // Track shipped ONLY — cancelled is seeded empty (never rendered here),
+    // so its server check must not count as staleness (H1 reconcile loop).
+    { fullLists: true, fullListsTrack: { shipped: true, cancelled: false } },
   );
 
   const searchParams = useSearchParams();

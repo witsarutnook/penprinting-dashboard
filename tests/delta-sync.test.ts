@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeDelta, fullListsStale, type DeltaState } from '@/lib/delta-sync';
+import { mergeDelta, fullListsStale, planReconcile, type DeltaState } from '@/lib/delta-sync';
 import type { BoardDelta } from '@/lib/board-delta';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
@@ -331,5 +331,85 @@ describe('fullListsStale', () => {
       shippedCheck: { count: 0, maxId: 0 },
       cancelledCheck: { count: 0, maxId: 0 },
     }))).toBe(false);
+  });
+});
+
+// H1-fulllists-reconcile-loop: /cancelled seeds `shipped: []` and /shipped
+// seeds `cancelled: []` (each page tracks ONE table), but the server's
+// incremental checks cover BOTH tables. Without a track scope the untracked
+// table's check can never match (0 local rows vs the real windowed count),
+// so every poll chained a reconcile that could not converge — an unbounded
+// back-to-back poll loop that bypassed refreshGuard + the 30-min hard stop.
+describe('fullListsStale — track scope', () => {
+  it('ignores a shipped mismatch when the page tracks cancelled only (/cancelled)', () => {
+    const state = st({ shipped: [], cancelled: [c(80)] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 520, maxId: 99500 },
+      cancelledCheck: { count: 1, maxId: 80 },
+    }), { shipped: false, cancelled: true })).toBe(false);
+  });
+
+  it('ignores a cancelled mismatch when the page tracks shipped only (/shipped)', () => {
+    const state = st({ shipped: [s(100)], cancelled: [] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 1, maxId: 100 },
+      cancelledCheck: { count: 32, maxId: 4200 },
+    }), { shipped: true, cancelled: false })).toBe(false);
+  });
+
+  it('still reports a mismatch on the tracked table', () => {
+    const state = st({ shipped: [s(100), s(102)], cancelled: [] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 1, maxId: 100 },
+      cancelledCheck: { count: 32, maxId: 4200 },
+    }), { shipped: true, cancelled: false })).toBe(true);
+  });
+
+  it('defaults to checking both tables when no track scope is given', () => {
+    const state = st({ shipped: [], cancelled: [c(80)] });
+    expect(fullListsStale(state, delta({
+      shippedCheck: { count: 520, maxId: 99500 },
+      cancelledCheck: { count: 1, maxId: 80 },
+    }))).toBe(true);
+  });
+});
+
+// M3-reconcile-cannot-materialize: a reconcile response only carries the id
+// set + rows added since the cursor — it cannot materialize a row the client
+// never had (backdated insert during data repair). If the state is STILL
+// stale after a reconcile, chaining again loops forever. planReconcile is
+// the single decision point: chain at most ONCE per staleness detection,
+// and after a failed reconcile wait for the next scheduled tick instead.
+describe('planReconcile', () => {
+  it('chains one reconcile when a normal poll detects staleness', () => {
+    expect(planReconcile({ needIds: false, wasReconcile: false, stale: true }))
+      .toEqual({ needIds: true, chain: true });
+  });
+
+  it('does NOT chain when the reconcile response itself is still stale (circuit breaker)', () => {
+    expect(planReconcile({ needIds: true, wasReconcile: true, stale: true }))
+      .toEqual({ needIds: true, chain: false });
+  });
+
+  it('clears the pending flag when the reconcile converged', () => {
+    expect(planReconcile({ needIds: true, wasReconcile: true, stale: false }))
+      .toEqual({ needIds: false, chain: false });
+  });
+
+  it('is a no-op on a clean normal poll', () => {
+    expect(planReconcile({ needIds: false, wasReconcile: false, stale: false }))
+      .toEqual({ needIds: false, chain: false });
+  });
+
+  it('does not stack a second chain while a reconcile is already pending', () => {
+    // A non-ids response while needIds is set (poll raced the flag) must not
+    // fire another immediate poll — the pending flag already covers it.
+    expect(planReconcile({ needIds: true, wasReconcile: false, stale: true }))
+      .toEqual({ needIds: true, chain: false });
+  });
+
+  it('clears a pending flag when a raced normal poll shows the state healed', () => {
+    expect(planReconcile({ needIds: true, wasReconcile: false, stale: false }))
+      .toEqual({ needIds: false, chain: false });
   });
 });

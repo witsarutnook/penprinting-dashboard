@@ -86,19 +86,61 @@ function maxIdOf(rows: Array<{ id: number | string }>): number {
   return max;
 }
 
+/** Which fullLists tables this consumer actually renders. The server's
+ *  incremental checks always cover BOTH tables, but /shipped seeds
+ *  `cancelled: []` and /cancelled seeds `shipped: []` — an untracked table's
+ *  check can never match its empty local state, so scoping the staleness
+ *  test to the tracked table(s) is what keeps the reconcile protocol from
+ *  chasing a mismatch it can never repair (H1-fulllists-reconcile-loop). */
+export interface FullListsTrack {
+  shipped: boolean;
+  cancelled: boolean;
+}
+
+const TRACK_BOTH: FullListsTrack = { shipped: true, cancelled: true };
+
 /** True when the delta's windowed {count, maxId} checks disagree with the
  *  (already-merged) state — meaning a row was hard-deleted server-side
  *  (/restore) or aged out of the server's LIST_WINDOW, and the client needs
  *  one reconcile poll with `?ids=1` to learn WHICH rows to drop. False when
  *  the delta carries no checks (non-fullLists consumers). A transient
  *  mismatch (write landing between the server's parallel statements) just
- *  costs one extra reconcile poll and heals next tick. */
-export function fullListsStale(state: DeltaState, delta: BoardDelta): boolean {
+ *  costs one extra reconcile poll and heals next tick. Only the tables in
+ *  `track` are compared — see FullListsTrack. */
+export function fullListsStale(
+  state: DeltaState,
+  delta: BoardDelta,
+  track: FullListsTrack = TRACK_BOTH,
+): boolean {
   const s = delta.shippedCheck;
-  if (s && (state.shipped.length !== s.count || maxIdOf(state.shipped) !== s.maxId)) return true;
+  if (track.shipped && s && (state.shipped.length !== s.count || maxIdOf(state.shipped) !== s.maxId)) return true;
   const c = delta.cancelledCheck;
-  if (c && (state.cancelled.length !== c.count || maxIdOf(state.cancelled) !== c.maxId)) return true;
+  if (track.cancelled && c && (state.cancelled.length !== c.count || maxIdOf(state.cancelled) !== c.maxId)) return true;
   return false;
+}
+
+/** Decide how a fullLists poll response advances the reconcile protocol.
+ *  Pure single decision point for the hook's chain-a-reconcile logic:
+ *
+ *  - Normal poll detects staleness → chain ONE immediate `?ids=1` poll (so
+ *    e.g. a row the user just restored in THIS tab drops without waiting a
+ *    full backoff tick).
+ *  - The reconcile response ITSELF is still stale → circuit breaker: keep
+ *    the pending flag (the next scheduled tick re-carries `?ids=1`) but do
+ *    NOT chain again. A reconcile can only drop rows + upsert rows-since-
+ *    cursor — it cannot materialize a row the client never had (backdated
+ *    insert during data repair), so chaining on it would loop back-to-back
+ *    forever, bypassing refreshGuard and the 30-min hard stop.
+ *  - Not stale → clear the flag, nothing to do.
+ */
+export function planReconcile(
+  { needIds, wasReconcile, stale }: { needIds: boolean; wasReconcile: boolean; stale: boolean },
+): { needIds: boolean; chain: boolean } {
+  if (!stale) return { needIds: false, chain: false };
+  if (wasReconcile) return { needIds: true, chain: false };
+  // Stale normal poll: chain once — unless a reconcile is already pending
+  // (this response raced the flag), in which case the flag already covers it.
+  return { needIds: true, chain: !needIds };
 }
 
 /** Apply a fullLists update: drop any current rows whose id is not in
@@ -233,7 +275,7 @@ export function useDeltaSync(
     shipped?: Shipped[];
     cancelled?: Cancelled[];
   },
-  opts: { lists?: boolean; fullLists?: boolean } = {},
+  opts: { lists?: boolean; fullLists?: boolean; fullListsTrack?: FullListsTrack } = {},
 ): DeltaSync {
   const [state, setState] = useState<DeltaState>({
     jobs: initial.jobs,
@@ -251,6 +293,7 @@ export function useDeltaSync(
   // poll URL.
   const wantListsRef = useRef<boolean>(opts.lists ?? false);
   const wantFullListsRef = useRef<boolean>(opts.fullLists ?? false);
+  const fullListsTrackRef = useRef<FullListsTrack>(opts.fullListsTrack ?? TRACK_BOTH);
   // Mirror of `state` for pollOnce — the staleness check below needs the
   // POST-merge snapshot synchronously, and only pollOnce ever writes this
   // state (all polls are serialized through pollNow's coalescing chain).
@@ -296,18 +339,17 @@ export function useDeltaSync(
       setState(next);
     }
     if (wantFullListsRef.current) {
-      // A response carrying the id set has reconciled us — clear the flag.
-      if (delta.shippedAllIds !== undefined) needIdsRef.current = false;
-      if (fullListsStale(next, delta) && !needIdsRef.current) {
-        // Checks disagree → a row was hard-deleted (/restore) or aged out of
-        // the server window. Chain ONE immediate reconcile poll so e.g. the
-        // row a user just restored in THIS tab drops without waiting a full
-        // backoff tick. No tight loop: the reconcile response's id set makes
-        // the merged state match its own checks by construction; a repeat
-        // requires a genuinely new server-side change.
-        needIdsRef.current = true;
-        void pollNowRef.current();
-      }
+      // Chain-at-most-once reconcile protocol — all branch logic lives in
+      // planReconcile (pure, tested): stale normal poll → one immediate
+      // `?ids=1` chain; stale reconcile response → circuit breaker (keep the
+      // flag, wait for the next scheduled tick); clean → clear the flag.
+      const plan = planReconcile({
+        needIds: needIdsRef.current,
+        wasReconcile: delta.shippedAllIds !== undefined,
+        stale: fullListsStale(next, delta, fullListsTrackRef.current),
+      });
+      needIdsRef.current = plan.needIds;
+      if (plan.chain) void pollNowRef.current();
     }
   }, []);
 
