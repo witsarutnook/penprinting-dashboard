@@ -89,11 +89,34 @@ describe('photobookRowSummary', () => {
     expect(out).toEqual({ size: '8"x8"', qty: '3 เล่ม' });
   });
 
-  it('skips malformed items and non-numeric qty', () => {
+  it('flags non-numeric qty as unknown instead of silently dropping it', () => {
     const out = photobookRowSummary({
       orderType: 'photobook',
       photobook: [null, 'x', { size: 'A3', binding: 'ปกแข็ง', qty: 'abc', special: '' }],
     });
-    expect(out).toEqual({ size: 'A3', qty: '-' });
+    expect(out).toEqual({ size: 'A3', qty: '? เล่ม' });
+  });
+
+  it('marks summed qty as lower bound when some items have unparseable qty', () => {
+    const out = photobookRowSummary({
+      orderType: 'photobook',
+      photobook: [
+        { size: '8"x8"', binding: 'ปกแข็ง', qty: '2', special: '' },
+        { size: '6"x6"', binding: 'ปกอ่อน', qty: '10 เล่ม', special: '' },
+        { size: '8"x8"', binding: 'ปกอ่อน', qty: '1', special: '' },
+      ],
+    });
+    expect(out).toEqual({ size: '8"x8", 6"x6"', qty: '3+ เล่ม' });
+  });
+
+  it('empty rows do not trigger the unknown indicator', () => {
+    const out = photobookRowSummary({
+      orderType: 'photobook',
+      photobook: [
+        { size: '', binding: '', qty: '', special: '' },
+        { size: '8"x8"', binding: 'ปกแข็ง', qty: '5', special: '' },
+      ],
+    });
+    expect(out).toEqual({ size: '8"x8"', qty: '5 เล่ม' });
   });
 });

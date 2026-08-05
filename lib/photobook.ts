@@ -214,20 +214,33 @@ export function photobookRowSummary(
   const sizes: string[] = [];
   let total = 0;
   let sawQty = false;
+  let unknownQty = false;
   items.forEach((it) => {
     if (!it || typeof it !== 'object') return;
     const o = it as Record<string, unknown>;
     const size = String(o.size || '').trim();
     if (size && !sizes.includes(size)) sizes.push(size);
-    const qty = Number(String(o.qty || '').trim());
+    const qtyStr = String(o.qty || '').trim();
+    const qty = Number(qtyStr);
     if (!isNaN(qty) && qty > 0) {
       total += qty;
       sawQty = true;
+    } else {
+      // Non-empty item whose qty doesn't parse (legacy rows that predate
+      // validatePhotobook, e.g. qty "10 เล่ม") — the total is a lower bound,
+      // so surface it instead of silently under-reporting.
+      const binding = String(o.binding || '').trim();
+      const special = String(o.special || '').trim();
+      if (size || binding || special || qtyStr) unknownQty = true;
     }
   });
   return {
     size: sizes.length ? sizes.join(', ') : '-',
-    qty: sawQty ? `${total} เล่ม` : '-',
+    qty: sawQty
+      ? `${total}${unknownQty ? '+' : ''} เล่ม`
+      : unknownQty
+        ? '? เล่ม'
+        : '-',
   };
 }
 
