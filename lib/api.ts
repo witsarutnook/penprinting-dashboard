@@ -162,6 +162,10 @@ export async function loadOrderAndJobs(id: number): Promise<{
   // two sequential Neon hops (L-loadOrderAndJobs-serial; every cascade
   // write path pays this). Order-missing keeps the same contract: the jobs
   // result is discarded (one wasted read on the rare not-found path).
+  // Contract change vs the serial version: order-not-found + jobs query
+  // FAILURE now throws (serial never ran the jobs query, returned
+  // { order: null } silently). Callers already absorb it — orders/update
+  // maps to 502, promote-draft wraps in try/catch.
   const [oR, jR] = await Promise.all([
     sql<{ raw: Record<string, unknown> | null }>`
       SELECT raw FROM orders WHERE id = ${id}::bigint LIMIT 1
