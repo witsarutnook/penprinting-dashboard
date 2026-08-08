@@ -44,13 +44,17 @@ export default async function ShippedPage() {
 }
 
 /** Bootstrap data fetcher — awaits the initial snapshot via
- *  `loadBoardDelta(null, { fullLists: true })` (full shipped rows + orders
- *  for customer lookup) and hands it to the client `<ShippedListClient>`. */
+ *  `loadBoardDelta` fullLists (full shipped rows + orders for customer
+ *  lookup) and hands it to the client `<ShippedListClient>`.
+ *  `includeCancelled: false` — this page never renders cancelled rows (it
+ *  seeds `cancelled: []`), and /shipped is open to every role while the
+ *  cancelled payload is admin-only (L1-fulllists-route-role-gate). Skipping
+ *  it also saves the windowed cancelled scan on every navigation. */
 async function ShippedData() {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
   try {
-    initial = await loadBoardDelta(null, { fullLists: true });
+    initial = await loadBoardDelta(null, { fullLists: true, includeCancelled: false });
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
   }

@@ -36,14 +36,16 @@ export default async function CancelledPage() {
 }
 
 /** Bootstrap data fetcher — awaits the initial snapshot via
- *  `loadBoardDelta(null, { fullLists: true })` (full cancelled rows) and
- *  hands it to the client `<CancelledListClient>`, which then delta-polls
- *  and re-runs filter/paginate locally. */
+ *  `loadBoardDelta` fullLists (full cancelled rows) and hands it to the
+ *  client `<CancelledListClient>`, which then delta-polls and re-runs
+ *  filter/paginate locally. `includeCancelled: true` is legitimate here —
+ *  the page redirected every non-admin away above
+ *  (L1-fulllists-route-role-gate). */
 async function CancelledData() {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
   try {
-    initial = await loadBoardDelta(null, { fullLists: true });
+    initial = await loadBoardDelta(null, { fullLists: true, includeCancelled: true });
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
   }

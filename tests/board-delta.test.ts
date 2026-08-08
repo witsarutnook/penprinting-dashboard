@@ -14,7 +14,7 @@ vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 vi.mock('next/cache', () => import('./helpers/mock-next-cache'));
 
 import { resetCacheCalls, findCacheRegistration } from './helpers/mock-next-cache';
-import { loadBoardDelta, ordersCutoffId, BoardDeltaError } from '@/lib/board-delta';
+import { loadBoardDelta, ordersCutoffId, includeCancelledForRole, BoardDeltaError } from '@/lib/board-delta';
 
 describe('loadBoardDelta', () => {
   beforeEach(() => {
@@ -162,7 +162,7 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [{ raw: job }], rowCount: 1 });         // jobs
       queueResult({ rows: [{ raw: order }], rowCount: 1 });       // orders
 
-      const r = await loadBoardDelta(null, { fullLists: true });
+      const r = await loadBoardDelta(null, { fullLists: true, includeCancelled: true });
 
       expect(r.shipped).toEqual([shipped]);
       expect(r.cancelled).toEqual([cancelled]);
@@ -180,7 +180,7 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [], rowCount: 0 }); // shipped full
       queueResult({ rows: [], rowCount: 0 }); // cancelled full
 
-      await loadBoardDelta(null, { lists: true, fullLists: true });
+      await loadBoardDelta(null, { lists: true, fullLists: true, includeCancelled: true });
 
       // The DISTINCT order_id queries are skipped — fullLists supersedes lists.
       expect(callsContaining('SELECT DISTINCT order_id')).toHaveLength(0);
@@ -200,7 +200,7 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [], rowCount: 0 });                              // orders incr
       queueResult({ rows: [], rowCount: 0 });                              // tombstoned jobs
 
-      const r = await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, withIds: true });
+      const r = await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, withIds: true, includeCancelled: true });
 
       expect(r.shipped).toEqual([newShip]);
       expect(r.cancelled).toEqual([]);
@@ -217,7 +217,7 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [], rowCount: 0 });
       queueResult({ rows: [], rowCount: 0 });
 
-      await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true });
+      await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, includeCancelled: true });
 
       // Incremental shipped/cancelled queries pivot on imported_at (the
       // only timestamp column on those tables — they have no updated_at).
@@ -244,7 +244,7 @@ describe('loadBoardDelta', () => {
         queueResult({ rows: [], rowCount: 0 });                            // orders incr
         queueResult({ rows: [], rowCount: 0 });                            // tombstones
 
-        const r = await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true });
+        const r = await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, includeCancelled: true });
 
         // full id-list scans are gone from the default poll
         expect(callsContaining('SELECT id::text AS id FROM shipped')).toHaveLength(0);
@@ -268,7 +268,7 @@ describe('loadBoardDelta', () => {
         queueResult({ rows: [], rowCount: 0 });                            // shipped ids
         queueResult({ rows: [], rowCount: 0 });                            // cancelled ids
         queueResult({ rows: [], rowCount: 0 });                            // stats
-        await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, withIds: true });
+        await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, withIds: true, includeCancelled: true });
         const idCalls = [
           ...callsContaining('SELECT id::text AS id FROM shipped'),
           ...callsContaining('SELECT id::text AS id FROM cancelled'),
@@ -287,7 +287,7 @@ describe('loadBoardDelta', () => {
           rows: [{ shipped_count: '0', shipped_max: null, cancelled_count: '0', cancelled_max: null }],
           rowCount: 1,
         });                                                                // stats
-        const r = await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true });
+        const r = await loadBoardDelta(new Date('2026-05-20T10:00:00.000Z'), { fullLists: true, includeCancelled: true });
         expect(r.shippedCheck).toEqual({ count: 0, maxId: 0 });
         expect(r.cancelledCheck).toEqual({ count: 0, maxId: 0 });
       });
@@ -297,11 +297,82 @@ describe('loadBoardDelta', () => {
         queueResult({ rows: [], rowCount: 0 }); // cancelled full
         queueResult({ rows: [], rowCount: 0 }); // jobs
         queueResult({ rows: [], rowCount: 0 }); // orders
-        const r = await loadBoardDelta(null, { fullLists: true });
+        const r = await loadBoardDelta(null, { fullLists: true, includeCancelled: true });
         expect(callsContaining('COUNT(*)')).toHaveLength(0);
         expect(callsContaining('SELECT id::text AS id FROM shipped')).toHaveLength(0);
         expect(r.shippedCheck).toBeUndefined();
       });
+    });
+  });
+
+  // L1-fulllists-route-role-gate (audit 2026-08-03): full cancelled rows carry
+  // the cancel reason + actor, and the /cancelled page is admin-only — the
+  // fullLists payload must mirror that gate. Shipped rows stay open (the
+  // /shipped page is any-role), and lists-mode orderId sets stay open too
+  // (/orders badges derive from bare ids — WP parity, no row content).
+  describe('fullLists cancelled payload gate (L1-fulllists-route-role-gate)', () => {
+    it('includeCancelledForRole: admin only', () => {
+      expect(includeCancelledForRole('admin')).toBe(true);
+      expect(includeCancelledForRole('sales')).toBe(false);
+      expect(includeCancelledForRole('staff')).toBe(false);
+    });
+
+    it('bootstrap gated: no cancelled rows query, no cancelled fields in the delta', async () => {
+      const shipped = { id: 5001, name: 'ship-A', shippedDate: '2026-05-01', orderId: 202605100 };
+      // execution order without the cancelled arm: shipped full → jobs → orders
+      queueResult({ rows: [{ raw: shipped }], rowCount: 1 }); // shipped full
+      queueResult({ rows: [], rowCount: 0 });                 // jobs
+      queueResult({ rows: [], rowCount: 0 });                 // orders
+
+      const r = await loadBoardDelta(null, { fullLists: true, includeCancelled: false });
+
+      expect(callsContaining('SELECT raw FROM cancelled')).toHaveLength(0);
+      expect(r.shipped).toEqual([shipped]);
+      expect(r.shippedAllIds).toEqual([5001]);
+      expect(r.cancelled).toBeUndefined();
+      expect(r.cancelledAllIds).toBeUndefined();
+    });
+
+    it('incremental gated: shippedCheck only — no cancelled rows query, no cancelledCheck', async () => {
+      queueResult({ rows: [], rowCount: 0 });                            // shipped incr
+      queueResult({
+        rows: [{ shipped_count: '2', shipped_max: '5002', cancelled_count: '1', cancelled_max: '6001' }],
+        rowCount: 1,
+      });                                                                // stats (still combined — response strips)
+      queueResult({ rows: [], rowCount: 0 });                            // jobs incr
+      queueResult({ rows: [], rowCount: 0 });                            // orders incr
+      queueResult({ rows: [], rowCount: 0 });                            // tombstones
+
+      const r = await loadBoardDelta(
+        new Date('2026-05-20T10:00:00.000Z'),
+        { fullLists: true, includeCancelled: false },
+      );
+
+      expect(callsContaining('SELECT raw FROM cancelled')).toHaveLength(0);
+      expect(r.shippedCheck).toEqual({ count: 2, maxId: 5002 });
+      expect(r.cancelledCheck).toBeUndefined();
+      expect(r.cancelled).toBeUndefined();
+    });
+
+    it('withIds reconcile gated: shipped id set only — no cancelled id-list query', async () => {
+      queueResult({ rows: [], rowCount: 0 });                            // shipped incr
+      queueResult({ rows: [{ id: '5001' }, { id: '5002' }], rowCount: 2 }); // shipped ids
+      queueResult({
+        rows: [{ shipped_count: '2', shipped_max: '5002', cancelled_count: '0', cancelled_max: null }],
+        rowCount: 1,
+      });                                                                // stats
+      queueResult({ rows: [], rowCount: 0 });                            // jobs incr
+      queueResult({ rows: [], rowCount: 0 });                            // orders incr
+      queueResult({ rows: [], rowCount: 0 });                            // tombstones
+
+      const r = await loadBoardDelta(
+        new Date('2026-05-20T10:00:00.000Z'),
+        { fullLists: true, withIds: true, includeCancelled: false },
+      );
+
+      expect(callsContaining('SELECT id::text AS id FROM cancelled')).toHaveLength(0);
+      expect(r.shippedAllIds).toEqual([5001, 5002]);
+      expect(r.cancelledAllIds).toBeUndefined();
     });
   });
 
@@ -388,7 +459,7 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [], rowCount: 0 }); // cancelled full
       queueResult({ rows: [], rowCount: 0 }); // jobs
       queueResult({ rows: [], rowCount: 0 }); // orders
-      await loadBoardDelta(null, { fullLists: true });
+      await loadBoardDelta(null, { fullLists: true, includeCancelled: true });
       const shippedCall = callsContaining('FROM shipped')[0];
       const cancelledCall = callsContaining('FROM cancelled')[0];
       expect(shippedCall.text).toContain('imported_at > NOW() -');
@@ -460,7 +531,7 @@ describe('loadBoardDelta', () => {
       queueResult({ rows: [], rowCount: 0 }); // cancelled full
       queueResult({ rows: [], rowCount: 0 }); // jobs
       queueResult({ rows: [], rowCount: 0 }); // orders
-      await loadBoardDelta(null, { fullLists: true });
+      await loadBoardDelta(null, { fullLists: true, includeCancelled: true });
       expect(findCacheRegistration('board-delta-bootstrap')!.calls).toHaveLength(0);
     });
 

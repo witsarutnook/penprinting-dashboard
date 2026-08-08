@@ -2,6 +2,7 @@ import 'server-only';
 import { unstable_cache } from 'next/cache';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
 import { LOAD_ALL_TAG } from '@/lib/api';
+import type { Session } from '@/lib/auth';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
 /** Rolling window for list-shaped reads (M-bootstrap-orders-unbounded).
@@ -126,6 +127,33 @@ export class BoardDeltaError extends Error {
   }
 }
 
+/** L1-fulllists-route-role-gate (audit 2026-08-03): full cancelled rows carry
+ *  the cancel reason + actor, and the /cancelled page is admin-only — the
+ *  fullLists cancelled payload must mirror that gate. Shipped rows stay open
+ *  to every role (/shipped is any-role), and the lists-mode orderId sets stay
+ *  open too (/orders badges derive from bare ids — WP parity, no row content). */
+export function includeCancelledForRole(role: Session['role']): boolean {
+  return role === 'admin';
+}
+
+/** Loader opts. Type-level pairing (same pattern as LoadSessionOpts,
+ *  2026-07-13): `fullLists: true` REQUIRES an explicit `includeCancelled`
+ *  decision, so no future caller can ship full cancelled rows to a non-admin
+ *  by omission — derive it from `includeCancelledForRole(session.role)`
+ *  unless the callsite is already admin-gated. */
+export type BoardDeltaOpts = { lists?: boolean; withIds?: boolean } & (
+  | { fullLists: true; includeCancelled: boolean }
+  | { fullLists?: false; includeCancelled?: never }
+);
+
+/** Internal loose shape — the public union above is the enforcement point. */
+type BoardDeltaOptsLoose = {
+  lists?: boolean;
+  fullLists?: boolean;
+  withIds?: boolean;
+  includeCancelled?: boolean;
+};
+
 /** Cheap per-table consistency check for the fullLists incremental poll —
  *  COUNT + MAX(id) over the LIST_WINDOW. The client compares these against
  *  its merged state; a mismatch (hard-delete from /restore, or a row aging
@@ -154,7 +182,9 @@ export interface BoardDelta {
   cancelledOrderIds?: number[];
   /** Full shipped / cancelled rows. Bootstrap = entire table; incremental =
    *  only rows where `imported_at > since`. Populated only when
-   *  `{ fullLists: true }`. */
+   *  `{ fullLists: true }`. The cancelled side additionally requires
+   *  `includeCancelled` (admin-only — L1-fulllists-route-role-gate); a gated
+   *  caller gets no `cancelled`/`cancelledAllIds`/`cancelledCheck` at all. */
   shipped?: Shipped[];
   cancelled?: Cancelled[];
   /** Full PK ID set (within LIST_WINDOW) of the shipped / cancelled tables
@@ -179,7 +209,10 @@ export interface BoardDelta {
  *  @param opts   `{ lists: true }` adds shippedOrderIds / cancelledOrderIds
  *                (used by /orders). `{ fullLists: true }` adds full shipped
  *                / cancelled rows + their PK ID set / checks (used by
- *                /shipped + /cancelled). `fullLists` supersedes `lists`.
+ *                /shipped + /cancelled) — and requires `includeCancelled`:
+ *                the cancelled side (reason + actor) is admin-only
+ *                (L1-fulllists-route-role-gate), gated callers get the
+ *                shipped side only. `fullLists` supersedes `lists`.
  *                `{ withIds: true }` (with fullLists incremental) adds the
  *                full windowed id sets — the client's reconcile poll.
  *
@@ -189,7 +222,7 @@ export interface BoardDelta {
  */
 export async function loadBoardDelta(
   since: Date | null,
-  opts: { lists?: boolean; fullLists?: boolean; withIds?: boolean } = {},
+  opts: BoardDeltaOpts = {},
 ): Promise<BoardDelta> {
   // Checked HERE, not inside the cached fn — a not-configured throw must
   // never race a cache fill, and misconfiguration should fail every call.
@@ -201,7 +234,7 @@ export async function loadBoardDelta(
 /** Uncached implementation — everything below hits Postgres directly. */
 async function loadBoardDeltaLive(
   since: Date | null,
-  opts: { lists?: boolean; fullLists?: boolean; withIds?: boolean } = {},
+  opts: BoardDeltaOptsLoose = {},
 ): Promise<BoardDelta> {
   // Snapshot serverTime BEFORE the queries so a write that lands mid-query
   // is guaranteed to be picked up by the next delta call (next cursor is
@@ -220,6 +253,9 @@ async function loadBoardDeltaLive(
   // Bootstrap (since=null) returns the full tables; incremental returns only
   // rows added since the cursor (cheap — append-only writers use NOW()) plus
   // the full current ID list so the client can drop tombstones from a /restore.
+  // The cancelled side (reason + actor) is admin-gated — a gated caller's
+  // row/id queries are skipped entirely (L1-fulllists-route-role-gate).
+  const wantCancelled = opts.fullLists === true && opts.includeCancelled === true;
   const fullListsP = opts.fullLists
     ? since === null
       ? Promise.all([
@@ -228,11 +264,13 @@ async function loadBoardDeltaLive(
             WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
             ORDER BY id DESC
           `,
-          sql<{ raw: Cancelled }>`
-            SELECT raw FROM cancelled
-            WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
-            ORDER BY id DESC
-          `,
+          wantCancelled
+            ? sql<{ raw: Cancelled }>`
+                SELECT raw FROM cancelled
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
+                ORDER BY id DESC
+              `
+            : null,
           null,
           null,
           null, // no stats on bootstrap — the client seeds its id set from the rows
@@ -243,11 +281,13 @@ async function loadBoardDeltaLive(
             WHERE imported_at > ${since.toISOString()}
             ORDER BY id DESC
           `,
-          sql<{ raw: Cancelled }>`
-            SELECT raw FROM cancelled
-            WHERE imported_at > ${since.toISOString()}
-            ORDER BY id DESC
-          `,
+          wantCancelled
+            ? sql<{ raw: Cancelled }>`
+                SELECT raw FROM cancelled
+                WHERE imported_at > ${since.toISOString()}
+                ORDER BY id DESC
+              `
+            : null,
           // Full id sets only on an explicit reconcile poll (?ids=1) — the
           // default poll ships the cheap stats row below instead
           // (M-fulllists-id-array-every-poll). Windowed to LIST_WINDOW so
@@ -259,7 +299,7 @@ async function loadBoardDeltaLive(
                 ORDER BY id
               `
             : null,
-          opts.withIds
+          opts.withIds && wantCancelled
             ? sql<{ id: string }>`
                 SELECT id::text AS id FROM cancelled
                 WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
@@ -381,22 +421,27 @@ async function loadBoardDeltaLive(
   if (fullListsP) {
     const [sR, cR, sAllR, cAllR, statsR] = await fullListsP;
     delta.shipped = sR.rows.map((r) => r.raw);
-    delta.cancelled = cR.rows.map((r) => r.raw);
-    if (sAllR && cAllR) {
-      // reconcile poll (withIds) — current PK ID set drives client delete detection
-      delta.shippedAllIds = sAllR.rows.map((r) => Number(r.id));
-      delta.cancelledAllIds = cAllR.rows.map((r) => Number(r.id));
-    } else if (!statsR) {
-      // bootstrap — every row was just returned; client uses these as the ID set
-      delta.shippedAllIds = delta.shipped.map((s) => Number(s.id));
-      delta.cancelledAllIds = delta.cancelled.map((c) => Number(c.id));
-    }
+    if (cR) delta.cancelled = cR.rows.map((r) => r.raw);
+    // Per-side id sets: a reconcile poll (withIds) returns the explicit
+    // windowed set; bootstrap (no stats query) derives it from the rows just
+    // returned. A role-gated cancelled side has neither — the field stays
+    // absent, matching its absent rows (client helpers treat undefined as
+    // "list not carried").
+    if (sAllR) delta.shippedAllIds = sAllR.rows.map((r) => Number(r.id));
+    else if (!statsR) delta.shippedAllIds = delta.shipped.map((s) => Number(s.id));
+    if (cAllR) delta.cancelledAllIds = cAllR.rows.map((r) => Number(r.id));
+    else if (!statsR && delta.cancelled) delta.cancelledAllIds = delta.cancelled.map((c) => Number(c.id));
     if (statsR) {
-      // incremental — cheap consistency checks in place of the full id arrays
+      // incremental — cheap consistency checks in place of the full id arrays.
+      // The stats query stays combined (two windowed COUNT/MAX subselects are
+      // ~free and one SQL text keeps this branch simple); a gated caller just
+      // never sees the cancelled numbers.
       const st = statsR.rows[0];
       if (st) {
         delta.shippedCheck = { count: Number(st.shipped_count), maxId: Number(st.shipped_max ?? 0) };
-        delta.cancelledCheck = { count: Number(st.cancelled_count), maxId: Number(st.cancelled_max ?? 0) };
+        if (wantCancelled) {
+          delta.cancelledCheck = { count: Number(st.cancelled_count), maxId: Number(st.cancelled_max ?? 0) };
+        }
       }
     }
     // We deliberately do NOT derive shippedOrderIds/cancelledOrderIds here:

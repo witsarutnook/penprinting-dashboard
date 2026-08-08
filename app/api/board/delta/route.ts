@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
-import { loadBoardDelta, BoardDeltaError } from '@/lib/board-delta';
+import { loadBoardDelta, includeCancelledForRole, BoardDeltaError } from '@/lib/board-delta';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -27,7 +27,10 @@ export const dynamic = 'force-dynamic';
  * `?fullLists=1` additionally returns full `shipped[]` / `cancelled[]` rows
  * plus per-table `{count, maxId}` checks (incremental) or the full
  * `shippedAllIds` / `cancelledAllIds` id sets (bootstrap). `fullLists`
- * supersedes `lists`.
+ * supersedes `lists`. The cancelled side (cancel reason + actor) is
+ * ADMIN-ONLY, mirroring the /cancelled page gate — other roles get the
+ * shipped side only, with no cancelled fields at all
+ * (L1-fulllists-route-role-gate).
  *
  * `?ids=1` (with `fullLists=1` + `since`) — reconcile poll: also returns the
  * full windowed id sets so the client can drop rows hard-deleted by /restore.
@@ -56,7 +59,14 @@ export async function GET(req: Request) {
   }
 
   try {
-    const delta = await loadBoardDelta(since, { lists: wantLists, fullLists: wantFullLists, withIds: wantIds });
+    const delta = await loadBoardDelta(
+      since,
+      wantFullLists
+        // Cancelled payload mirrors the /cancelled page's admin-only gate —
+        // see includeCancelledForRole (L1-fulllists-route-role-gate).
+        ? { fullLists: true, withIds: wantIds, includeCancelled: includeCancelledForRole(session.role) }
+        : { lists: wantLists, withIds: wantIds },
+    );
     // Cursor-specific, per-session payload — must not be cached by browser/CDN/proxy.
     return NextResponse.json(delta, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
