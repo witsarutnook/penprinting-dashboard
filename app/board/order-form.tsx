@@ -9,7 +9,8 @@ import { useConfirm } from '@/components/confirm-provider';
 import { useToast } from '@/components/toast-provider';
 import {
   PB_SIZES, PB_BINDINGS, type PhotobookItem,
-  type OrderFormData, emptyOrderForm, orderFormFromRaw, emptyPhotobookItem,
+  type OrderFormData, emptyOrderForm, orderFormFromRaw, prefillOrderFormFromRaw,
+  emptyPhotobookItem,
 } from '@/lib/photobook';
 import {
   IconX, IconCheck, IconAlertTriangle, IconAlertCircle, IconFileText, IconPlus, IconPrinter,
@@ -187,15 +188,12 @@ export function OrderForm({
     initializedIdRef.current = identity;
 
     if (!initial && initialPrefill) {
-      // Duplicate flow ("สั่งซ้ำ") — carry over the FULL spec including the
-      // job name + customer (a repeat is the same job for the same client).
-      // Only the dates reset so the user picks a fresh due date. Mirrors WP
-      // duplicateOrder() (which restores name/customer and clears only the
-      // due date). If the source order is still an active job, submit trips
-      // the "พบใบสั่งงานคล้ายกัน" warning by design — the user confirms.
-      const next = orderFormFromRaw(initialPrefill, defaultOrderer);
-      next.dateIn = bangkokTodayISO();
-      next.dateDue = '';
+      // Duplicate flow ("สั่งซ้ำ") — shared prefill policy (see
+      // prefillOrderFormFromRaw): carry the FULL spec including job name +
+      // customer, reset only the dates. Mirrors WP duplicateOrder(). If the
+      // source order is still an active job, submit trips the
+      // "พบใบสั่งงานคล้ายกัน" warning by design — the user confirms.
+      const next = prefillOrderFormFromRaw(initialPrefill, defaultOrderer, bangkokTodayISO());
       setData(next);
       setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
       setTab('main');
@@ -584,14 +582,13 @@ export function OrderForm({
         toast.error(payload?.error || 'ดึงข้อมูลงานเก่าไม่สำเร็จ');
         return;
       }
-      const next = orderFormFromRaw(
+      const next = prefillOrderFormFromRaw(
         payload.rawData as Record<string, unknown>,
         data.orderer || defaultOrderer,
+        bangkokTodayISO(),
       );
-      // Preserve the customer name the user typed; reset dates
+      // Preserve the customer name the user typed
       next.customer = customerName;
-      next.dateIn = bangkokTodayISO();
-      next.dateDue = '';
       setData(next);
       setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
       setTab('main');
@@ -612,17 +609,16 @@ export function OrderForm({
     const raw = (tpl.rawData && typeof tpl.rawData === 'object')
       ? tpl.rawData as Record<string, unknown>
       : {};
-    // Build the form from template's snapshot — preserve the current orderer
-    // (templates aren't tied to a specific user) and reset dates so user
-    // sets fresh ones for this order.
-    const next = orderFormFromRaw(raw, data.orderer || defaultOrderer);
-    next.dateIn = bangkokTodayISO();
-    next.dateDue = '';
-    // Don't carry the customer name from template either — usually it was the
-    // sample customer. User should pick fresh.
-    next.customer = '';
-    next.name = '';
+    // Shared prefill policy (see prefillOrderFormFromRaw): carry the FULL
+    // snapshot including job name + customer — templates are per recurring
+    // job/customer in practice, same rationale as the duplicate-flow fix
+    // (`c7daeb0`). Dates reset; keepOrderer pins ผู้สั่งงาน to the current
+    // user instead of whoever saved the template.
+    const next = prefillOrderFormFromRaw(raw, defaultOrderer, bangkokTodayISO(), {
+      keepOrderer: data.orderer || defaultOrderer,
+    });
     setData(next);
+    setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
     setTab('main');
     setTemplateError(null);
   }

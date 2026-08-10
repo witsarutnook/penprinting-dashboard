@@ -198,6 +198,30 @@ export function orderFormFromRaw(
   return { ...f, ...merge };
 }
 
+/** Shared prefill policy for every "start a new order from an existing
+ *  snapshot" flow — duplicate ("สั่งซ้ำ"), template quick-fill, and
+ *  "ดึงงานล่าสุด". Carries the FULL spec including job name + customer
+ *  (a repeat/template is the same job for the same client — mirrors WP
+ *  duplicateOrder()); resets only the dates so the user picks a fresh
+ *  deadline. The "พบใบสั่งงานคล้ายกัน" submit warning stays as the safety
+ *  net when the source is still an active job.
+ *
+ *  `keepOrderer` pins ผู้สั่งงาน to the current user — used by the template
+ *  flow, where the snapshot's orderer is whoever saved the template, not
+ *  who is placing this order. Duplicate flow omits it (snapshot wins). */
+export function prefillOrderFormFromRaw(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackOrderer: string,
+  todayISO: string,
+  opts: { keepOrderer?: string } = {},
+): OrderFormData {
+  const next = orderFormFromRaw(raw, fallbackOrderer);
+  next.dateIn = todayISO;
+  next.dateDue = '';
+  if (opts.keepOrderer) next.orderer = opts.keepOrderer;
+  return next;
+}
+
 /** Compact one-line summary of photobook items for report/list rows —
  *  deduped sizes + total เล่ม. Reads the same dual storage keys as
  *  orderFormFromRaw (`photobookItems` legacy / `photobook` canonical).
