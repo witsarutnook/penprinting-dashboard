@@ -6,7 +6,7 @@
 >
 > ## ⏳ Pending (2026-08-20)
 > 1. ~~🗑 คุณนุ๊กทำ decommission ตาม runbook~~ ✅ **เสร็จ same-day**: A worker ลบแล้ว (metrics ก่อนลบ: 1 invocation/30d = curl ของ Claude เอง, 0 traffic จริง → Claude verified 404 หลังลบ) · B GAS deployment archived · C docs กวาดครบ (monitoring.md / CLAUDE.md ×2 / check-quota / runbook → done). **Decommission chain ปิดสมบูรณ์ — ไม่โผล่ pending อีก**
-> 2. 📄 **คุณนุ๊กรัน `cleanupOrphanCancelled` ใน GAS editor (โปรเจกต์ Dashboard)** — ล้าง 4 rows เดียวกันฝั่ง Sheet frozen archive (cosmetic ให้ scan ตรง Postgres): dry-run ดู Logger → แก้ `DRY_RUN=false` → รันจริง — helper ครอบทั้ง 4 อยู่แล้ว ไม่ต้องแก้ TARGETS
+> 2. ~~📄 รัน `cleanupOrphanCancelled` ฝั่ง Sheet~~ ✅ **เสร็จ same-day (Claude รันผ่าน Chrome คุณนุ๊ก — คุณนุ๊กสั่ง "รันให้เลย")**: เปิด GAS editor ด้วย scriptId จาก `.clasp.json` (โปรเจกต์ชื่อซ้ำ ~20 ตัวจาก backup clones — อย่าเดาจากชื่อ) → dry-run Verified 4/4 (row 8/9/13/20 ตรง scan พ.ค. เป๊ะ เพราะ sheet frozen) → flip `DRY_RUN=false` ผ่าน Monaco `applyEdits` + Cmd+S → LIVE DELETED ×4, sheet 32→28 (diff: 4) → คืน `DRY_RUN=true` + save → re-run ยืนยัน idempotent (skips 4 "หาไม่เจอ"). **DATA-orphan-cancelled ปิดสมบูรณ์ทั้ง Postgres + Sheet — scan ทั้งสองชั้นตรงกันแล้ว**
 > 3. 🧪 optional เดิม (8/08): login role พนักงาน → `/shipped` แสดงปกติ + admin → `/cancelled` ปกติ (ยืนยันตาเปล่า — logic มี test ครอบแล้ว)
 > 4. 💡 backlog เดิม: DB-backed paper prices (Neon) — เงื่อนไข revisit ยังไม่ถึง · L4 year filter (ผูก §13 archive, deadline จริง 2027-05-18)
 >
