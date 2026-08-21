@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
-import { loadBoardDelta, includeCancelledForRole, BoardDeltaError } from '@/lib/board-delta';
+import { loadBoardDelta, includeCancelledForRole, parseFullListsTrack, BoardDeltaError } from '@/lib/board-delta';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -32,6 +32,12 @@ export const dynamic = 'force-dynamic';
  * shipped side only, with no cancelled fields at all
  * (L1-fulllists-route-role-gate).
  *
+ * `?track=shipped|cancelled|none` (with `fullLists=1`) — scopes the payload
+ * to the tables the page actually renders (L3-page-tracked-tables): /shipped
+ * sends `track=shipped`, /cancelled sends `track=cancelled`. Absent = both
+ * (old clients mid-rollout). Track can only NARROW — the cancelled role
+ * gate above still applies on top.
+ *
  * `?ids=1` (with `fullLists=1` + `since`) — reconcile poll: also returns the
  * full windowed id sets so the client can drop rows hard-deleted by /restore.
  * The client requests this only when the checks disagree with its state
@@ -59,12 +65,18 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Page track scope (L3) ∧ role gate (L1): track narrows the payload to
+    // what the page renders; the cancelled side still requires admin on top.
+    const track = parseFullListsTrack(url.searchParams.get('track'));
     const delta = await loadBoardDelta(
       since,
       wantFullLists
-        // Cancelled payload mirrors the /cancelled page's admin-only gate —
-        // see includeCancelledForRole (L1-fulllists-route-role-gate).
-        ? { fullLists: true, withIds: wantIds, includeCancelled: includeCancelledForRole(session.role) }
+        ? {
+            fullLists: true,
+            withIds: wantIds,
+            includeShipped: track.shipped,
+            includeCancelled: includeCancelledForRole(session.role) && track.cancelled,
+          }
         : { lists: wantLists, withIds: wantIds },
     );
     // Cursor-specific, per-session payload — must not be cached by browser/CDN/proxy.

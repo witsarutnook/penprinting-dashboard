@@ -136,14 +136,30 @@ export function includeCancelledForRole(role: Session['role']): boolean {
   return role === 'admin';
 }
 
+/** Which fullLists tables the CLIENT page actually renders, as sent via
+ *  `?track=` (L3-page-tracked-tables, audit 2026-08-21): /shipped renders
+ *  shipped only, /cancelled renders cancelled only — without this the
+ *  payload was scoped by role alone, so /cancelled's bootstrap pulled the
+ *  full 12-month shipped rows just to throw them away, and an admin on
+ *  /shipped paid the cancelled queries every poll. Absent/unknown → both
+ *  (old clients mid-rollout keep today's behavior). Track can only NARROW
+ *  the payload — the cancelled role gate still applies on top. */
+export function parseFullListsTrack(param: string | null): { shipped: boolean; cancelled: boolean } {
+  if (param === 'shipped') return { shipped: true, cancelled: false };
+  if (param === 'cancelled') return { shipped: false, cancelled: true };
+  if (param === 'none') return { shipped: false, cancelled: false };
+  return { shipped: true, cancelled: true };
+}
+
 /** Loader opts. Type-level pairing (same pattern as LoadSessionOpts,
- *  2026-07-13): `fullLists: true` REQUIRES an explicit `includeCancelled`
- *  decision, so no future caller can ship full cancelled rows to a non-admin
- *  by omission — derive it from `includeCancelledForRole(session.role)`
- *  unless the callsite is already admin-gated. */
+ *  2026-07-13): `fullLists: true` REQUIRES explicit `includeShipped` +
+ *  `includeCancelled` decisions, so no future caller can ship full rows by
+ *  omission — derive cancelled from `includeCancelledForRole(session.role)`
+ *  (role gate) AND the page's track scope; shipped has no role gate, only
+ *  the track scope. Both are fail-closed at runtime (`=== true`). */
 export type BoardDeltaOpts = { lists?: boolean; withIds?: boolean } & (
-  | { fullLists: true; includeCancelled: boolean }
-  | { fullLists?: false; includeCancelled?: never }
+  | { fullLists: true; includeShipped: boolean; includeCancelled: boolean }
+  | { fullLists?: false; includeShipped?: never; includeCancelled?: never }
 );
 
 /** Internal loose shape — the public union above is the enforcement point. */
@@ -151,6 +167,7 @@ type BoardDeltaOptsLoose = {
   lists?: boolean;
   fullLists?: boolean;
   withIds?: boolean;
+  includeShipped?: boolean;
   includeCancelled?: boolean;
 };
 
@@ -182,9 +199,11 @@ export interface BoardDelta {
   cancelledOrderIds?: number[];
   /** Full shipped / cancelled rows. Bootstrap = entire table; incremental =
    *  only rows where `imported_at > since`. Populated only when
-   *  `{ fullLists: true }`. The cancelled side additionally requires
-   *  `includeCancelled` (admin-only — L1-fulllists-route-role-gate); a gated
-   *  caller gets no `cancelled`/`cancelledAllIds`/`cancelledCheck` at all. */
+   *  `{ fullLists: true }` AND the side is included: shipped requires
+   *  `includeShipped` (page track scope — L3-page-tracked-tables), cancelled
+   *  requires `includeCancelled` (admin role gate ∧ track scope —
+   *  L1-fulllists-route-role-gate); an excluded side gets no rows/allIds/
+   *  check fields at all. */
   shipped?: Shipped[];
   cancelled?: Cancelled[];
   /** Full PK ID set (within LIST_WINDOW) of the shipped / cancelled tables
@@ -253,17 +272,22 @@ async function loadBoardDeltaLive(
   // Bootstrap (since=null) returns the full tables; incremental returns only
   // rows added since the cursor (cheap — append-only writers use NOW()) plus
   // the full current ID list so the client can drop tombstones from a /restore.
-  // The cancelled side (reason + actor) is admin-gated — a gated caller's
-  // row/id queries are skipped entirely (L1-fulllists-route-role-gate).
+  // The cancelled side (reason + actor) is admin-gated
+  // (L1-fulllists-route-role-gate); BOTH sides are additionally scoped to
+  // what the page tracks (L3-page-tracked-tables) — a gated/untracked side's
+  // row/id queries are skipped entirely and its fields stay absent.
+  const wantShipped = opts.fullLists === true && opts.includeShipped === true;
   const wantCancelled = opts.fullLists === true && opts.includeCancelled === true;
   const fullListsP = opts.fullLists
     ? since === null
       ? Promise.all([
-          sql<{ raw: Shipped }>`
-            SELECT raw FROM shipped
-            WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
-            ORDER BY id DESC
-          `,
+          wantShipped
+            ? sql<{ raw: Shipped }>`
+                SELECT raw FROM shipped
+                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
+                ORDER BY id DESC
+              `
+            : null,
           wantCancelled
             ? sql<{ raw: Cancelled }>`
                 SELECT raw FROM cancelled
@@ -276,11 +300,13 @@ async function loadBoardDeltaLive(
           null, // no stats on bootstrap — the client seeds its id set from the rows
         ])
       : Promise.all([
-          sql<{ raw: Shipped }>`
-            SELECT raw FROM shipped
-            WHERE imported_at > ${since.toISOString()}
-            ORDER BY id DESC
-          `,
+          wantShipped
+            ? sql<{ raw: Shipped }>`
+                SELECT raw FROM shipped
+                WHERE imported_at > ${since.toISOString()}
+                ORDER BY id DESC
+              `
+            : null,
           wantCancelled
             ? sql<{ raw: Cancelled }>`
                 SELECT raw FROM cancelled
@@ -292,7 +318,7 @@ async function loadBoardDeltaLive(
           // default poll ships the cheap stats row below instead
           // (M-fulllists-id-array-every-poll). Windowed to LIST_WINDOW so
           // the set always matches the bootstrap rows + the checks.
-          opts.withIds
+          opts.withIds && wantShipped
             ? sql<{ id: string }>`
                 SELECT id::text AS id FROM shipped
                 WHERE imported_at > NOW() - ${LIST_WINDOW}::interval
@@ -310,20 +336,22 @@ async function loadBoardDeltaLive(
           // with the id-set queries above — a write landing between the
           // parallel statements can skew one poll; the client just
           // reconciles again next tick.
-          sql<{
-            shipped_count: string; shipped_max: string | null;
-            cancelled_count: string; cancelled_max: string | null;
-          }>`
-            SELECT
-              (SELECT COUNT(*) FROM shipped
-                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS shipped_count,
-              (SELECT MAX(id) FROM shipped
-                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS shipped_max,
-              (SELECT COUNT(*) FROM cancelled
-                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS cancelled_count,
-              (SELECT MAX(id) FROM cancelled
-                WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS cancelled_max
-          `,
+          wantShipped || wantCancelled
+            ? sql<{
+                shipped_count: string; shipped_max: string | null;
+                cancelled_count: string; cancelled_max: string | null;
+              }>`
+                SELECT
+                  (SELECT COUNT(*) FROM shipped
+                    WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS shipped_count,
+                  (SELECT MAX(id) FROM shipped
+                    WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS shipped_max,
+                  (SELECT COUNT(*) FROM cancelled
+                    WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS cancelled_count,
+                  (SELECT MAX(id) FROM cancelled
+                    WHERE imported_at > NOW() - ${LIST_WINDOW}::interval) AS cancelled_max
+              `
+            : null,
         ])
     : null;
 
@@ -420,25 +448,27 @@ async function loadBoardDeltaLive(
 
   if (fullListsP) {
     const [sR, cR, sAllR, cAllR, statsR] = await fullListsP;
-    delta.shipped = sR.rows.map((r) => r.raw);
+    const isBootstrap = since === null;
+    if (sR) delta.shipped = sR.rows.map((r) => r.raw);
     if (cR) delta.cancelled = cR.rows.map((r) => r.raw);
     // Per-side id sets: a reconcile poll (withIds) returns the explicit
-    // windowed set; bootstrap (no stats query) derives it from the rows just
-    // returned. A role-gated cancelled side has neither — the field stays
-    // absent, matching its absent rows (client helpers treat undefined as
-    // "list not carried").
+    // windowed set; bootstrap derives it from the rows just returned. A
+    // gated/untracked side has neither — the field stays absent, matching
+    // its absent rows (client helpers treat undefined as "list not carried").
     if (sAllR) delta.shippedAllIds = sAllR.rows.map((r) => Number(r.id));
-    else if (!statsR) delta.shippedAllIds = delta.shipped.map((s) => Number(s.id));
+    else if (isBootstrap && delta.shipped) delta.shippedAllIds = delta.shipped.map((s) => Number(s.id));
     if (cAllR) delta.cancelledAllIds = cAllR.rows.map((r) => Number(r.id));
-    else if (!statsR && delta.cancelled) delta.cancelledAllIds = delta.cancelled.map((c) => Number(c.id));
+    else if (isBootstrap && delta.cancelled) delta.cancelledAllIds = delta.cancelled.map((c) => Number(c.id));
     if (statsR) {
       // incremental — cheap consistency checks in place of the full id arrays.
       // The stats query stays combined (two windowed COUNT/MAX subselects are
-      // ~free and one SQL text keeps this branch simple); a gated caller just
-      // never sees the cancelled numbers.
+      // ~free and one SQL text keeps this branch simple); a gated/untracked
+      // side just never sees its numbers.
       const st = statsR.rows[0];
       if (st) {
-        delta.shippedCheck = { count: Number(st.shipped_count), maxId: Number(st.shipped_max ?? 0) };
+        if (wantShipped) {
+          delta.shippedCheck = { count: Number(st.shipped_count), maxId: Number(st.shipped_max ?? 0) };
+        }
         if (wantCancelled) {
           delta.cancelledCheck = { count: Number(st.cancelled_count), maxId: Number(st.cancelled_max ?? 0) };
         }

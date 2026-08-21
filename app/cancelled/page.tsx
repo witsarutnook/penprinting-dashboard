@@ -40,12 +40,15 @@ export default async function CancelledPage() {
  *  client `<CancelledListClient>`, which then delta-polls and re-runs
  *  filter/paginate locally. `includeCancelled: true` is legitimate here —
  *  the page redirected every non-admin away above
- *  (L1-fulllists-route-role-gate). */
+ *  (L1-fulllists-route-role-gate). `includeShipped: false` — this page
+ *  never renders shipped rows (it seeds `shipped: []`); skipping it saves
+ *  the full 12-month shipped scan on every navigation
+ *  (L3-page-tracked-tables). */
 async function CancelledData() {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
   try {
-    initial = await loadBoardDelta(null, { fullLists: true, includeCancelled: true });
+    initial = await loadBoardDelta(null, { fullLists: true, includeShipped: false, includeCancelled: true });
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
   }

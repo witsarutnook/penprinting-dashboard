@@ -49,12 +49,14 @@ export default async function ShippedPage() {
  *  `includeCancelled: false` — this page never renders cancelled rows (it
  *  seeds `cancelled: []`), and /shipped is open to every role while the
  *  cancelled payload is admin-only (L1-fulllists-route-role-gate). Skipping
- *  it also saves the windowed cancelled scan on every navigation. */
+ *  it also saves the windowed cancelled scan on every navigation.
+ *  `includeShipped: true` — the one table this page renders
+ *  (L3-page-tracked-tables). */
 async function ShippedData() {
   let initial: BoardDelta | null = null;
   let errorMessage: string | null = null;
   try {
-    initial = await loadBoardDelta(null, { fullLists: true, includeCancelled: false });
+    initial = await loadBoardDelta(null, { fullLists: true, includeShipped: true, includeCancelled: false });
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeDelta, fullListsStale, planReconcile, type DeltaState } from '@/lib/delta-sync';
+import { mergeDelta, fullListsStale, planReconcile, fullListsTrackParam, type DeltaState } from '@/lib/delta-sync';
 import type { BoardDelta } from '@/lib/board-delta';
 import type { Job, Order, Shipped, Cancelled } from '@/lib/types';
 
@@ -447,5 +447,18 @@ describe('planReconcile — re-bootstrap escape hatch (L2, audit 2026-08-21)', (
   it('a stale NORMAL poll passes the streak through unchanged', () => {
     expect(planReconcile({ needIds: false, wasReconcile: false, stale: true, staleReconciles: 1 }))
       .toEqual({ needIds: true, chain: true, staleReconciles: 1, rebootstrap: false });
+  });
+});
+
+// L3-page-tracked-tables (audit 2026-08-21): the poll URL tells the server
+// which fullLists tables this page renders, so /cancelled stops paying the
+// shipped-side queries (and vice versa). Omitted when both are tracked —
+// old-client / WP-parity default.
+describe('fullListsTrackParam', () => {
+  it('maps the track scope to the ?track= value ("" = omit, both tracked)', () => {
+    expect(fullListsTrackParam({ shipped: true, cancelled: true })).toBe('');
+    expect(fullListsTrackParam({ shipped: true, cancelled: false })).toBe('shipped');
+    expect(fullListsTrackParam({ shipped: false, cancelled: true })).toBe('cancelled');
+    expect(fullListsTrackParam({ shipped: false, cancelled: false })).toBe('none');
   });
 });

@@ -99,6 +99,18 @@ export interface FullListsTrack {
 
 const TRACK_BOTH: FullListsTrack = { shipped: true, cancelled: true };
 
+/** Value for the poll URL's `?track=` param (L3-page-tracked-tables, audit
+ *  2026-08-21) — tells the server which fullLists tables this page renders
+ *  so it skips the other side's queries + payload entirely. `''` = omit the
+ *  param (both tracked — server default, old-client compatible). Server
+ *  counterpart: parseFullListsTrack in lib/board-delta.ts. */
+export function fullListsTrackParam(track: FullListsTrack): string {
+  if (track.shipped && track.cancelled) return '';
+  if (track.shipped) return 'shipped';
+  if (track.cancelled) return 'cancelled';
+  return 'none';
+}
+
 /** True when the delta's windowed {count, maxId} checks disagree with the
  *  (already-merged) state — meaning a row was hard-deleted server-side
  *  (/restore) or aged out of the server's LIST_WINDOW, and the client needs
@@ -343,8 +355,15 @@ export function useDeltaSync(
     const wantIds = wantFullListsRef.current && needIdsRef.current && !wantBootstrap;
     const params: string[] = [];
     if (!wantBootstrap) params.push(`since=${encodeURIComponent(cursorRef.current)}`);
-    if (wantFullListsRef.current) params.push('fullLists=1');
-    else if (wantListsRef.current) params.push('lists=1');
+    if (wantFullListsRef.current) {
+      params.push('fullLists=1');
+      // Scope the payload to the tables this page renders (L3) — applies to
+      // normal, reconcile, and re-bootstrap polls alike.
+      const track = fullListsTrackParam(fullListsTrackRef.current);
+      if (track) params.push(`track=${track}`);
+    } else if (wantListsRef.current) {
+      params.push('lists=1');
+    }
     if (wantIds) params.push('ids=1');
     const qs = params.join('&');
     let res: Response;
