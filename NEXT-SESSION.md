@@ -6,7 +6,7 @@
 >
 > ## ⏳ Pending (2026-08-21)
 > 1. 🧪 optional smoke จอจริงเบาๆ (เมื่อสะดวก): เปิด `/shipped` + `/cancelled` (admin) แสดงปกติ — delta poll ตอนนี้แนบ `&track=shipped`/`&track=cancelled` (ดูได้จาก network tab); unit tests 644 + post-deploy smoke ครอบ logic/health ครบแล้ว, ข้อนี้ยืนยันตาเปล่า
-> 2. 🔄 session คู่ขนาน retire `fix-date-anomaly` (chip — คุณนุ๊กกดแล้ว): จะ commit+push ต่อท้ายหลัง smoke ของ batch นี้เขียว — เช็คผลใน session ถัดไปว่า push + smoke เขียวแล้ว
+> 2. ~~🔄 session คู่ขนาน retire `fix-date-anomaly`~~ ✅ **ปิดแล้ว same-day**: push [`290c744`](https://github.com/witsarutnook/penprinting-dashboard/commit/290c744) ต่อท้าย batch นี้ + post-deploy smoke เขียว pin headSha + ยืนยัน endpoint 404 บน prod (control route ตอบปกติ) — ไม่ต้องเช็คซ้ำ
 > 3. 🧪 optional เดิม (8/08): login role พนักงาน → `/shipped` แสดงปกติ + admin → `/cancelled` ปกติ (ยืนยันตาเปล่า — logic มี test ครอบแล้ว)
 > 4. 💡 backlog เดิม: DB-backed paper prices (Neon) — เงื่อนไข revisit ยังไม่ถึง · L4 year filter (ผูก §13 archive, deadline จริง 2027-05-18)
 >
