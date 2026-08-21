@@ -10,7 +10,7 @@ import { useToast } from '@/components/toast-provider';
 import {
   PB_SIZES, PB_BINDINGS, type PhotobookItem,
   type OrderFormData, emptyOrderForm, orderFormFromRaw, prefillOrderFormFromRaw,
-  emptyPhotobookItem,
+  prefillOptsForFlow, emptyPhotobookItem,
 } from '@/lib/photobook';
 import {
   IconX, IconCheck, IconAlertTriangle, IconAlertCircle, IconFileText, IconPlus, IconPrinter,
@@ -193,10 +193,14 @@ export function OrderForm({
       // customer, reset only the dates. Mirrors WP duplicateOrder(). If the
       // source order is still an active job, submit trips the
       // "พบใบสั่งงานคล้ายกัน" warning by design — the user confirms.
-      const next = prefillOrderFormFromRaw(initialPrefill, defaultOrderer, bangkokTodayISO());
+      const next = prefillOrderFormFromRaw(
+        initialPrefill, defaultOrderer, bangkokTodayISO(),
+        prefillOptsForFlow('duplicate', defaultOrderer),
+      );
       setData(next);
       setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
       setTab('main');
+      setSelectedTemplateId('');
       setBusy(false);
       setError(null);
       setSuccess(null);
@@ -586,12 +590,20 @@ export function OrderForm({
         payload.rawData as Record<string, unknown>,
         data.orderer || defaultOrderer,
         bangkokTodayISO(),
+        // M1 (audit 2026-08-21): this flow starts a NEW order by the current
+        // user — without keepOrderer the snapshot's orderer won silently.
+        prefillOptsForFlow('lastOrder', data.orderer || defaultOrderer),
       );
       // Preserve the customer name the user typed
       next.customer = customerName;
       setData(next);
       setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
       setTab('main');
+      setSelectedTemplateId('');
+    } catch {
+      // Network-level failure (offline/DNS) — res.ok above only covers HTTP
+      // errors, and without this catch the flow died silently (L4).
+      toast.error('ดึงข้อมูลงานเก่าไม่สำเร็จ — ลองใหม่อีกครั้ง');
     } finally {
       setLoadingLast(false);
     }
@@ -612,11 +624,11 @@ export function OrderForm({
     // Shared prefill policy (see prefillOrderFormFromRaw): carry the FULL
     // snapshot including job name + customer — templates are per recurring
     // job/customer in practice, same rationale as the duplicate-flow fix
-    // (`c7daeb0`). Dates reset; keepOrderer pins ผู้สั่งงาน to the current
-    // user instead of whoever saved the template.
-    const next = prefillOrderFormFromRaw(raw, defaultOrderer, bangkokTodayISO(), {
-      keepOrderer: data.orderer || defaultOrderer,
-    });
+    // (`c7daeb0`). Dates reset; orderer policy comes from prefillOptsForFlow.
+    const next = prefillOrderFormFromRaw(
+      raw, defaultOrderer, bangkokTodayISO(),
+      prefillOptsForFlow('template', data.orderer || defaultOrderer),
+    );
     setData(next);
     setExtraBills(next.billColors.slice(3).some((b) => b !== ''));
     setTab('main');

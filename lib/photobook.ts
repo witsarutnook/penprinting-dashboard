@@ -206,9 +206,8 @@ export function orderFormFromRaw(
  *  deadline. The "พบใบสั่งงานคล้ายกัน" submit warning stays as the safety
  *  net when the source is still an active job.
  *
- *  `keepOrderer` pins ผู้สั่งงาน to the current user — used by the template
- *  flow, where the snapshot's orderer is whoever saved the template, not
- *  who is placing this order. Duplicate flow omits it (snapshot wins). */
+ *  `keepOrderer` pins ผู้สั่งงาน to the current user — see prefillOptsForFlow
+ *  for which flow gets which policy. */
 export function prefillOrderFormFromRaw(
   raw: Record<string, unknown> | null | undefined,
   fallbackOrderer: string,
@@ -220,6 +219,21 @@ export function prefillOrderFormFromRaw(
   next.dateDue = '';
   if (opts.keepOrderer) next.orderer = opts.keepOrderer;
   return next;
+}
+
+/** Per-flow orderer policy for prefillOrderFormFromRaw — the ONE place that
+ *  decides whose name lands in ผู้สั่งงาน (M1, audit 2026-08-21):
+ *
+ *  - `template` + `lastOrder` start a NEW order placed by the current user;
+ *    the snapshot's orderer is whoever saved the template / placed the old
+ *    order, so it must not win silently → pin to `currentOrderer`.
+ *  - `duplicate` ("สั่งซ้ำ") re-orders on behalf of the original flow —
+ *    the snapshot's orderer wins (WP duplicateOrder parity). */
+export function prefillOptsForFlow(
+  flow: 'duplicate' | 'template' | 'lastOrder',
+  currentOrderer: string,
+): { keepOrderer?: string } {
+  return flow === 'duplicate' ? {} : { keepOrderer: currentOrderer };
 }
 
 /** Compact one-line summary of photobook items for report/list rows —

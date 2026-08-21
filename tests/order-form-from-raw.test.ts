@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { orderFormFromRaw, prefillOrderFormFromRaw } from '@/lib/photobook';
+import { orderFormFromRaw, prefillOrderFormFromRaw, prefillOptsForFlow } from '@/lib/photobook';
 
 /** orderFormFromRaw is the pure builder behind the "สั่งซ้ำ" (duplicate)
  *  prefill: the OrderForm effect calls it on the source order's rawData and
@@ -90,5 +90,32 @@ describe('prefillOrderFormFromRaw — shared duplicate/template prefill policy',
     expect(form.dateIn).toBe('2026-08-10');
     expect(form.name).toBe('');
     expect(form.customer).toBe('');
+  });
+});
+
+/** prefillOptsForFlow pins the per-flow ผู้สั่งงาน policy in ONE place
+ *  (M1, audit 2026-08-21 — 4th fix in the prefill zone): flows that start a
+ *  NEW order by the current user (template quick-fill + "ดึงงานล่าสุด") must
+ *  pin the orderer to that user; the duplicate flow ("สั่งซ้ำ") keeps the
+ *  snapshot's orderer (WP parity). Before this seam, loadFromLastOrder let
+ *  the snapshot's orderer win silently — a sales rep pulling another rep's
+ *  last order mis-attributed the new order. */
+describe('prefillOptsForFlow — per-flow orderer policy', () => {
+  it('template + lastOrder pin the current user over the snapshot orderer', () => {
+    expect(prefillOptsForFlow('template', 'นุ๊ก')).toEqual({ keepOrderer: 'นุ๊ก' });
+    expect(prefillOptsForFlow('lastOrder', 'นุ๊ก')).toEqual({ keepOrderer: 'นุ๊ก' });
+  });
+
+  it('duplicate lets the snapshot orderer win (WP parity)', () => {
+    expect(prefillOptsForFlow('duplicate', 'นุ๊ก')).toEqual({});
+  });
+
+  it('lastOrder end-to-end: snapshot orderer never leaks into the new order', () => {
+    const snapshot = { name: 'นามบัตร', customer: 'ร้านเอ', orderer: 'สมชาย', qty: '1000' };
+    const form = prefillOrderFormFromRaw(
+      snapshot, 'นุ๊ก', '2026-08-21', prefillOptsForFlow('lastOrder', 'นุ๊ก'),
+    );
+    expect(form.orderer).toBe('นุ๊ก');
+    expect(form.customer).toBe('ร้านเอ');
   });
 });
