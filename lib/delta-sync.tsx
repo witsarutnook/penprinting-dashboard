@@ -119,6 +119,11 @@ export function fullListsStale(
   return false;
 }
 
+/** Consecutive stale reconciles before the protocol escalates to a full
+ *  re-bootstrap (L2, audit 2026-08-21). Keeps bootstraps ≥ this many ticks
+ *  apart — the streak resets whenever a bootstrap is flagged. */
+export const REBOOTSTRAP_STALE_RECONCILES = 3;
+
 /** Decide how a fullLists poll response advances the reconcile protocol.
  *  Pure single decision point for the hook's chain-a-reconcile logic:
  *
@@ -131,16 +136,32 @@ export function fullListsStale(
  *    cursor — it cannot materialize a row the client never had (backdated
  *    insert during data repair), so chaining on it would loop back-to-back
  *    forever, bypassing refreshGuard and the 30-min hard stop.
- *  - Not stale → clear the flag, nothing to do.
+ *  - Not stale → clear the flag + streak, nothing to do.
+ *  - L2 escape hatch (audit 2026-08-21): REBOOTSTRAP_STALE_RECONCILES
+ *    consecutive stale reconciles mean the mismatch is a row the client
+ *    never received (e.g. /cancelled polled through a role swap: gated
+ *    responses carried no cancelled rows yet advanced the cursor) — only a
+ *    full re-bootstrap can materialize it. `rebootstrap: true` tells the
+ *    hook to make its NEXT scheduled poll a since-less fullLists fetch;
+ *    never chained, and the streak resets so bootstraps stay spaced out.
  */
 export function planReconcile(
-  { needIds, wasReconcile, stale }: { needIds: boolean; wasReconcile: boolean; stale: boolean },
-): { needIds: boolean; chain: boolean } {
-  if (!stale) return { needIds: false, chain: false };
-  if (wasReconcile) return { needIds: true, chain: false };
+  { needIds, wasReconcile, stale, staleReconciles = 0 }: {
+    needIds: boolean; wasReconcile: boolean; stale: boolean; staleReconciles?: number;
+  },
+): { needIds: boolean; chain: boolean; staleReconciles: number; rebootstrap: boolean } {
+  if (!stale) return { needIds: false, chain: false, staleReconciles: 0, rebootstrap: false };
+  if (wasReconcile) {
+    const streak = staleReconciles + 1;
+    if (streak >= REBOOTSTRAP_STALE_RECONCILES) {
+      return { needIds: false, chain: false, staleReconciles: 0, rebootstrap: true };
+    }
+    return { needIds: true, chain: false, staleReconciles: streak, rebootstrap: false };
+  }
   // Stale normal poll: chain once — unless a reconcile is already pending
   // (this response raced the flag), in which case the flag already covers it.
-  return { needIds: true, chain: !needIds };
+  // The streak tracks reconcile responses only, so it passes through here.
+  return { needIds: true, chain: !needIds, staleReconciles, rebootstrap: false };
 }
 
 /** Apply a fullLists update: drop any current rows whose id is not in
@@ -302,6 +323,13 @@ export function useDeltaSync(
   // carries `?ids=1` so the server returns the full id set to reconcile
   // against (M-fulllists-id-array-every-poll).
   const needIdsRef = useRef<boolean>(false);
+  // Re-bootstrap escape hatch (L2, audit 2026-08-21): set when
+  // REBOOTSTRAP_STALE_RECONCILES consecutive reconciles stayed stale — the
+  // next poll drops `since` entirely so the fullLists bootstrap response can
+  // materialize rows the client never received. Cleared once that response
+  // has been merged; a failed fetch keeps it for the next tick.
+  const needBootstrapRef = useRef<boolean>(false);
+  const staleReconcilesRef = useRef<number>(0);
   // Declared before pollOnce so its closure can schedule a follow-up poll;
   // assigned the real pollNow below (runs before any poll can fire).
   const pollNowRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -309,10 +337,16 @@ export function useDeltaSync(
   // One poll round-trip: fetch the delta since the cursor, merge it, advance
   // the cursor. Ref-stable so the timer effect below never re-subscribes.
   const pollOnce = useCallback(async (): Promise<void> => {
-    const wantIds = wantFullListsRef.current && needIdsRef.current;
-    const qs = `since=${encodeURIComponent(cursorRef.current)}`
-      + (wantFullListsRef.current ? '&fullLists=1' : (wantListsRef.current ? '&lists=1' : ''))
-      + (wantIds ? '&ids=1' : '');
+    // A pending re-bootstrap supersedes a reconcile: a since-less fullLists
+    // fetch already carries the full windowed rows + id set.
+    const wantBootstrap = wantFullListsRef.current && needBootstrapRef.current;
+    const wantIds = wantFullListsRef.current && needIdsRef.current && !wantBootstrap;
+    const params: string[] = [];
+    if (!wantBootstrap) params.push(`since=${encodeURIComponent(cursorRef.current)}`);
+    if (wantFullListsRef.current) params.push('fullLists=1');
+    else if (wantListsRef.current) params.push('lists=1');
+    if (wantIds) params.push('ids=1');
+    const qs = params.join('&');
     let res: Response;
     try {
       res = await fetch(`/api/board/delta?${qs}`, {
@@ -338,17 +372,24 @@ export function useDeltaSync(
       stateRef.current = next;
       setState(next);
     }
+    if (wantBootstrap) needBootstrapRef.current = false;
     if (wantFullListsRef.current) {
       // Chain-at-most-once reconcile protocol — all branch logic lives in
       // planReconcile (pure, tested): stale normal poll → one immediate
       // `?ids=1` chain; stale reconcile response → circuit breaker (keep the
-      // flag, wait for the next scheduled tick); clean → clear the flag.
+      // flag, wait for the next scheduled tick); persistent stale reconciles
+      // → re-bootstrap escape hatch (L2); clean → clear flag + streak.
+      // `wasReconcile` is request-side truth (this closure sent ?ids=1) —
+      // sniffing the response for id sets breaks once a side is untracked.
       const plan = planReconcile({
         needIds: needIdsRef.current,
-        wasReconcile: delta.shippedAllIds !== undefined,
+        wasReconcile: wantIds,
         stale: fullListsStale(next, delta, fullListsTrackRef.current),
+        staleReconciles: staleReconcilesRef.current,
       });
       needIdsRef.current = plan.needIds;
+      staleReconcilesRef.current = plan.staleReconciles;
+      if (plan.rebootstrap) needBootstrapRef.current = true;
       if (plan.chain) void pollNowRef.current();
     }
   }, []);

@@ -383,33 +383,69 @@ describe('fullListsStale — track scope', () => {
 describe('planReconcile', () => {
   it('chains one reconcile when a normal poll detects staleness', () => {
     expect(planReconcile({ needIds: false, wasReconcile: false, stale: true }))
-      .toEqual({ needIds: true, chain: true });
+      .toEqual({ needIds: true, chain: true, staleReconciles: 0, rebootstrap: false });
   });
 
   it('does NOT chain when the reconcile response itself is still stale (circuit breaker)', () => {
     expect(planReconcile({ needIds: true, wasReconcile: true, stale: true }))
-      .toEqual({ needIds: true, chain: false });
+      .toEqual({ needIds: true, chain: false, staleReconciles: 1, rebootstrap: false });
   });
 
   it('clears the pending flag when the reconcile converged', () => {
     expect(planReconcile({ needIds: true, wasReconcile: true, stale: false }))
-      .toEqual({ needIds: false, chain: false });
+      .toEqual({ needIds: false, chain: false, staleReconciles: 0, rebootstrap: false });
   });
 
   it('is a no-op on a clean normal poll', () => {
     expect(planReconcile({ needIds: false, wasReconcile: false, stale: false }))
-      .toEqual({ needIds: false, chain: false });
+      .toEqual({ needIds: false, chain: false, staleReconciles: 0, rebootstrap: false });
   });
 
   it('does not stack a second chain while a reconcile is already pending', () => {
     // A non-ids response while needIds is set (poll raced the flag) must not
     // fire another immediate poll — the pending flag already covers it.
     expect(planReconcile({ needIds: true, wasReconcile: false, stale: true }))
-      .toEqual({ needIds: true, chain: false });
+      .toEqual({ needIds: true, chain: false, staleReconciles: 0, rebootstrap: false });
   });
 
   it('clears a pending flag when a raced normal poll shows the state healed', () => {
     expect(planReconcile({ needIds: true, wasReconcile: false, stale: false }))
-      .toEqual({ needIds: false, chain: false });
+      .toEqual({ needIds: false, chain: false, staleReconciles: 0, rebootstrap: false });
+  });
+});
+
+// L2 (audit 2026-08-21): a reconcile can drop rows + upsert rows-since-cursor
+// but can NOT materialize a row the client never received — e.g. /cancelled
+// left open across a role swap on a shared machine: polls made while the
+// session was non-admin carry no cancelled fields yet still advance the
+// cursor, so rows cancelled during that gap are permanently invisible and
+// the {count,maxId} check mismatches on every tick (a bounded but endless
+// reconcile-per-tick). Escape hatch: after REBOOTSTRAP_STALE_RECONCILES
+// consecutive stale reconciles, flag ONE full re-bootstrap (a since-less
+// fullLists fetch — its allIds rebuild CAN materialize missing rows) on the
+// next scheduled tick. Never chained (H1 circuit breaker holds), and the
+// streak resets when the bootstrap is flagged, so bootstraps stay ≥K ticks
+// apart even in a pathological still-stale sequence.
+describe('planReconcile — re-bootstrap escape hatch (L2, audit 2026-08-21)', () => {
+  it('counts consecutive stale reconciles without chaining', () => {
+    expect(planReconcile({ needIds: true, wasReconcile: true, stale: true, staleReconciles: 0 }))
+      .toEqual({ needIds: true, chain: false, staleReconciles: 1, rebootstrap: false });
+    expect(planReconcile({ needIds: true, wasReconcile: true, stale: true, staleReconciles: 1 }))
+      .toEqual({ needIds: true, chain: false, staleReconciles: 2, rebootstrap: false });
+  });
+
+  it('escalates to a re-bootstrap after the 3rd consecutive stale reconcile (streak resets)', () => {
+    expect(planReconcile({ needIds: true, wasReconcile: true, stale: true, staleReconciles: 2 }))
+      .toEqual({ needIds: false, chain: false, staleReconciles: 0, rebootstrap: true });
+  });
+
+  it('a clean reconcile resets the streak', () => {
+    expect(planReconcile({ needIds: true, wasReconcile: true, stale: false, staleReconciles: 2 }))
+      .toEqual({ needIds: false, chain: false, staleReconciles: 0, rebootstrap: false });
+  });
+
+  it('a stale NORMAL poll passes the streak through unchanged', () => {
+    expect(planReconcile({ needIds: false, wasReconcile: false, stale: true, staleReconciles: 1 }))
+      .toEqual({ needIds: true, chain: true, staleReconciles: 1, rebootstrap: false });
   });
 });
