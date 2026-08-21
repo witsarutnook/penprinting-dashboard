@@ -221,6 +221,11 @@ export async function loadAllWithAudit() { return fetch(`${url}?action=loadAll&t
 - **เมื่อไหร่ใช้อันไหน**: traffic ที่ success กับ fail แชร์ entry point เดียว + ต้องกัน concurrent slip → reserve+refund (เคส `/track` PIN per-id). ถ้า outcome รู้ช้าหรือ refund แพง/ไม่อยาก INCR ก่อน (เคส login shared office NAT — ทุกเช้า login ถูกพร้อมกันหลายคน ไม่อยากให้ INCR ชั่วคราวชน limit) → peek+record เดิมยังโอเค ตราบใดที่ TOCTOU window ยอมรับได้และมี layer อื่น bound
 - อยู่ที่ [lib/rate-limit.ts](lib/rate-limit.ts) `refundAttempt` + ผู้ใช้จริง [app/api/track/lookup/route.ts](app/api/track/lookup/route.ts) Layer 3
 
+### 2.5 One-shot admin data-repair endpoint — POST apply + retire หลังรันจบ (2026-08-21, audit L1)
+- **Template เดิม** (fix-date-anomaly → cleanup-orphan-cancelled): dry-run default + `?apply=1`, conditional-gated statement เดียว + RETURNING, audit_log, cache bust, idempotent — ส่วนนี้ดีแล้ว ใช้ต่อ
+- **จุดที่แก้**: `?apply=1` บน **GET** + cookie `SameSite=Lax` = mutation โดน CSRF ได้ทาง top-level link click (Lax ส่ง cookie บน cross-site GET navigation) — impact ต่อ endpoint ที่ pin target + idempotent ≈ ศูนย์ แต่ template นี้ถูก copy ต่อเรื่อยๆ → ตัวถัดไป: **GET = dry-run / POST = apply**
+- **Retire หลังรันจบ**: endpoint ที่ apply บน prod สำเร็จ + verified แล้ว ไม่มีเหตุผลอยู่ต่อในโค้ด — ลบ route + lib + tests ทั้งก้อน (git history เก็บไว้ให้อยู่แล้ว ถ้าต้อง resurrect ก็ cherry-pick) — เคสแรกที่ retire: `cleanup-orphan-cancelled` (applied 2026-08-20, retired 2026-08-21)
+
 ---
 
 ## 3. Frontend state patterns
