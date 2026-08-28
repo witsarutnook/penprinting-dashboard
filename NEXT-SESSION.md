@@ -12,7 +12,7 @@
 > 1. 🔑 **คุณนุ๊กแจกรหัส admin ให้ทีม** (เพิ่ม key ใน `ADMIN_AUTH_USERS` ได้หลายคน เช่น `{"รหัสนุ๊ก":"nook","รหัสทีม":"pp-team"}` + Redeploy) — ลบ key = revoke ทันที
 > 2. 🧪 **Smoke มือถือจริง (คุณนุ๊ก)**: เปิด `card.penprinting.co/demo` บน iPhone (Safari) + Android → กด "บันทึกรายชื่อ" → contact เข้าเครื่อง ชื่อไทยไม่เพี้ยน · ปุ่ม tel/LINE/FB/Maps เด้งแอปถูกตัว · ⚠️ ใน LINE in-app browser (iOS) ดาวน์โหลด .vcf ไม่ได้ = expected, ใช้ "Open in Safari"
 > 3. 📟 **เขียน NFC จริง 1 ใบ** (แอพ NFC Tools): URL `https://card.penprinting.co/demo?s=n` · QR ใช้ `?s=q`
-> 4. 💳 **ลูกค้า 3 รายที่ส่งข้อมูลมาแล้ว (คุณนุ๊กบอกไว้ แต่ยังไม่ได้ส่งข้อมูลเข้าแชท)**: ตอนนี้เพิ่มผ่านหน้า `/admin` ได้เลย (กรอกฟอร์ม + อัปโหลดโลโก้ PNG/JPG) หรือส่งข้อมูลให้ Claude ใส่ให้ก็ได้ — checklist: `penprinting-cards/docs/customer-intake-checklist.md`
+> 4. ~~💳 ลูกค้า 3 ราย~~ ✅ **ครบแล้ว same-day — คุณนุ๊กเพิ่มเองผ่าน /admin ทั้งหมด**: `ksidealgroup` (K.S. Ideal, luxury-gold) · `ksk` (เคเอสเค แอคเคาน์ติ้ง, luxury-gold) · `rathakul` (รัฐกุล, **fresh**) — Claude ตรวจครบ 3 ใบ: หน้า/vcf 200, โลโก้ PNG บน Blob (share preview ได้), เบอร์ E.164, เข้า sitemap. **เหลือยืนยัน 1 จุด: ที่อยู่ rathakul เหมือน ksk เป๊ะ (9/54 พิมานธานี)** — ถ้า copy พลาดแก้ใน /admin ได้เอง · เสนอแต่ง (optional): sublabel เบอร์ให้ปุ่มโทร ksk + โลโก้เวอร์ชันพื้นโปร่ง
 > 5. 👀 **carryover 8/27**: watch การ์ดเขียว Thunder ยังไม่ได้เช็ค (วันนี้ทำโปรเจกต์ใหม่ทั้งวัน) — session หน้าให้ Claude เช็ค `slip_checks` ย้อนหลัง + ข้ออื่นจาก 8/27 (ไล่แชท OA / hardening reissue token) ค้างตามเดิม
 > 6. 💡 backlog: penprinting-cards action-layer tests (saveCardAction branches) · DB-backed paper prices (Neon) · L4 year filter (ผูก §13, deadline 2027-05-18)
 >
