@@ -23,8 +23,6 @@
 - Cookie name: `pp_dashboard_v6` (separate from WP `pp_dashboard_auth_v5`)
 - HMAC-SHA256 via Web Crypto API (Edge-compatible, works in middleware)
 - 4 passwords mapped to roles via `DASHBOARD_AUTH_USERS` env (JSON map)
-- Service token `APPS_SCRIPT_TOKEN` (signed `api:admin:dashboard:<exp>:<hmac>`, 5y) — talks to Apps Script
-- Limitation: audit actor = `admin:dashboard` for all v2 mutations (per-user signing is tech debt)
 
 ## Routes (post Phase 3.5.8)
 | Route | Auth | Notes |
@@ -34,7 +32,7 @@
 | `/board` | any role | Kanban + URL filters (`?dept=` `?u=` `?q=`) + bulk-mode + auto-sync |
 | `/analytics` | any role | KPIs + 4 charts (recharts), 60s ISR |
 | `/calendar` | admin | Month grid + Bangkok TZ + mobile vertical list |
-| `/archive` | admin | Search archived sheets |
+| `/archive` | admin | ค้นใบสั่งงานทุกปีจาก Postgres (ไม่จำกัด 12 เดือน) — §13 2026-09-05 |
 
 ## API routes
 | Route | Method | Auth | Purpose |
@@ -58,6 +56,7 @@
 - Phase 3.4 ✅ — Archive port
 - Phase 3.5.1-3.5.8 ✅ + 3.5.5b/3.5.7b deferred — Kanban + write actions
 - Phase 2.3 — WP UI parity (sidebar + KPI bar + dept icon-headers + filter chips + inline bulk-mode) — Stage A+B+C ✅, Stage D in progress
+- §13 Archive port ✅ (2026-09-05) — /archive อ่าน Postgres, Apps Script client ถอดแล้ว; §15 = คุณนุ๊กถอด env + archive deployment → ลบโปรเจกต์หลัง soak 7 วัน
 
 ## Dev
 ```bash
@@ -68,8 +67,7 @@ npm run build            # before push
 ```
 
 ## Env vars (Vercel project)
-- `APPS_SCRIPT_URL` — Dashboard Apps Script web app URL
-- `APPS_SCRIPT_TOKEN` — service token (5y)
+- `POSTGRES_URL` — Neon (Vercel Storage) — source of truth ทุก read/write
 - `DASHBOARD_AUTH_SECRET` — random ≥32 chars (cookie HMAC)
 - `DASHBOARD_AUTH_USERS` — JSON map password → {role, user}
 - `NEXT_PUBLIC_SENTRY_DSN` (optional) — error tracking
@@ -84,6 +82,7 @@ npm run build            # before push
 | [lib/auto-sync.tsx](lib/auto-sync.tsx) | `broadcastWrite` (cross-tab BroadcastChannel) — useAutoSync retired 2026-06-03 |
 | [lib/delta-sync.tsx](lib/delta-sync.tsx) | `useDeltaSync` + `mergeDelta` + `applyFullList` (sole auto-sync) |
 | [lib/board-delta.ts](lib/board-delta.ts) | `loadBoardDelta` server loader (lists / fullLists modes) |
+| [lib/archive-search.ts](lib/archive-search.ts) | `/archive` all-years search (normalize / escape / `searchArchiveOrders` / `archiveRowState`) |
 | [components/nav-config.ts](components/nav-config.ts) | Sidebar + bottom-nav source of truth |
 | [components/dashboard-shell.tsx](components/dashboard-shell.tsx) | Layout wrapper |
 

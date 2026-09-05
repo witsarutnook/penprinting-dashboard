@@ -279,9 +279,9 @@ return phase2UpdateJob(...);  // function rename อาจเปลี่ยน�
 
 ## 12. หลัง §12 — งานเหลือ
 
-- **§13 — Port `/archive`** (2-3 sessions) — design Postgres archive table (หรือ R2 + JSONindex) + migrate existing Sheet archives → ตัด `searchArchive` AS dependency
-- **§14 — Port LINE Webhook** (1-2 sessions) — รับ `/track` command ผ่าน Vercel route แทน Cloudflare Worker → Apps Script Webhook → ตัด Apps Script project แยกอีกตัว
-- **§15 — Full Apps Script shutdown** (1 session) — delete Apps Script project · ลบ APPS_SCRIPT_URL/APPS_SCRIPT_TOKEN env vars · revoke service account · close monitoring · ทำพิธีอำลา 🪦
+- ~~**§13 — Port `/archive`** (2-3 sessions)~~ ✅ **DONE 2026-09-05 ใน 1 session** — ข้อค้นพบ: Sheet ไม่เคยมี tab `*_archive_*` (ระบบอายุ < 365 วันตอน freeze) → ไม่มีอะไรให้ migrate; `/archive` ค้น Postgres ทุกปีผ่าน `lib/archive-search.ts` แทน. Spec: `docs/superpowers/specs/2026-09-05-archive-postgres-port-design.md`
+- ~~**§14 — Port LINE Webhook**~~ ✅ DONE — LINE OA ชี้ Vercel ตรงตั้งแต่ 2026-06-30, GAS + CF Worker decommissioned 2026-08-20
+- **§15 — Full Apps Script shutdown** — โค้ดฝั่ง dashboard ตัดครบแล้ว 2026-09-05 (`grep APPS_SCRIPT` = 0, commit `eb62933`). เหลือ user actions: (1) ถอด `APPS_SCRIPT_URL` + `APPS_SCRIPT_TOKEN` บน Vercel + Redeploy (2) Archive deployment + ลบ trigger ใน Apps Script editor (3) soak 7 วัน (~2026-09-12) → ลบโปรเจกต์ AS · Sheet คงเป็น frozen archive ตลอดไป
 
 ---
 

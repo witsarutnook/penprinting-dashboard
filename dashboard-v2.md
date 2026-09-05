@@ -14,7 +14,7 @@
 
 ### Stack
 - **Framework**: Next.js 15 (App Router) + React 19 + TypeScript + Tailwind 3 _(migrated 2026-06-20, soak-stable 2026-06-27)_
-- **Backend connection**: Apps Script Web App (HMAC-signed service token)
+- **Backend connection**: Postgres (Neon via Vercel Storage) — Postgres-only ตั้งแต่ §12 (2026-05-28); Apps Script client ถอดออก 2026-09-05 (§13/§15)
 - **Auth**: cookie-based (HMAC-SHA256, Edge-compatible via Web Crypto)
 - **Hosting**: Vercel (auto-deploy ทุก `git push origin main`)
 - **GitHub**: `witsarutnook/penprinting-dashboard` (private)
@@ -34,9 +34,9 @@
 | `app/track/page.tsx` | Public tracking (no auth, signed-cookie rate-limit) |
 | `app/analytics/page.tsx` | KPIs + 4 charts (recharts) |
 | `app/calendar/page.tsx` | Month grid + Bangkok TZ + mobile vertical list |
-| `app/archive/page.tsx` | Search archived sheets |
+| `app/archive/page.tsx` | ค้นใบสั่งงานทุกปี (Postgres, lib/archive-search) |
 | `app/api/{auth,jobs,orders,track}/*` | API routes (POST mutations + GET reads) |
-| `lib/api.ts` | Apps Script API wrapper (`loadAll`, `post`, per-action revalidatePath, per-user audit signing) |
+| `lib/api.ts` | Postgres read API (`loadAll`, `loadOrder`, `getAuditByTarget`, coalesced `unstable_cache` + `LOAD_ALL_TAG`) |
 | `lib/auth.ts` | HMAC cookie sign/verify (Web Crypto) |
 | `lib/board.ts` | STAFF map + `computeBoard` + filter logic |
 | `lib/forward.ts` | FW_TARGETS + RESTRICTED_TARGETS + `validateForwardTarget` |
@@ -68,10 +68,8 @@
 ### Role mapping
 4 passwords map to roles via `DASHBOARD_AUTH_USERS` env (JSON: `{ "<password>": { "role": "...", "user": "..." } }`).
 
-### Apps Script service token
-- Single service token `APPS_SCRIPT_TOKEN` (signed payload `api:admin:dashboard:<exp>:<hmac>`, 5 year TTL)
-- ทุก request จาก dashboard → Apps Script ใช้ token เดียวกันนี้
-- **Per-user audit signing** (v5.10.1+) — `lib/api.ts post()` ดึง session จาก cookie → ส่ง `_actor: "<role>:<user>"` ใน body. Apps Script side override default `admin:dashboard` → log จริงว่าใครเป็นคนกดทำ
+### Apps Script service token — 🪦 retired 2026-09-05
+- `APPS_SCRIPT_TOKEN` / `APPS_SCRIPT_URL` ไม่ถูกอ่านในโค้ดอีกแล้ว (§13/§15) — per-user audit signing ทำที่ Postgres write path (`audit_log.user_name`) ตั้งแต่ Phase 2
 
 ### Rate limit
 - `/api/auth/login` — 5 attempts / 5 min ต่อ browser ผ่าน signed cookie `pp_login_rl` (path `/api/auth`, expires กับ window)
@@ -102,7 +100,7 @@
 | `/cancelled` | admin only | Cancelled list + restore button |
 | `/analytics` | any role | Sub-tabs: "รายงานประจำเดือน" (default, single-month deep dive) + "Analytics 12 เดือน" (KPIs + 4 charts). Month picker on monthly view; range selector on 12-month view |
 | `/calendar` | admin only | Month grid + Bangkok TZ |
-| `/archive` | admin only | Search archived sheets |
+| `/archive` | admin only | ค้นใบสั่งงานทุกปีจาก Postgres — id prefix / ชื่องาน / ลูกค้า / ผู้สั่ง + สถานะ pill + ลิงก์ print (edit เฉพาะยังไม่ shipped/cancelled) |
 | `/quote-assistant` | admin + sales | AI Quote Assistant staff chat (Phase 1a — env-gated) |
 | `/quote-leads` | admin + sales | Lead table จาก AI quote sessions (status + claim) — Phase 1a |
 | `/quote-logs` | admin only | AI conversation log viewer — list ทุก session + filter + แท็บ 🚩 flags (2026-07-20) |
@@ -272,7 +270,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 | 3.1 — Scaffold | ✅ | Next.js 14 + Vercel + cookie auth (2026-05-04) |
 | 3.2 — Analytics port | ✅ | Read-only KPIs + 4 charts |
 | 3.3 — Calendar port | ✅ | Month grid + mobile vertical |
-| 3.4 — Archive port | ✅ | Search across archive sheets |
+| 3.4 — Archive port | ✅ | Search across archive sheets → **§13 (2026-09-05): Postgres all-years search** |
 | 3.5.1-3.5.8 | ✅ | Kanban + write actions (forward, reassign, cowork) |
 | 3.5.5b / 3.5.7b | ✅ | Photobook tab, edit mode, dup detection, undo forward |
 | 3.5.10 | ✅ | WP-parity card actions + inline order entry + drafts + templates UI |
@@ -363,6 +361,9 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 ## 10. Version History
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
+
+### 📦 §13 Archive port — /archive ค้น Postgres ทุกปี + ถอด Apps Script client (2026-09-05, tests 635→660)
+คุณนุ๊ก (`/session-start`) เลือก "§13 archive port". **ข้อค้นพบก่อนเริ่ม (ยืนยันจากของจริงผ่าน Chrome)**: Google Sheet ไม่มี tab `*_archive_*` เลย (มีแค่ 8 tabs) + `/archive` บน prod ค้น "20" ได้ 0 → Apps Script `searchArchive` ไม่เคยคืนอะไรตั้งแต่ port; Postgres มีทุกแถวอยู่แล้ว → scope หดจาก "migrate Sheet archives 2-3 sessions" เหลือ data-source swap ใน session เดียว. Ship (commits `4fdebef` → `eb62933`): (1) `lib/archive-search.ts` — `normalizeArchiveQuery` (trim/collapse, ≥2 และ ≤100 code points) / `escapeLikePattern` / `searchArchiveOrders` (orders ILIKE name/customer/orderer + id prefix เมื่อตัวเลขล้วน, `LEFT JOIN LATERAL` shipped/cancelled ล่าสุด, `COUNT(*) OVER()` = 1 round-trip, LIMIT 100 clamp 1..500, self-normalize — `''` ไม่ยิง SQL) / `archiveRowState` (cancelled > shipped > draft > active) — 25 tests (2) `/archive` ตารางเดียว + pill + ลิงก์ print (edit ซ่อนบนแถว shipped/cancelled ตามกฎ orders-table) + a11y (3) L4 ปิด by design — `/shipped` + `/cancelled` บอกว่าแสดง 12 เดือน + ลิงก์ค้นข้อมูลเก่า (admin) (4) **ถอด AS client ทั้งก้อน** จาก lib/api.ts + sweep `instanceof AppsScriptError` 8 ไฟล์ + `/api/audit` map `PostgresReadError`→503 — `grep APPS_SCRIPT app lib components` = 0. Subagent-driven (implementer + spec review + quality review ต่อ task) จับ Important 4 ตัวก่อน ship: NaN limit หลุด clamp · `''` → `ILIKE '%%'` dump ทั้งตาราง · ปุ่มแก้ไขบน shipped/cancelled · cancelledAt ISO ดิบ. Spec: [docs/superpowers/specs/2026-09-05-archive-postgres-port-design.md](docs/superpowers/specs/2026-09-05-archive-postgres-port-design.md). **Lesson**: roadmap §13 drift อีกเคส ([[roadmap-doc-drift]]) — plan เขียนจากสมมติฐานว่า archive tabs มีอยู่; ก่อน scope งาน migration ต้องเปิดของจริงดูก่อนเสมอ
 
 ### 🐞 Audit round 2026-08-21 ปิดครบ 6/6 same-day — prefill policy table + delta re-bootstrap + payload scope (2026-08-21, tests 636→644)
 คุณนุ๊ก (`/session-start`) เลือก "Audit round ใหม่" → penprinting-auditor สแกน 4 code commits หลัง round 8/03 → เปิด **0H + 1M + 5L** → คุณนุ๊กสั่ง **"ทำหมดเลย"** → ปิดครบใน 4 commits (TDD RED-first ทุกตัวที่มี seam): (1) 🟡 **M1 + L4 + L5** ([`23d2abc`](https://github.com/witsarutnook/penprinting-dashboard/commit/23d2abc)) — "ดึงงานล่าสุด" ปล่อย orderer จาก snapshot ชนะเงียบ (sales B ดึงงานที่ A สั่ง → order attribute ผิดคน; class เดียวกับ template fix `42d17ae` = **fix ที่ 4 ในโซน prefill**) → `prefillOptsForFlow` ([lib/photobook.ts](lib/photobook.ts)) = policy table เดียว: `duplicate` snapshot ชนะ (WP parity) · `template`/`lastOrder` pin คนปัจจุบัน — 3 callsites วิ่งผ่านหมด + loadFromLastOrder ได้ catch/toast (เดิม offline เงียบสนิท) + duplicate/lastOrder ล้าง template dropdown ค้าง (2) 🟢 **L1 retire** ([`5d66e83`](https://github.com/witsarutnook/penprinting-dashboard/commit/5d66e83)) — ลบ `/api/admin/cleanup-orphan-cancelled` (applied จบ 8/20) + **PATTERNS §2.5**: one-shot ตัวถัดไป GET=dry-run/**POST**=apply + retire หลังรันจบ; sibling `fix-date-anomaly` → chip (session คู่ขนานทำ) (3) 🟢 **L2 re-bootstrap escape hatch** ([`790e731`](https://github.com/witsarutnook/penprinting-dashboard/commit/790e731)) — role-swap บนเครื่องแชร์: gated polls advance cursor → แถว cancelled ช่วง gap มองไม่เห็นถาวร + reconcile ค้างทุก tick (converge ไม่ได้ — terminal state เดียวกับ M3 8/03) → `planReconcile` นับ streak, ครบ 3 stale reconciles = flag **since-less fullLists fetch** บน tick ถัดไป (materialize แถวที่ client ไม่เคยมีได้) — **ไม่ chain** (H1 breaker คงเดิม) + streak reset = bootstraps ห่าง ≥3 ticks; `wasReconcile` เปลี่ยนเป็น request-side truth (4) 🟢 **L3 payload scope ตามหน้า** ([`9055adf`](https://github.com/witsarutnook/penprinting-dashboard/commit/9055adf)) — L1 gate เดิม scope ตาม role เท่านั้น: /cancelled bootstrap ดึง shipped rows 12 เดือนเต็มแล้วทิ้ง + admin บน /shipped จ่าย cancelled queries ทุก poll → `?track=` (จาก `FullListsTrack` เดิมของ client) + `includeShipped` type-pairing คู่ `includeCancelled` — side ที่ไม่ track ข้าม queries + fields absent; **track NARROW เท่านั้น** role gate ครอบทับ; param absent = both (old clients mid-rollout ปลอดภัย). Verified clean: role-gate callers ครบ · lists-mode ไม่ leak · prefill 3 flows sync/mode-switch ถูก · photobook summary ไม่ regress. Gates เขียวทุก commit + push + **post-deploy smoke เขียว pin `5cbffcf`**. Backlog เหลือ open: **L4 ตัวเดียว** (ผูก §13). **Bonus same-day**: session คู่ขนาน (chip) retire `fix-date-anomaly` ต่อท้าย batch ([`290c744`](https://github.com/witsarutnook/penprinting-dashboard/commit/290c744) — dry-run prod ยืนยัน no-op ครบ 3 orders ก่อนลบ, smoke เขียว pin headSha + endpoint 404, tests 644→635) → one-shot admin endpoints ถูก retire ครบทั้งสองตัวตาม PATTERNS §2.5.
