@@ -179,3 +179,42 @@ describe('searchArchiveOrders', () => {
     expect(r.rows[0].shippedDate).toBeNull();
   });
 });
+
+import { archiveRowState } from '@/lib/archive-search';
+
+describe('archiveRowState', () => {
+  const base = { status: 'sent', shippedDate: null, cancelledAt: null, cancelledReason: null };
+
+  it('cancelled wins even when a shippedDate exists (mirrors track-status precedence)', () => {
+    expect(
+      archiveRowState({ ...base, shippedDate: '10/03/2025', cancelledAt: '11/03/2025', cancelledReason: 'ซ้ำ' }),
+    ).toEqual({ kind: 'cancelled', label: 'ยกเลิก', detail: 'ซ้ำ' });
+  });
+
+  it('cancelled detail falls back to cancelledAt when there is no reason', () => {
+    expect(archiveRowState({ ...base, cancelledAt: '11/03/2025' })).toEqual({
+      kind: 'cancelled', label: 'ยกเลิก', detail: '11/03/2025',
+    });
+    expect(archiveRowState({ ...base, status: 'Cancelled ' })).toEqual({
+      kind: 'cancelled', label: 'ยกเลิก', detail: null,
+    });
+  });
+
+  it('shipped by row or by status', () => {
+    expect(archiveRowState({ ...base, shippedDate: '10/03/2025' })).toEqual({
+      kind: 'shipped', label: 'ส่งแล้ว', detail: '10/03/2025',
+    });
+    expect(archiveRowState({ ...base, status: 'shipped' })).toEqual({
+      kind: 'shipped', label: 'ส่งแล้ว', detail: null,
+    });
+  });
+
+  it('draft is case/whitespace-insensitive', () => {
+    expect(archiveRowState({ ...base, status: 'Draft ' })).toEqual({ kind: 'draft', label: 'ร่าง', detail: null });
+  });
+
+  it('anything else is active', () => {
+    expect(archiveRowState({ ...base, status: 'sent' })).toEqual({ kind: 'active', label: 'กำลังทำ', detail: null });
+    expect(archiveRowState({ ...base, status: '' })).toEqual({ kind: 'active', label: 'กำลังทำ', detail: null });
+  });
+});

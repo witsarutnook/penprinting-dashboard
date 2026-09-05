@@ -132,3 +132,32 @@ export async function searchArchiveOrders(
   const total = Number(r.rows[0]?.total ?? 0);
   return { rows, total, truncated: total > rows.length };
 }
+
+export type ArchiveStateKind = 'cancelled' | 'shipped' | 'draft' | 'active';
+
+export interface ArchiveRowState {
+  kind: ArchiveStateKind;
+  label: string;
+  /** Reason / date to show under the label (raw as stored — the page formats dates). */
+  detail: string | null;
+}
+
+/** Status pill for one archive row. Precedence cancelled > shipped > draft >
+ *  active, matching lib/track-status.ts (a cancelled order stays cancelled
+ *  even if a stale shipped row survives). `status` is compared
+ *  case/whitespace-insensitively — Sheet-era rows carry mixed casing. */
+export function archiveRowState(
+  row: Pick<ArchiveOrderRow, 'status' | 'shippedDate' | 'cancelledAt' | 'cancelledReason'>,
+): ArchiveRowState {
+  const status = row.status.trim().toLowerCase();
+  if (row.cancelledAt || status === 'cancelled') {
+    return { kind: 'cancelled', label: 'ยกเลิก', detail: row.cancelledReason || row.cancelledAt || null };
+  }
+  if (row.shippedDate || status === 'shipped') {
+    return { kind: 'shipped', label: 'ส่งแล้ว', detail: row.shippedDate || null };
+  }
+  if (status === 'draft') {
+    return { kind: 'draft', label: 'ร่าง', detail: null };
+  }
+  return { kind: 'active', label: 'กำลังทำ', detail: null };
+}
