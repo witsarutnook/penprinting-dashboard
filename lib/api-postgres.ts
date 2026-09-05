@@ -147,6 +147,62 @@ export async function loadJobDeptStaffFromPostgres(
   return { dept: String(row.dept ?? ''), staff: String(row.staff ?? ''), name: String(row.name ?? '') };
 }
 
+export interface OrderLockState {
+  /** `raw->>'status'` — '' when the blob has no status. */
+  status: string;
+  /** A row exists in `shipped` for this order (any job of it was shipped). */
+  shipped: boolean;
+  /** A row exists in `cancelled` for this order. */
+  cancelled: boolean;
+}
+
+/** Server-authoritative edit-lock inputs for ONE order, in ONE round-trip:
+ *  the order's status + EXISTS flags for the shipped / cancelled tables —
+ *  the same three inputs `lib/orders-list` uses to paint the status pill,
+ *  so `/api/orders/update` and the /orders UI can never disagree about
+ *  whether an order is editable (edit-lock port, 2026-09-05). Feed the
+ *  result to `orderLockReason()` in `lib/order-lock`.
+ *
+ *  Returns null when the order row is missing — the caller owns the 404. */
+export async function loadOrderLockStateFromPostgres(
+  orderId: number | string,
+): Promise<OrderLockState | null> {
+  if (!isPostgresConfigured()) throw new PostgresReadError('not configured');
+  const id = Number(orderId);
+  if (!Number.isFinite(id) || !id) throw new Error('Invalid orderId');
+
+  // Status source = `raw->>'status'` — the same blob /orders paints its pill
+  // from (board-delta projects `raw`). The `orders.status` column mirrors it
+  // (every writer in postgres-write sets both in one statement); reading
+  // `raw` keeps the lock byte-identical to the list view.
+  const r = await sql<{
+    status: string | null;
+    has_shipped: boolean | string | null;
+    has_cancelled: boolean | string | null;
+  }>`
+    SELECT o.raw->>'status' AS status,
+           EXISTS (SELECT 1 FROM shipped s WHERE s.order_id = o.id) AS has_shipped,
+           EXISTS (SELECT 1 FROM cancelled c WHERE c.order_id = o.id) AS has_cancelled
+    FROM orders o
+    WHERE o.id = ${id}::bigint
+    LIMIT 1
+  `;
+  const row = r.rows[0];
+  if (!row) return null;
+  return {
+    status: String(row.status ?? ''),
+    shipped: pgBool(row.has_shipped),
+    cancelled: pgBool(row.has_cancelled),
+  };
+}
+
+/** pg returns real booleans for EXISTS, but be tolerant of 't'/'f' strings. */
+function pgBool(v: boolean | string | null | undefined): boolean {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') return v === 't' || v === 'true';
+  return false;
+}
+
 /** Single-target audit timeline from Postgres. Mirrors getAuditByTarget shape. */
 export async function getAuditByTargetFromPostgres(
   jobId: number | string | null | undefined,

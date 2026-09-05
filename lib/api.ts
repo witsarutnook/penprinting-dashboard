@@ -193,6 +193,17 @@ export async function loadOrder(
   return loadOrderFromPostgres(id, { orderOnly: opts.orderOnly });
 }
 
+export type { OrderLockState } from '@/lib/api-postgres';
+
+/** Edit-lock inputs for one order (status + shipped/cancelled EXISTS) in one
+ *  round-trip — see `loadOrderLockStateFromPostgres`. Used by the edit page
+ *  and `/api/orders/update` so both sides of the shipped/cancelled lock run
+ *  the same query (edit-lock port, 2026-09-05). Null = order not found. */
+export async function loadOrderLockState(id: number | string) {
+  const { loadOrderLockStateFromPostgres } = await import('@/lib/api-postgres');
+  return loadOrderLockStateFromPostgres(id);
+}
+
 export interface AuditEntry {
   timestamp: string;
   role: string;

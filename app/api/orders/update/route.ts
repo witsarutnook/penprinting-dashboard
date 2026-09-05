@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { loadOrderAndJobs } from '@/lib/api';
+import { loadOrderAndJobs, loadOrderLockState } from '@/lib/api';
+import { orderLockReason, orderLockMessage } from '@/lib/order-lock';
 import { requireSession } from '@/lib/route-helpers';
 import { type Dept } from '@/lib/board';
 import { toISODate } from '@/lib/jobs';
@@ -40,7 +41,15 @@ interface SrcOrderSnapshot {
  *  (Postgres-first) instead of `loadAllFresh` (Sheet-only). Pre-fix, an
  *  order that lived in Postgres but had not yet heal-cron-synced to Sheet
  *  would 404 on edit. Same disease as the 2026-05-12 `loadOrder` refactor
- *  (`c0be3b8`) and the 2026-05-11 promote-draft fix (`1f62d3b`). */
+ *  (`c0be3b8`) and the 2026-05-11 promote-draft fix (`1f62d3b`).
+ *
+ *  Edit-lock (2026-09-05): shipped / cancelled orders are refused with 409
+ *  BEFORE validation and before the srcOrder perf gate. The decision is
+ *  server-authoritative — `loadOrderLockState` (one query: status + EXISTS
+ *  shipped/cancelled) fed to `orderLockReason`, the same rule the /orders
+ *  table and the edit page use — so no UI (or curl) can cascade name/dateDue
+ *  into tombstoned job rows. Pre-fix the /orders table merely hid the ✏️
+ *  button; /archive rows and a hand-typed URL still reached this route. */
 export async function POST(req: Request) {
   const session = await requireSession(['admin']);
   if (session instanceof NextResponse) return session;
@@ -59,6 +68,26 @@ export async function POST(req: Request) {
   const id = Number(body.id);
   if (!id || !Number.isFinite(id)) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
+  }
+
+  // Edit-lock — see header. Runs first so a client snapshot claiming
+  // "nothing changed" (srcUnchanged below) can never skip it.
+  let lock: Awaited<ReturnType<typeof loadOrderLockState>>;
+  try {
+    lock = await loadOrderLockState(id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
+  }
+  if (!lock) {
+    return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
+  }
+  const lockReason = orderLockReason({ status: lock.status }, lock.shipped, lock.cancelled);
+  if (lockReason) {
+    return NextResponse.json(
+      { error: orderLockMessage(lockReason), locked: lockReason },
+      { status: 409 },
+    );
   }
 
   const orderType = body.orderType === 'photobook' ? 'photobook' : 'normal';

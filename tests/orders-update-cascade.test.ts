@@ -11,8 +11,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  */
 
 const loadMock = vi.fn();
+// Edit-lock read (2026-09-05) — every request now checks shipped/cancelled
+// first; these cascade tests always run against an active order.
+const lockMock = vi.fn();
 vi.mock('@/lib/api', () => ({
   loadOrderAndJobs: (...a: unknown[]) => loadMock(...a),
+  loadOrderLockState: (...a: unknown[]) => lockMock(...a),
 }));
 
 const sessionMock = vi.fn();
@@ -55,6 +59,7 @@ describe('POST /api/orders/update — cascade baseline', () => {
     updateMock.mockResolvedValue({ found: true });
     cascadeMock.mockResolvedValue({ cascaded: 1, failedJobIds: [] });
     auditMock.mockResolvedValue(undefined);
+    lockMock.mockResolvedValue({ status: 'sent', shipped: false, cancelled: false });
     loadMock.mockResolvedValue({
       order: {
         name: 'ชื่อเก่า',
