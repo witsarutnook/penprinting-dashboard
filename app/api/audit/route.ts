@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getAuditByTarget, AppsScriptError } from '@/lib/api';
+import { getAuditByTarget } from '@/lib/api';
+import { PostgresReadError } from '@/lib/api-postgres';
 import { requireSession } from '@/lib/route-helpers';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -44,8 +45,11 @@ export async function GET(req: Request) {
     const { entries } = await getAuditByTarget(jobId, orderId);
     return NextResponse.json({ entries });
   } catch (err) {
-    if (err instanceof AppsScriptError) {
-      return NextResponse.json({ error: err.message }, { status: 502 });
+    // Postgres unreachable / not configured → 503 (service unavailable).
+    // The only consumer (components/history-tab.tsx) checks res.ok and
+    // shows json.error, so the exact status is informational.
+    if (err instanceof PostgresReadError) {
+      return NextResponse.json({ error: err.message }, { status: 503 });
     }
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

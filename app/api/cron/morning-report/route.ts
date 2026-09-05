@@ -22,8 +22,6 @@ export const maxDuration = 60;
  *  - `LINE_CHANNEL_TOKEN` — LINE Messaging API channel access token
  *  - `LINE_GROUP_ID` — target LINE group id
  *  - `MORNING_REPORT_TOKEN` — shared secret for manual `?token=` triggering
- *  - `APPS_SCRIPT_URL` / `APPS_SCRIPT_TOKEN` — used only by the `loadAll()`
- *    Apps Script fallback when the Postgres mirror is stale
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);

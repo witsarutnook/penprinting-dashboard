@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
-import { loadOrder, loadRecentOrdersSlim, AppsScriptError, type RecentOrderSlim } from '@/lib/api';
+import { loadOrder, loadRecentOrdersSlim, type RecentOrderSlim } from '@/lib/api';
 import { PostgresReadError } from '@/lib/api-postgres';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -66,7 +66,7 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
     if (err instanceof PostgresReadError && err.message.includes('not found')) {
       missing = true;
     } else {
-      errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+      errorMessage = err instanceof Error ? err.message : String(err);
     }
   }
   if (missing) notFound();

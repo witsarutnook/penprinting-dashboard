@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { loadAllWithAudit, AppsScriptError } from '@/lib/api';
+import { loadAllWithAudit } from '@/lib/api';
 import { computeAnalytics, computeMonthlyReport } from '@/lib/analytics';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import {
@@ -139,11 +139,7 @@ async function MonthlyData({ year, month }: { year: number; month: number }) {
     const data = await loadAllWithAudit();
     report = computeMonthlyReport(data, year, month);
   } catch (err) {
-    errorMessage = err instanceof AppsScriptError
-      ? err.message
-      : err instanceof Error
-        ? err.message
-        : String(err);
+    errorMessage = err instanceof Error ? err.message : String(err);
   }
 
   if (errorMessage) return <ErrorPanel message={errorMessage} />;
@@ -237,11 +233,7 @@ async function AnalyticsData({ months }: { months: Range }) {
     const data = await loadAllWithAudit();
     result = computeAnalytics(data, months);
   } catch (err) {
-    errorMessage = err instanceof AppsScriptError
-      ? err.message
-      : err instanceof Error
-        ? err.message
-        : String(err);
+    errorMessage = err instanceof Error ? err.message : String(err);
   }
 
   if (errorMessage) return <ErrorPanel message={errorMessage} />;
@@ -411,8 +403,7 @@ function ErrorPanel({ message }: { message: string }) {
       <h2 className="text-amber-900 font-semibold">โหลด Analytics ไม่สำเร็จ</h2>
       <p className="text-sm text-amber-800 mt-2 font-mono">{message}</p>
       <p className="text-xs text-amber-700 mt-4">
-        ตรวจ env vars <code className="bg-amber-100 px-1">APPS_SCRIPT_URL</code> +{' '}
-        <code className="bg-amber-100 px-1">APPS_SCRIPT_TOKEN</code> ใน Vercel — ครบ 3 environments หรือยัง?
+        ตรวจ env var <code className="bg-amber-100 px-1">POSTGRES_URL</code> ใน Vercel (Storage → Neon) — ครบ 3 environments หรือยัง?
       </p>
     </div>
   );

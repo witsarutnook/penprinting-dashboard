@@ -2,11 +2,11 @@ import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import QRCode from 'qrcode';
-import { loadOrder, AppsScriptError } from '@/lib/api';
+import { loadOrder } from '@/lib/api';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 
 // "พิมพ์+สั่ง" pops this page open ~1-2s after addOrder completes.
-// loadOrder() is Postgres-first (with Apps Script fallback) so brand-new
+// loadOrder() reads Postgres directly so brand-new
 // orders created via Phase 2 createOrder are visible immediately — Sheet
 // lags up to 5 min via heal cron, so reading Apps Script direct would
 // 404. force-dynamic stops Next.js from caching the page itself across
@@ -67,7 +67,7 @@ export default async function OrderPrintPage(props: { params: Promise<{ id: stri
     const result = await loadOrder(id, { orderOnly: true });
     order = result.order;
   } catch (err) {
-    errorMessage = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    errorMessage = err instanceof Error ? err.message : String(err);
   }
   if (errorMessage) {
     return <ErrorPage message={errorMessage} />;

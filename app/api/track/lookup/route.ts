@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { loadOrder, AppsScriptError } from '@/lib/api';
+import { loadOrder } from '@/lib/api';
 import { getBangkokToday } from '@/lib/calendar';
 import type { Job, Shipped, Cancelled } from '@/lib/types';
 import { buildTrackResult } from '@/lib/track-result';
@@ -159,7 +159,7 @@ export async function POST(req: Request) {
     // Not a PIN failure — refund the reserved attempt so an outage can't
     // lock a legitimate customer's order id for an hour.
     void refundAttempt(pinKey);
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);
   }
 

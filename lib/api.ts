@@ -3,30 +3,15 @@ import { unstable_cache } from 'next/cache';
 import type { LoadAllResponse, Order, Template } from './types';
 
 /**
- * Apps Script client — narrowly used post-§12 by `/archive` only.
- * loadAll/loadOrder/getAuditByTarget read directly from Postgres now
- * (no Apps Script fallback). The Apps Script project still hosts
- * `searchArchive` until §13 ports archive tables to Postgres.
+ * Dashboard read API — Postgres-only.
+ *
+ * Every reader here delegates to lib/api-postgres (or queries Postgres
+ * directly under `unstable_cache`). The Apps Script client that used to
+ * live in this file (`post()` + `searchArchive`, the last §12 survivor)
+ * was retired 2026-09-05 (§13/§15): /archive reads lib/archive-search
+ * and nothing in the dashboard talks to Apps Script any more. Errors from
+ * Postgres surface as `PostgresReadError` (lib/api-postgres).
  */
-
-class AppsScriptError extends Error {
-  constructor(public action: string, public reason: string, public status?: number) {
-    super(`Apps Script ${action} failed: ${reason}`);
-    this.name = 'AppsScriptError';
-  }
-}
-
-function getApiBase(): { url: string; token: string } {
-  const url = process.env.APPS_SCRIPT_URL;
-  const token = process.env.APPS_SCRIPT_TOKEN;
-  if (!url || !token) {
-    throw new AppsScriptError(
-      'config',
-      'APPS_SCRIPT_URL or APPS_SCRIPT_TOKEN env var missing — set in Vercel Settings → Environment Variables',
-    );
-  }
-  return { url, token };
-}
 
 /** Cache tag used by every `loadAll()` GET — write routes call
  *  `revalidateTag(LOAD_ALL_TAG)` so the next page render returns fresh data
@@ -227,58 +212,3 @@ export async function getAuditByTarget(
   return getAuditByTargetFromPostgres(jobId, orderId);
 }
 
-/** Resolve the operator identity for audit logging. Returns `"<role>:<user>"`
- *  when called from inside a Next.js request handler with a valid dashboard
- *  session cookie. Returns `undefined` otherwise. */
-async function currentActor(): Promise<string | undefined> {
-  try {
-    const { cookies } = await import('next/headers');
-    const { COOKIE_NAME, verifySession } = await import('@/lib/auth');
-    const session = await verifySession((await cookies()).get(COOKIE_NAME)?.value);
-    if (session) return `${session.role}:${session.user}`;
-  } catch {
-    // No request context (e.g. building, unit test) — fall back to dashboard service identity.
-  }
-  return undefined;
-}
-
-/** POST {action, token, ...body} — used by `searchArchive` only after §12.
- *  Write paths no longer route through here; they call postgres-write
- *  helpers directly and manage their own revalidation. */
-async function post<T>(action: string, body: Record<string, unknown> = {}, opts: { revalidate?: number } = {}): Promise<T> {
-  const { url, token } = getApiBase();
-  const actor = await currentActor();
-  const payload = JSON.stringify({
-    action,
-    token,
-    ...(actor ? { _actor: actor } : {}),
-    ...body,
-  });
-  const res = await fetch(url, {
-    method: 'POST',
-    body: payload,
-    headers: { 'Content-Type': 'text/plain' },
-    redirect: 'follow',
-    next: opts.revalidate ? { revalidate: opts.revalidate } : { revalidate: 0 },
-  });
-  if (!res.ok) throw new AppsScriptError(action, `HTTP ${res.status}`, res.status);
-  const data = (await res.json()) as T | { error: string };
-  if (data && typeof data === 'object' && 'error' in data) {
-    throw new AppsScriptError(action, (data as { error: string }).error);
-  }
-  return data as T;
-}
-
-/** Search across all archive sheets. Apps Script returns up to 100 results.
- *  Cache 30s — archives don't change often. */
-export interface ArchiveSearchResult {
-  results: Array<Record<string, unknown> & { _sheet: string }>;
-  total?: number;
-  message?: string;
-}
-
-export async function searchArchive(query: string): Promise<ArchiveSearchResult> {
-  return post<ArchiveSearchResult>('searchArchive', { query }, { revalidate: 30 });
-}
-
-export { AppsScriptError };

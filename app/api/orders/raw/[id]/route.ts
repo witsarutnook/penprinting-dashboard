@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { loadOrder, AppsScriptError } from '@/lib/api';
+import { loadOrder } from '@/lib/api';
 import { requireSession } from '@/lib/route-helpers';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -49,7 +49,7 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
     // "ดึงงานล่าสุด" button and lazy spec fetches.
     result = await loadOrder(id, { orderOnly: true });
   } catch (err) {
-    const msg = err instanceof AppsScriptError ? err.message : err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
