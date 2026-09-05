@@ -138,7 +138,7 @@ describe('searchArchiveOrders', () => {
     expect(sqlCalls[0].values).toContain(1);
   });
 
-  it('falls back to the default limit when limit is NaN / non-numeric', async () => {
+  it('falls back to the default limit when limit is NaN; ±Infinity still clamps', async () => {
     queueResult({ rows: [], rowCount: 0 });
     await searchArchiveOrders('ab', { limit: Number.NaN });
     expect(sqlCalls[0].values).toContain(100);
@@ -148,6 +148,16 @@ describe('searchArchiveOrders', () => {
     queueResult({ rows: [], rowCount: 0 });
     await searchArchiveOrders('ab', { limit: Number.POSITIVE_INFINITY });
     expect(sqlCalls[0].values).toContain(500);
+
+    resetMockPostgres();
+    queueResult({ rows: [], rowCount: 0 });
+    await searchArchiveOrders('ab', { limit: Number.NEGATIVE_INFINITY });
+    expect(sqlCalls[0].values).toContain(1);
+
+    resetMockPostgres();
+    queueResult({ rows: [], rowCount: 0 });
+    await searchArchiveOrders('ab', { limit: 'abc' as unknown as number });
+    expect(sqlCalls[0].values).toContain(100);
   });
 
   it('short-circuits without any SQL when the query normalizes to null (no "%%" table dump)', async () => {
@@ -233,8 +243,9 @@ describe('searchArchiveOrders', () => {
 
   it('lets Postgres errors propagate unwrapped (the page shows err.message)', async () => {
     queueError(new Error('connection refused'));
-    await expect(searchArchiveOrders('ใบปลิว')).rejects.toThrow('connection refused');
-    await expect(searchArchiveOrders('ใบปลิว')).resolves.toBeDefined(); // queue drained → default empty result
+    const p = searchArchiveOrders('ใบปลิว');
+    await expect(p).rejects.toThrow('connection refused');
+    await expect(p).rejects.not.toBeInstanceOf(PostgresReadError);
   });
 });
 
