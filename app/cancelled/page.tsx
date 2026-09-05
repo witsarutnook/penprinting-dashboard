@@ -3,7 +3,7 @@ import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
-import { IconFolder } from '@/lib/icons';
+import { IconFolderOpen } from '@/lib/icons';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -36,7 +36,7 @@ export default async function CancelledPage() {
             href="/archive"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
           >
-            <IconFolder size={13} />
+            <IconFolderOpen size={13} />
             ค้นข้อมูลเก่า
           </Link>
           <span>หน้านี้แสดงรายการ 12 เดือนล่าสุด — เก่ากว่านั้นค้นได้ที่ ค้นข้อมูลเก่า</span>

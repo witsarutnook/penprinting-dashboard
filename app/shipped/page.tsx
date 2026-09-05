@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
-import { IconFolder } from '@/lib/icons';
+import { IconFolderOpen } from '@/lib/icons';
 import { ShippedListClient } from './list-client';
 
 export const metadata: Metadata = {
@@ -35,13 +35,13 @@ export default async function ShippedPage() {
               href="/archive"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
             >
-              <IconFolder size={13} />
+              <IconFolderOpen size={13} />
               ค้นข้อมูลเก่า
             </Link>
           )}
           <span>
-            หน้านี้แสดงรายการ 12 เดือนล่าสุด — เก่ากว่านั้นค้นได้ที่ ค้นข้อมูลเก่า
-            {session.role !== 'admin' && ' (admin)'}
+            หน้านี้แสดงรายการ 12 เดือนล่าสุด —{' '}
+            {session.role === 'admin' ? 'เก่ากว่านั้นค้นได้ที่ ค้นข้อมูลเก่า' : 'เก่ากว่านั้นต้องให้แอดมินค้นให้'}
           </span>
         </div>
         <Suspense fallback={<ShippedSkeleton />}>

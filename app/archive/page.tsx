@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
-import { displayDate } from '@/lib/jobs';
+import { displayDate, displayDateTime } from '@/lib/jobs';
 import { IconCheck, IconFolderOpen, IconFileText, IconPencil } from '@/lib/icons';
 import { DashboardShell } from '@/components/dashboard-shell';
 import {
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 interface SearchParams {
-  q?: string;
+  q?: string | string[];
 }
 
 /** All-years order search (§13). Postgres-only — the Apps Script
@@ -35,7 +35,7 @@ export default async function ArchivePage(props: { searchParams: Promise<SearchP
     redirect('/analytics');
   }
 
-  const rawQuery = (searchParams.q || '').trim();
+  const rawQuery = (Array.isArray(searchParams.q) ? searchParams.q[0] ?? '' : searchParams.q ?? '').trim();
   const query = normalizeArchiveQuery(rawQuery);
   let result: ArchiveSearchResult | null = null;
   let errorMessage: string | null = null;
@@ -68,7 +68,7 @@ export default async function ArchivePage(props: { searchParams: Promise<SearchP
           <EmptyState />
         ) : !query ? (
           <Hint>กรุณาใส่คำค้นอย่างน้อย {ARCHIVE_MIN_QUERY_LENGTH} ตัวอักษร</Hint>
-        ) : !result ? null : result.rows.length === 0 ? (
+        ) : !result ? null /* unreachable — errorMessage wins above; keeps the narrowing for TS */ : result.rows.length === 0 ? (
           <Hint>ไม่พบผลลัพธ์สำหรับ &ldquo;{query}&rdquo;</Hint>
         ) : (
           <Results result={result} query={query} />
@@ -96,6 +96,7 @@ function SearchBox({ initial }: { initial: string }) {
         name="q"
         defaultValue={initial}
         autoFocus
+        aria-label="ค้นหาใบสั่งงานเก่า"
         placeholder={`ชื่องาน / ลูกค้า / ผู้สั่ง / เลข id — ขั้นต่ำ ${ARCHIVE_MIN_QUERY_LENGTH} ตัวอักษร`}
         className="flex-grow px-3 py-2 border border-stone-200 rounded-md text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
       />
@@ -135,7 +136,7 @@ function Results({ result, query }: { result: ArchiveSearchResult; query: string
 
       <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full min-w-[900px] text-xs">
             <thead className="bg-stone-50 text-stone-500">
               <tr>
                 <th className="text-left px-3 py-2 font-medium whitespace-nowrap">#</th>
@@ -146,7 +147,7 @@ function Results({ result, query }: { result: ArchiveSearchResult; query: string
                 <th className="text-left px-3 py-2 font-medium whitespace-nowrap">กำหนดส่ง</th>
                 <th className="text-left px-3 py-2 font-medium whitespace-nowrap">ราคา</th>
                 <th className="text-left px-3 py-2 font-medium whitespace-nowrap">สถานะ</th>
-                <th className="px-3 py-2" />
+                <th className="px-3 py-2"><span className="sr-only">การทำงาน</span></th>
               </tr>
             </thead>
             <tbody>
@@ -163,7 +164,12 @@ function Results({ result, query }: { result: ArchiveSearchResult; query: string
 
 function ResultRow({ row }: { row: ArchiveOrderRow }) {
   const state = archiveRowState(row);
-  const detail = state.kind === 'shipped' && state.detail ? displayDate(state.detail) : state.detail;
+  // Dates get formatted; a cancelled row without a reason falls back to its
+  // cancelledAt timestamp (ISO from the cancel route) → render like /cancelled.
+  const detail =
+    state.kind === 'shipped' ? displayDate(state.detail)
+    : state.kind === 'cancelled' && !row.cancelledReason ? displayDateTime(state.detail)
+    : state.detail;
   return (
     <tr className="border-t border-stone-100 hover:bg-stone-50/40 align-top">
       <td className="px-3 py-2 tabular-nums text-stone-500 whitespace-nowrap">{row.id}</td>
@@ -179,7 +185,7 @@ function ResultRow({ row }: { row: ArchiveOrderRow }) {
         >
           {state.label}
         </span>
-        {detail && (
+        {detail && detail !== '—' && (
           <div className="text-[11px] text-stone-500 mt-0.5 max-w-[16rem] truncate" title={detail}>
             {detail}
           </div>
@@ -188,18 +194,25 @@ function ResultRow({ row }: { row: ArchiveOrderRow }) {
       <td className="px-3 py-2 whitespace-nowrap">
         <Link
           href={`/orders/${row.id}/print`}
+          aria-label={`ใบสั่งงาน #${row.id}`}
           className="inline-flex items-center gap-1 text-accent hover:underline mr-3"
         >
           <IconFileText size={13} />
           ใบสั่งงาน
         </Link>
-        <Link
-          href={`/orders/${row.id}/edit`}
-          className="inline-flex items-center gap-1 text-stone-600 hover:underline"
-        >
-          <IconPencil size={13} />
-          แก้ไข
-        </Link>
+        {/* /orders locks editing for shipped/cancelled (orders-table.tsx
+            canEdit: role === 'admin' && orderStatus !== 'shipped' &&
+            orderStatus !== 'cancelled') — mirror that here. */}
+        {state.kind !== 'shipped' && state.kind !== 'cancelled' && (
+          <Link
+            href={`/orders/${row.id}/edit`}
+            aria-label={`แก้ไข #${row.id}`}
+            className="inline-flex items-center gap-1 text-stone-600 hover:underline"
+          >
+            <IconPencil size={13} />
+            แก้ไข
+          </Link>
+        )}
       </td>
     </tr>
   );
