@@ -20,7 +20,6 @@ vi.mock('@/lib/rate-limit', () => ({
 const loadMock = vi.fn();
 vi.mock('@/lib/api', () => ({
   loadOrder: (...a: unknown[]) => loadMock(...a),
-  AppsScriptError: class AppsScriptError extends Error {},
 }));
 
 import { POST } from '@/app/api/track/lookup/route';
