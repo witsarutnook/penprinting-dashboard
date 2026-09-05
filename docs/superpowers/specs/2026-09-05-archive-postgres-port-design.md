@@ -106,10 +106,10 @@ interface ArchiveSearchResult { rows: ArchiveOrderRow[]; total: number; truncate
 
 ## 3. L4 hint — `/shipped` + `/cancelled` (D5)
 
-- ใน `FilterForm` ของ [app/shipped/list-client.tsx](../../app/shipped/list-client.tsx) + [app/cancelled/list-client.tsx](../../app/cancelled/list-client.tsx) (สองหน้าที่มี dropdown ปีจาก `distinctYears`) เพิ่มบรรทัดเล็ก (`text-xs text-stone-400`) ใต้ฟอร์ม:
-  - admin: "รายการเก่ากว่า 12 เดือน → [ค้นข้อมูลเก่า](/archive)"
-  - role อื่น: "รายการเก่ากว่า 12 เดือนดูได้ที่ ค้นข้อมูลเก่า (admin)" — ไม่มีลิงก์ (หน้า admin-only; กันคลิกแล้วโดน redirect งง)
-- `/cancelled` เป็น admin-only อยู่แล้ว (page redirect role อื่น) → แสดงแบบมีลิงก์เสมอ ไม่ต้องส่ง role · `/shipped` เปิดทุก role → เพิ่ม prop `role: Session['role']` ให้ `ShippedListClient` (page มี `session.role` อยู่แล้วที่ [app/shipped/page.tsx:22](../../app/shipped/page.tsx)) แล้วส่งต่อ `FilterForm` เป็น `canOpenArchive: boolean`
+- **Implemented at page level** (amended 2026-09-05 ตอนเขียน plan): `/shipped` มีปุ่ม "ค้นหาในประวัติ" → `/archive` อยู่แล้วที่ [app/shipped/page.tsx](../../app/shipped/page.tsx) (แสดงทุก role ทั้งที่ `/archive` admin-only) → ใช้จุดนั้นแทน `FilterForm` ฝั่ง client: ไม่ต้อง thread `role` ลง `ShippedListClient`
+  - admin: ปุ่ม "ค้นข้อมูลเก่า" (ลิงก์) + ข้อความ "หน้านี้แสดงรายการ 12 เดือนล่าสุด — เก่ากว่านั้นค้นได้ที่ ค้นข้อมูลเก่า"
+  - role อื่น: ข้อความเดียวกัน + "(admin)" ไม่มีปุ่ม (กันคลิกแล้วโดน redirect งง)
+- `/cancelled` เป็น admin-only อยู่แล้ว (page redirect role อื่น) → block เดียวกันแบบมีปุ่มเสมอ (เพิ่ม `Link` + `IconFolder` import)
 - ปิด **L4-year-filter-shrinks-at-backfill-ageout** ใน AUDIT-BACKLOG: dropdown ปีจะเหลือ ~12 เดือนเมื่อ backfill age out (2027-05-18) **โดยมีคำอธิบาย+ทางไป** = ตรง intent ของ windowing design; ไม่แก้ shrink
 
 ## 4. ตัด Apps Script client — [lib/api.ts](../../lib/api.ts)

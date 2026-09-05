@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
+import Link from 'next/link';
+import { IconFolder } from '@/lib/icons';
 import { loadBoardDelta, type BoardDelta } from '@/lib/board-delta';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -27,6 +29,18 @@ export default async function CancelledPage() {
         </div>
       </header>
       <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
+        {/* L4-year-filter-shrinks-at-backfill-ageout (closed by design, §13) —
+            12-month list; older cancellations are searchable in /archive. */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+          <Link
+            href="/archive"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
+          >
+            <IconFolder size={13} />
+            ค้นข้อมูลเก่า
+          </Link>
+          <span>หน้านี้แสดงรายการ 12 เดือนล่าสุด — เก่ากว่านั้นค้นได้ที่ ค้นข้อมูลเก่า</span>
+        </div>
         <Suspense fallback={<CancelledSkeleton />}>
           <CancelledData />
         </Suspense>

@@ -26,14 +26,23 @@ export default async function ShippedPage() {
         </div>
       </header>
       <div className="px-4 sm:px-6 py-4 max-w-6xl mx-auto space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/archive"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
-          >
-            <IconFolder size={13} />
-            ค้นหาในประวัติ
-          </Link>
+        {/* L4-year-filter-shrinks-at-backfill-ageout (closed by design, §13):
+            this page lists the last 12 months only, so the year dropdown
+            shrinks as rows age out. Older rows live in /archive (admin). */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+          {session.role === 'admin' && (
+            <Link
+              href="/archive"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 text-stone-700 text-xs font-medium hover:bg-stone-200"
+            >
+              <IconFolder size={13} />
+              ค้นข้อมูลเก่า
+            </Link>
+          )}
+          <span>
+            หน้านี้แสดงรายการ 12 เดือนล่าสุด — เก่ากว่านั้นค้นได้ที่ ค้นข้อมูลเก่า
+            {session.role !== 'admin' && ' (admin)'}
+          </span>
         </div>
         <Suspense fallback={<ShippedSkeleton />}>
           <ShippedData />
