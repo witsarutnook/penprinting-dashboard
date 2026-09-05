@@ -83,6 +83,7 @@ npm run build            # before push
 | [lib/delta-sync.tsx](lib/delta-sync.tsx) | `useDeltaSync` + `mergeDelta` + `applyFullList` (sole auto-sync) |
 | [lib/board-delta.ts](lib/board-delta.ts) | `loadBoardDelta` server loader (lists / fullLists modes) |
 | [lib/archive-search.ts](lib/archive-search.ts) | `/archive` all-years search (normalize / escape / `searchArchiveOrders` / `archiveRowState`) |
+| [lib/order-lock.ts](lib/order-lock.ts) | Edit-lock shipped/cancelled (`orderLockReason` / `orderLockMessage`) — ใช้ร่วมโดย `/orders/[id]/edit` + `/api/orders/update` (2026-09-05) |
 | [components/nav-config.ts](components/nav-config.ts) | Sidebar + bottom-nav source of truth |
 | [components/dashboard-shell.tsx](components/dashboard-shell.tsx) | Layout wrapper |
 
