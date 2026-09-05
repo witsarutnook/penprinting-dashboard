@@ -1500,3 +1500,8 @@ git push origin main
 - **Spec coverage**: §1a/1b → Task 1-2 · §1c → Task 3 · §2 → Task 4 · §3 → Task 5 (page-level, spec amended ใน task) · §4 → Task 6 (ครบ 8 ไฟล์ + analytics hint + cron comment + audit 503) · §5 → Task 7 (9 ไฟล์ตามตาราง spec; `NEXT-SESSION` ใน Task 8) · §6 → tests ใน Task 1-3 + gates ใน Task 6 Step 11 · §7 → Task 8 · §8/Rollback → ไม่ต้องมี task
 - **Type consistency**: `ArchiveOrderRow` (camelCase) ↔ `ArchiveSqlRow` (snake_case) map ใน Task 2 · `archiveRowState` รับ `Pick<ArchiveOrderRow, ...>` — page ส่ง `row` ทั้งก้อนได้ · `ArchiveStateKind` ใช้เป็น key ของ `PILL_CLASS` · `searchArchiveOrders(q, { limit })` signature ตรงกันทุก task
 - **Placeholders**: hash ของ commit ใน docs = ใส่จาก `git log` จริง ณ เวลาทำ (ระบุไว้ทุกจุด) — ไม่มี TBD
+
+## Amendments (2026-09-05, after Task 1-3 code review)
+- Task 1: `normalizeArchiveQuery` also caps at `ARCHIVE_MAX_QUERY_LENGTH = 100` code points
+- Task 2: `searchArchiveOrders` normalizes `q` itself and returns an empty result without SQL when null (`''` used to become `ILIKE '%%'`); `limit` NaN/non-finite → default; `''` in shipped/cancelled columns → null. Tests 18 → 25 (suite 653 → 660)
+- Task 4 must use `ARCHIVE_MIN_QUERY_LENGTH` in the "อย่างน้อย N ตัวอักษร" hint instead of a hard-coded 2

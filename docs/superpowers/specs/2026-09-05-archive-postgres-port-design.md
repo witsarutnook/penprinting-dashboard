@@ -28,11 +28,13 @@
 ### 1a. `normalizeArchiveQuery(raw: string | undefined): string | null` — pure
 - `trim()` + ยุบช่องว่างซ้ำเป็นช่องเดียว
 - สั้นกว่า **2 ตัวอักษร** (นับหลัง trim, code point) → `null` (หน้าแสดง hint เดิม "กรุณาใส่คำค้นอย่างน้อย 2 ตัวอักษร")
+- ยาวเกิน **100 code points** → ตัดที่ 100 (กัน ILIKE O(n×m) บน input ยาวผิดปกติ — amended 2026-09-05 หลัง code review)
 - คืนค่าที่ยัง**ไม่** escape — escape เกิดใน 1b (แยกความรับผิดชอบ: normalize = สิ่งที่ user เห็นใน banner, escape = สิ่งที่ส่งเข้า LIKE)
 
 ### 1b. `searchArchiveOrders(q: string, opts?: { limit?: number }): Promise<ArchiveSearchResult>`
-- `limit` default **100** (เท่า Apps Script เดิม), clamp 1..500
+- `limit` default **100**, clamp 1..500; ค่าไม่ใช่ตัวเลข/NaN → default (amended หลัง review)
 - ไม่ configured → throw `PostgresReadError` (เหมือน reader อื่นใน [lib/api-postgres.ts](../../lib/api-postgres.ts))
+- normalize `q` ในตัวเอง (เรียก `normalizeArchiveQuery`) → ถ้าได้ null คืน `{ rows: [], total: 0, truncated: false }` โดยไม่ยิง SQL — ฟังก์ชันปลอดภัยสำหรับ caller ทุกตัว ไม่พึ่ง page (amended หลัง review: เดิม `''` กลายเป็น `ILIKE '%%'` dump ทั้งตาราง)
 - escape LIKE: `\` → `\\`, `%` → `\%`, `_` → `\_` แล้วห่อ `%…%`; ใช้ `ESCAPE '\'` ชัดเจนใน SQL
 - **ตัวเลขล้วน** (`/^\d+$/`) → เพิ่มแขน `o.id::text LIKE '<q>%'` (prefix: พิมพ์ `2025` เจอทุก order ปี 2025, พิมพ์ `202509` เจอเดือนนี้); ตัวอักษร → ไม่มีแขนนี้ (ไม่ต้อง cast ทุกแถว)
 - **1 round-trip** — total ผ่าน window function:
@@ -68,6 +70,7 @@ interface ArchiveOrderRow {
 interface ArchiveSearchResult { rows: ArchiveOrderRow[]; total: number; truncated: boolean }
 ```
 - `total` = `Number(rows[0]?.total ?? 0)`; `truncated = total > rows.length`
+- `shippedDate` / `cancelledAt` / `cancelledReason`: `'' → null` (`||`, ไม่ใช่ `?? null` — คอลัมน์ TEXT เก็บ `''` ได้ และ type สัญญา `string | null`, amended หลัง review)
 - **ไม่ cache** (admin-only, ต่อคำค้น, traffic ต่ำ) — เหมือน `/orders` SSR path; ไม่มี `unstable_cache`/tag ให้ต้อง bust
 - Perf: seq scan บน `orders` หลักพันแถว = หลัก ms (ไม่มี index ช่วย `%…%` อยู่แล้ว); growth path = `pg_trgm` GIN index บน `name/customer` ผ่าน db-migrate **โดยไม่แก้ query** — ไม่ทำใน pass นี้
 

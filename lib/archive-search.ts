@@ -20,16 +20,20 @@ import { PostgresReadError } from '@/lib/api-postgres';
  */
 
 export const ARCHIVE_MIN_QUERY_LENGTH = 2;
+export const ARCHIVE_MAX_QUERY_LENGTH = 100;
 export const ARCHIVE_DEFAULT_LIMIT = 100;
 export const ARCHIVE_MAX_LIMIT = 500;
 
-/** Trim + collapse whitespace. Returns null when the query is too short to
- *  search (the page shows the "อย่างน้อย 2 ตัวอักษร" hint). Not escaped —
- *  this is the string the user sees echoed back in the results banner. */
+/** Trim + collapse whitespace, cap at 100 code points (guards against
+ *  O(n×m) ILIKE cost on abnormally long input). Returns null when the query
+ *  is too short to search (the page shows the "อย่างน้อย 2 ตัวอักษร" hint).
+ *  Not escaped — this is the string the user sees echoed back in the
+ *  results banner. */
 export function normalizeArchiveQuery(raw: string | null | undefined): string | null {
   const q = String(raw ?? '').replace(/\s+/g, ' ').trim();
-  if (Array.from(q).length < ARCHIVE_MIN_QUERY_LENGTH) return null;
-  return q;
+  const cps = Array.from(q);
+  if (cps.length < ARCHIVE_MIN_QUERY_LENGTH) return null;
+  return cps.length > ARCHIVE_MAX_QUERY_LENGTH ? cps.slice(0, ARCHIVE_MAX_QUERY_LENGTH).join('') : q;
 }
 
 /** Escape LIKE metacharacters so user input never becomes a wildcard.
@@ -80,22 +84,27 @@ interface ArchiveSqlRow {
 
 /** All-years order search. ONE round-trip: the window-function `total`
  *  rides along on every row, so no second COUNT query. Not cached — admin
- *  only, per-query, low traffic. */
+ *  only, per-query, low traffic.
+ *
+ *  Normalizes `q` itself (whitespace, min length, max length) so any caller
+ *  is safe; the page also calls `normalizeArchiveQuery` for its own hint UI. */
 export async function searchArchiveOrders(
   q: string,
   opts: { limit?: number } = {},
 ): Promise<ArchiveSearchResult> {
   if (!isPostgresConfigured()) throw new PostgresReadError('not configured');
 
-  const limit = Math.min(
-    ARCHIVE_MAX_LIMIT,
-    Math.max(1, Math.floor(opts.limit ?? ARCHIVE_DEFAULT_LIMIT)),
-  );
-  const pattern = `%${escapeLikePattern(q)}%`;
+  const normalized = normalizeArchiveQuery(q);
+  if (normalized === null) return { rows: [], total: 0, truncated: false };
+
+  const rawLimit = Number(opts.limit ?? ARCHIVE_DEFAULT_LIMIT);
+  const clampedLimit = Math.min(ARCHIVE_MAX_LIMIT, Math.max(1, Math.floor(rawLimit)));
+  const limit = Number.isNaN(clampedLimit) ? ARCHIVE_DEFAULT_LIMIT : clampedLimit;
+  const pattern = `%${escapeLikePattern(normalized)}%`;
   // All-digit query → also match the order id by prefix. Order ids are
   // YYYYMM*1000+seq, so "2025" finds every 2025 order and "202509" one month.
-  const isNumeric = /^\d+$/.test(q);
-  const idPrefix = isNumeric ? `${q}%` : '';
+  const isNumeric = /^\d+$/.test(normalized);
+  const idPrefix = isNumeric ? `${normalized}%` : '';
 
   const r = await sql<ArchiveSqlRow>`
     SELECT o.id, o.name, o.customer, o.orderer, o.date_in, o.date_due, o.price, o.status,
@@ -125,9 +134,9 @@ export async function searchArchiveOrders(
     dateDue: row.date_due ?? '',
     price: row.price ?? '',
     status: row.status ?? '',
-    shippedDate: row.shipped_date ?? null,
-    cancelledAt: row.cancelled_at ?? null,
-    cancelledReason: row.cancelled_reason ?? null,
+    shippedDate: row.shipped_date || null,
+    cancelledAt: row.cancelled_at || null,
+    cancelledReason: row.cancelled_reason || null,
   }));
   const total = Number(r.rows[0]?.total ?? 0);
   return { rows, total, truncated: total > rows.length };

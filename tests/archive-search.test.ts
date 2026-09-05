@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   queueResult,
+  queueError,
   resetMockPostgres,
   setConfigured,
   sqlCalls,
@@ -11,7 +12,11 @@ vi.mock('@/lib/postgres', () => import('./helpers/mock-postgres'));
 import {
   normalizeArchiveQuery,
   escapeLikePattern,
+  searchArchiveOrders,
+  archiveRowState,
+  ARCHIVE_MAX_QUERY_LENGTH,
 } from '@/lib/archive-search';
+import { PostgresReadError } from '@/lib/api-postgres';
 
 describe('normalizeArchiveQuery', () => {
   it('returns null for empty / undefined / whitespace-only input', () => {
@@ -35,6 +40,15 @@ describe('normalizeArchiveQuery', () => {
     expect(normalizeArchiveQuery('  ใบปลิว   ซุปเปอร์ ')).toBe('ใบปลิว ซุปเปอร์');
     expect(normalizeArchiveQuery('a\t\nb')).toBe('a b');
   });
+
+  it('caps the query at ARCHIVE_MAX_QUERY_LENGTH code points', () => {
+    const long = 'ก'.repeat(ARCHIVE_MAX_QUERY_LENGTH + 50);
+    const out = normalizeArchiveQuery(long);
+    expect(out).not.toBeNull();
+    expect(Array.from(out as string)).toHaveLength(ARCHIVE_MAX_QUERY_LENGTH);
+    // exactly at the cap is untouched
+    expect(normalizeArchiveQuery('ข'.repeat(ARCHIVE_MAX_QUERY_LENGTH))).toBe('ข'.repeat(ARCHIVE_MAX_QUERY_LENGTH));
+  });
 });
 
 describe('escapeLikePattern', () => {
@@ -48,9 +62,6 @@ describe('escapeLikePattern', () => {
     expect(escapeLikePattern('ใบปลิว ซุปเปอร์')).toBe('ใบปลิว ซุปเปอร์');
   });
 });
-
-import { searchArchiveOrders } from '@/lib/archive-search';
-import { PostgresReadError } from '@/lib/api-postgres';
 
 /** One row in the shape the SQL returns (snake_case, pg strings). */
 function sqlRow(over: Record<string, unknown> = {}) {
@@ -127,6 +138,31 @@ describe('searchArchiveOrders', () => {
     expect(sqlCalls[0].values).toContain(1);
   });
 
+  it('falls back to the default limit when limit is NaN / non-numeric', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    await searchArchiveOrders('ab', { limit: Number.NaN });
+    expect(sqlCalls[0].values).toContain(100);
+    expect(sqlCalls[0].values.some((v) => typeof v === 'number' && Number.isNaN(v))).toBe(false);
+
+    resetMockPostgres();
+    queueResult({ rows: [], rowCount: 0 });
+    await searchArchiveOrders('ab', { limit: Number.POSITIVE_INFINITY });
+    expect(sqlCalls[0].values).toContain(500);
+  });
+
+  it('short-circuits without any SQL when the query normalizes to null (no "%%" table dump)', async () => {
+    expect(await searchArchiveOrders('')).toEqual({ rows: [], total: 0, truncated: false });
+    expect(await searchArchiveOrders('   ')).toEqual({ rows: [], total: 0, truncated: false });
+    expect(await searchArchiveOrders('a')).toEqual({ rows: [], total: 0, truncated: false });
+    expect(sqlCalls).toHaveLength(0);
+  });
+
+  it('searches with the normalized query (collapsed whitespace), not the raw input', async () => {
+    queueResult({ rows: [], rowCount: 0 });
+    await searchArchiveOrders('  ใบปลิว   ซุปเปอร์ ');
+    expect(sqlCalls[0].values.filter((v) => v === '%ใบปลิว ซุปเปอร์%')).toHaveLength(3);
+  });
+
   it('maps snake_case rows to ArchiveOrderRow with total from the window function', async () => {
     queueResult({
       rows: [
@@ -156,6 +192,14 @@ describe('searchArchiveOrders', () => {
     expect(r.rows[1].cancelledReason).toBe('ลูกค้าเปลี่ยนใจ');
   });
 
+  it('accepts numeric id/total from pg as well as strings', async () => {
+    queueResult({ rows: [sqlRow({ id: 202503012, total: 2 })], rowCount: 1 });
+    const r = await searchArchiveOrders('ใบปลิว', { limit: 1 });
+    expect(r.rows[0].id).toBe(202503012);
+    expect(r.total).toBe(2);
+    expect(r.truncated).toBe(true);
+  });
+
   it('reports truncated=false when total equals the row count, and total=0 on no rows', async () => {
     queueResult({ rows: [sqlRow({ total: '1' })], rowCount: 1 });
     const r = await searchArchiveOrders('ใบปลิว');
@@ -178,9 +222,21 @@ describe('searchArchiveOrders', () => {
     expect(r.rows[0].status).toBe('');
     expect(r.rows[0].shippedDate).toBeNull();
   });
-});
 
-import { archiveRowState } from '@/lib/archive-search';
+  it('maps empty-string shipped/cancelled columns to null', async () => {
+    queueResult({ rows: [sqlRow({ shipped_date: '', cancelled_at: '', cancelled_reason: '' })], rowCount: 1 });
+    const r = await searchArchiveOrders('ใบปลิว');
+    expect(r.rows[0].shippedDate).toBeNull();
+    expect(r.rows[0].cancelledAt).toBeNull();
+    expect(r.rows[0].cancelledReason).toBeNull();
+  });
+
+  it('lets Postgres errors propagate unwrapped (the page shows err.message)', async () => {
+    queueError(new Error('connection refused'));
+    await expect(searchArchiveOrders('ใบปลิว')).rejects.toThrow('connection refused');
+    await expect(searchArchiveOrders('ใบปลิว')).resolves.toBeDefined(); // queue drained → default empty result
+  });
+});
 
 describe('archiveRowState', () => {
   const base = { status: 'sent', shippedDate: null, cancelledAt: null, cancelledReason: null };
