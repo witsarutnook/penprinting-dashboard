@@ -78,12 +78,28 @@ describe('buildSlipFlex', () => {
     expect(s).not.toContain('บัญชีคนอื่น มั่ว'); // D4: never expose the mistaken account
   });
 
-  it('unreadable: gray header + resend message, no data rows', () => {
+  // 2026-09-11 SLIP_NOT_FOUND run: this card used to end with "รบกวนส่งรูปสลิป
+  // ใหม่ให้ชัดเจน", so customers re-sent the same image and burned a fresh
+  // Thunder quota slot per resend for a guaranteed identical failure
+  // (slip_checks 1235-1241). SLIP_NOT_FOUND is Thunder's verdict ON THIS IMAGE,
+  // not a photo-quality hint — the card hands off to staff instead.
+  it('unreadable: gray header, hands off to staff, never asks for a re-send', () => {
     const flex = buildSlipFlex({ success: false, error: { code: 'SLIP_NOT_FOUND', message: 'x' } });
     const s = json(flex);
-    expect(s).toContain('#f1efe8');      // gray header bg
-    expect(s).toMatch(/ยืนยันสลิป|ส่ง.*ใหม่/);
+    expect(s).toContain('#f1efe8');          // gray header bg
+    expect(s).toContain('อ่านสลิปไม่ได้');    // header label unchanged
+    expect(s).toContain('ยืนยันสลิปใบนี้ไม่ได้');
+    expect(s).toContain('ไม่ต้องส่งซ้ำ');
+    expect(s).not.toContain('ส่งรูปสลิปใหม่');
     expect(flex.type).toBe('flex');
+  });
+
+  it('error: system failure gets its own header + copy that never blames the image', () => {
+    const flex = buildSlipFlex({ success: false, error: { code: 'QUOTA_EXCEEDED', message: 'x' } });
+    const s = json(flex);
+    expect(s).toContain('ระบบขัดข้องชั่วคราว');
+    expect(s).not.toContain('ส่งรูปสลิปใหม่');
+    expect(flex.altText).toBe(formatSlipReply({ success: false }));  // altText stays generic
   });
 
   it('null-safe: success with empty rawSlip never throws and still returns a flex', () => {
@@ -125,5 +141,43 @@ describe('classifySlipState — Thunder v2 matchedAccount contract', () => {
   });
   it('neither field present → success unchanged (check absent from response ≠ mismatch)', () => {
     expect(classifySlipState({ success: true, data: { isDuplicate: false, rawSlip: {} } })).toBe('success');
+  });
+});
+
+// The no-verdict split (2026-09-11). 'unreadable' = Thunder judged THIS image
+// and could not confirm it; 'error' = nothing was learned about the slip at all
+// (our key/quota/plan, Thunder down, unreadable reply). Only the second is worth
+// a retry, and only the first is about the picture.
+describe('classifySlipState — unreadable vs error', () => {
+  const withCode = (code: string): ThunderVerifyResponse => ({ success: false, error: { code, message: 'x' } });
+
+  it("SLIP_NOT_FOUND → 'unreadable' (the live 2026-09-11 failure)", () => {
+    expect(classifySlipState(withCode('SLIP_NOT_FOUND'))).toBe('unreadable');
+  });
+  it("quota / auth / plan codes → 'error'", () => {
+    for (const c of ['QUOTA_EXCEEDED', 'UNAUTHORIZED', 'ACCESS_DENIED', 'APPLICATION_EXPIRED']) {
+      expect(classifySlipState(withCode(c))).toBe('error');
+    }
+  });
+  it("our own transport codes → 'error' (never the customer's image)", () => {
+    for (const c of ['NO_KEY', 'NETWORK', 'INVALID_RESPONSE']) {
+      expect(classifySlipState(withCode(c))).toBe('error');
+    }
+  });
+  it("EasySlip-generation snake_case codes read the same as Thunder's SHOUTING", () => {
+    expect(classifySlipState(withCode('quota_exceeded'))).toBe('error');
+    expect(classifySlipState(withCode('slip_not_found'))).toBe('unreadable');
+  });
+  it('HTTP status outranks an unrecognised code, so a renamed error still lands right', () => {
+    const at = (status: number, code: string): ThunderVerifyResponse =>
+      ({ success: false, error: { code, message: 'x' }, _meta: { status, contentType: null, attempts: 1 } });
+    expect(classifySlipState(at(503, 'SOMETHING_NEW'))).toBe('error');
+    expect(classifySlipState(at(429, 'SOMETHING_NEW'))).toBe('error');
+    expect(classifySlipState(at(401, 'SOMETHING_NEW'))).toBe('error');
+    expect(classifySlipState(at(200, 'SLIP_NOT_FOUND'))).toBe('unreadable');
+  });
+  it("an unknown 4xx code stays 'unreadable' (conservative: assume it judged the slip)", () => {
+    expect(classifySlipState(withCode('SOMETHING_NEW'))).toBe('unreadable');
+    expect(classifySlipState({ success: false })).toBe('unreadable');
   });
 });

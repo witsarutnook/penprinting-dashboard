@@ -4,9 +4,9 @@
 // text when a device can't render Flex). Mirrors the buildOrderFlex pattern in track-flex.ts.
 // Also exports the shared classify/format helpers (classifySlipState, fmtAmount, fmtDate,
 // partyName, bankName) consumed by slip-messenger.ts so both channels render identical copy.
-import { formatSlipReply, slipAccountMatched, type ThunderVerifyResponse, type ThunderParty } from './slip';
+import { formatSlipReply, slipAccountMatched, slipFailureKind, type ThunderVerifyResponse, type ThunderParty } from './slip';
 
-export type SlipState = 'success' | 'duplicate' | 'mismatch' | 'unreadable';
+export type SlipState = 'success' | 'duplicate' | 'mismatch' | 'unreadable' | 'error';
 
 // status header colors — Penprinting palette, NOT Thunder branding
 const HEADER: Record<SlipState, { bg: string; fg: string; label: string }> = {
@@ -14,6 +14,16 @@ const HEADER: Record<SlipState, { bg: string; fg: string; label: string }> = {
   duplicate:  { bg: '#faeeda', fg: '#854f0b', label: '⚠️ สลิปนี้เคยส่งแล้ว' },
   mismatch:   { bg: '#fcebeb', fg: '#a32d2d', label: '❌ บัญชีปลายทางไม่ตรง' },
   unreadable: { bg: '#f1efe8', fg: '#444441', label: 'อ่านสลิปไม่ได้' },
+  error:      { bg: '#f1efe8', fg: '#444441', label: 'ระบบขัดข้องชั่วคราว' },
+};
+
+/** Body copy for the two non-verdict states. Neither asks the customer to
+ *  re-send: on 'unreadable' the same image is guaranteed to fail again, and on
+ *  'error' the image was never the problem. Both hand the slip to a human
+ *  instead — staff see it in the chat either way. */
+const FAILURE_NOTICE: Record<'unreadable' | 'error', string> = {
+  unreadable: 'ระบบตรวจสอบอัตโนมัติยืนยันสลิปใบนี้ไม่ได้ค่ะ\nทีมงานจะตรวจสอบให้อีกครั้งนะคะ 🙏\n(ไม่ต้องส่งซ้ำค่ะ)',
+  error: 'ระบบตรวจสอบสลิปขัดข้องชั่วคราวค่ะ\nทีมงานจะตรวจสอบให้นะคะ 🙏',
 };
 
 const ACCENT = '#c8553d'; // Penprinting brand
@@ -33,7 +43,9 @@ export function classifySlipState(r: ThunderVerifyResponse): SlipState {
     if (slipAccountMatched(r) === false) return 'mismatch';
     return 'success';
   }
-  return 'unreadable';
+  // No verdict. Split by WHY (slipFailureKind) so the customer is not told to
+  // re-send a picture that will fail identically — 2026-09-11, SLIP_NOT_FOUND.
+  return slipFailureKind(r) === 'system' ? 'error' : 'unreadable';
 }
 
 export function fmtAmount(n?: number): string | null {
@@ -128,7 +140,7 @@ export function buildSlipFlex(result: ThunderVerifyResponse): Record<string, unk
     // D4: never expose the mistaken destination account — just tell the customer to recheck
     body.push(notice('ยอดนี้ดูไม่ตรงบัญชีของร้านค่ะ 🙏 รบกวนตรวจสอบเลขบัญชีปลายทางอีกครั้งนะคะ'));
   } else {
-    body.push(notice('ระบบไม่สามารถยืนยันสลิปได้\nรบกวนส่งรูปสลิปใหม่ให้ชัดเจน\nหรือรอทีมงานตรวจสอบอีกครั้ง'));
+    body.push(notice(FAILURE_NOTICE[state]));
   }
 
   return {
