@@ -12,7 +12,15 @@ argument-hint: "(optional) focus ของวันนี้"
 1. `NEXT-SESSION.md` — session ล่าสุดทำอะไรไป / เหลืออะไร / lessons learned (อ่านส่วนบนสุด, ~50 บรรทัด)
 2. `AUDIT-BACKLOG.md` — open items + recent closures (อ่าน header summary)
 
-## Step 2 — Recent git activity
+## Step 2 — Recent git activity (⚠️ รวม branch/PR ที่ยังไม่ merge)
+
+**ก่อนดู log ต้อง `git fetch` + เช็ค PR เปิดค้างเสมอ** — งานจาก cloud/iPad session อยู่บน branch ไม่ใช่ main, อ่านแต่ `NEXT-SESSION.md` บน main จะมองไม่เห็น (เคสจริง 2026-09-12: PR #26 จาก session 9/11 หลุดจาก context check):
+
+```bash
+git fetch origin && gh pr list --state open --json number,title,headRefName,updatedAt
+# ถ้ามี PR เปิด → อ่าน entry ของมัน: git show origin/<branch>:NEXT-SESSION.md | head -30
+```
+
 
 `git log --oneline -10` + `git status` ใน repo นี้ — เทียบกับที่ NEXT-SESSION เล่า ถ้ามี commit ที่ doc ไม่รู้จัก (เช่นจาก session เครื่องอื่น) ให้ surface
 
