@@ -281,7 +281,7 @@ return phase2UpdateJob(...);  // function rename อาจเปลี่ยน�
 
 - ~~**§13 — Port `/archive`** (2-3 sessions)~~ ✅ **DONE 2026-09-05 ใน 1 session** — ข้อค้นพบ: Sheet ไม่เคยมี tab `*_archive_*` (ระบบอายุ < 365 วันตอน freeze) → ไม่มีอะไรให้ migrate; `/archive` ค้น Postgres ทุกปีผ่าน `lib/archive-search.ts` แทน. Spec: `docs/superpowers/specs/2026-09-05-archive-postgres-port-design.md`
 - ~~**§14 — Port LINE Webhook**~~ ✅ DONE — LINE OA ชี้ Vercel ตรงตั้งแต่ 2026-06-30, GAS + CF Worker decommissioned 2026-08-20
-- **§15 — Full Apps Script shutdown** — โค้ดฝั่ง dashboard ตัดครบแล้ว 2026-09-05 (`grep APPS_SCRIPT` = 0, commit `eb62933`). เหลือ user actions: (1) ถอด `APPS_SCRIPT_URL` + `APPS_SCRIPT_TOKEN` บน Vercel + Redeploy (2) Archive deployment + ลบ trigger ใน Apps Script editor (3) soak 7 วัน (~2026-09-12) → ลบโปรเจกต์ AS · Sheet คงเป็น frozen archive ตลอดไป
+- ~~**§15 — Full Apps Script shutdown**~~ ✅ **DONE 2026-09-12** — โค้ดฝั่ง dashboard ตัดครบ 2026-09-05 (`grep APPS_SCRIPT` = 0, commit `eb62933`) · (1) ถอด `APPS_SCRIPT_URL` + `APPS_SCRIPT_TOKEN` บน Vercel + redeploy ✅ 9/05 (2) archive deployment ครบทุกตัว + ลบ trigger ✅ 9/05 (probe URL → 404) (3) soak 7 วันเงียบ 9/05→9/12 → **คุณนุ๊กลบโปรเจกต์ "penprinting dashboard data" 2026-09-12** ✅. Sheet = frozen archive ตลอดไป · **Phase 4.3 ปิดสนิท, rollback path ปิด**
 
 ---
 
