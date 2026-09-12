@@ -69,7 +69,7 @@
 4 passwords map to roles via `DASHBOARD_AUTH_USERS` env (JSON: `{ "<password>": { "role": "...", "user": "..." } }`).
 
 ### Apps Script service token — 🪦 retired 2026-09-05
-- `APPS_SCRIPT_TOKEN` / `APPS_SCRIPT_URL` ไม่ถูกอ่านในโค้ดอีกแล้ว (§13/§15) — per-user audit signing ทำที่ Postgres write path (`audit_log.user_name`) ตั้งแต่ Phase 2
+- `APPS_SCRIPT_TOKEN` / `APPS_SCRIPT_URL` ไม่ถูกอ่านในโค้ดอีกแล้ว (§13/§15) — ถอดจาก Vercel 2026-09-05 และ **โปรเจกต์ Apps Script ถูกลบ 2026-09-12** — per-user audit signing ทำที่ Postgres write path (`audit_log.user_name`) ตั้งแต่ Phase 2
 
 ### Rate limit
 - `/api/auth/login` — 5 attempts / 5 min ต่อ browser ผ่าน signed cookie `pp_login_rl` (path `/api/auth`, expires กับ window)
