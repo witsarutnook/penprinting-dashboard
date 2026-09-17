@@ -6,7 +6,7 @@
 // live here. Extracted so the (auth-less) public route can be unit-tested.
 // Edge-runtime safe: all deps are pure (no server-only / Node built-ins).
 import { deriveTrackStatus } from '@/lib/track-status';
-import { displayDate } from '@/lib/jobs';
+import { displayDatePadded } from '@/lib/jobs';
 import { DEPT_LABELS, STAFF } from '@/lib/board';
 import { computeUrgency, type Urgency } from '@/lib/calendar';
 import { parseDateDMY } from '@/lib/analytics';
@@ -129,8 +129,8 @@ export function buildTrackResult(
     orderId: Number(order.id),
     name: String(order.name || '-'),
     customerMasked: maskName(String(order.customer || '')),
-    dateIn: displayDate(order.dateIn),
-    dateDue: displayDate(order.dateDue),
+    dateIn: displayDatePadded(order.dateIn),
+    dateDue: displayDatePadded(order.dateDue),
     status,
     statusLabel,
     step,
@@ -138,7 +138,7 @@ export function buildTrackResult(
     awaitingShipment: core.awaitingShipment,
     daysHint,
     urgencyKey,
-    shippedDate: shipped ? displayDate(shipped.shippedDate) : undefined,
+    shippedDate: shipped ? displayDatePadded(shipped.shippedDate) : undefined,
     cancelReason: cancelled ? String(cancelled.reason || '') : undefined,
   };
 }

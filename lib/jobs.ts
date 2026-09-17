@@ -95,6 +95,20 @@ export function displayDate(input: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
+/** Customer-facing date display — same parsing as `displayDate`, but zero
+ *  padded to DD/MM/YYYY. The LINE Flex cards have always padded (`cleanDate_`
+ *  in lib/ai-quote/track-flex.ts), so an unpadded web `/track` showed the same
+ *  order as "5/9/2026" on the web and "05/09/2026" in LINE. Customer surfaces
+ *  (/track, /track/c/[token], both Flex cards) use this; internal staff screens
+ *  (board, orders, archive, shipped) keep the compact `displayDate`.
+ *  Non-date input falls through unchanged, exactly like `displayDate`. */
+export function displayDatePadded(input: string | null | undefined): string {
+  const out = displayDate(input);
+  const m = out.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return out;
+  return `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[3]}`;
+}
+
 /** Display date+time as D/M/YYYY HH:MM (Bangkok TZ). Used by cancelled list
  *  and audit timestamps where the original cell had time-of-day. */
 export function displayDateTime(input: string | null | undefined): string {
