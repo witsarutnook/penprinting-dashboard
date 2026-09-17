@@ -65,7 +65,11 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
     badgeLabel = 'อยู่ระหว่างพิมพ์';
     badgeBg = '#dbeafe'; badgeFg = '#1d4ed8';
   } else if (currentDept === 'post') {
-    badgeLabel = 'ขั้นตอนหลังพิมพ์';
+    // staff='ship' is a sub-state of dept='post' (the shipping queue). /track
+    // and the customer job list both surface it as "สินค้าพร้อมรับ" — the Flex
+    // card used to stop at "ขั้นตอนหลังพิมพ์", so the same order read two
+    // different statuses on LINE vs the web (2026-09-17).
+    badgeLabel = st.awaitingShipment ? 'สินค้าพร้อมรับ' : 'ขั้นตอนหลังพิมพ์';
     badgeBg = '#dbeafe'; badgeFg = '#1d4ed8';
   }
 
@@ -83,7 +87,7 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
   }
 
   // ─── Steps (icon circle + Thai/English labels) ───
-  const stepBoxes = buildStepBoxes_(currentDept, isCancelled, isShipped);
+  const stepBoxes = buildStepBoxes_(currentDept, isCancelled, isShipped, st.awaitingShipment);
 
   // ─── Status header section (cream bg) ───
   const headerContents: Record<string, unknown>[] = [
@@ -216,7 +220,12 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
 }
 
 // ─── Build step rows (Order received → Pre-press → Print → Post → Pickup → Complete) ───
-function buildStepBoxes_(currentDept: string, isCancelled: boolean, isShipped: boolean): Record<string, unknown>[] {
+function buildStepBoxes_(
+  currentDept: string,
+  isCancelled: boolean,
+  isShipped: boolean,
+  awaitingShipment: boolean,
+): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
 
   // Step 1: รับใบสั่งงาน — always done
@@ -238,14 +247,19 @@ function buildStepBoxes_(currentDept: string, isCancelled: boolean, isShipped: b
   depts.forEach((d) => {
     let cls = 'pending', icon = '○';
     if (isShipped) { cls = 'done'; icon = '✓'; }
+    // awaitingShipment → post-press is finished; the active step shifts to
+    // step 5 below (same rule as the Steps component in app/track/client.tsx).
+    else if (awaitingShipment && d.key === 'post') { cls = 'done'; icon = '✓'; }
     else if (d.key === currentDept) { cls = 'current'; icon = '●'; }
     else if (currentIdx > 0 && deptIdx[d.key] < currentIdx) { cls = 'done'; icon = '✓'; }
     out.push(makeStep_(cls, icon, d.th, d.en));
   });
 
-  // Step 5: สินค้าพร้อมรับ
-  out.push(makeStep_(isShipped ? 'done' : 'pending', isShipped ? '✓' : '○',
-    'สินค้าพร้อมรับ', 'Ready for pick up'));
+  // Step 5: สินค้าพร้อมรับ — current while the job sits in the shipping queue
+  let readyCls = 'pending', readyIcon = '○';
+  if (isShipped) { readyCls = 'done'; readyIcon = '✓'; }
+  else if (awaitingShipment) { readyCls = 'current'; readyIcon = '●'; }
+  out.push(makeStep_(readyCls, readyIcon, 'สินค้าพร้อมรับ', 'Ready for pick up'));
 
   // Step 6: จัดส่งเรียบร้อยแล้ว
   out.push(makeStep_(isShipped ? 'done' : 'pending', isShipped ? '✓' : '○',

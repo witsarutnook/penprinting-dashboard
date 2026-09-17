@@ -49,6 +49,28 @@ describe('buildOrderFlex', () => {
     });
     expect(JSON.stringify(flex)).toContain('จัดส่งเรียบร้อยแล้ว');
   });
+  it('renders the shipping queue (dept=post, staff=ship) as "สินค้าพร้อมรับ"', () => {
+    // Regression: the card used to stop at "ขั้นตอนหลังพิมพ์" while /track
+    // already showed "สินค้าพร้อมรับ" for the same order (2026-09-17).
+    const flex = buildOrderFlex('202609034', {
+      order: { name: 'กล่องกาแฟ AA', customer: 'บริษัท เอบีซี', dateIn: '05/09/2026', dateDue: '12/09/2026' },
+      job: { dept: 'post', staff: 'ship', date: '12/09/2026' },
+      shipped: null, cancelled: null,
+    });
+    const s = JSON.stringify(flex);
+    expect(flex.altText).toContain('สินค้าพร้อมรับ');
+    // Post-press step is done (green check), pickup step is the current one.
+    expect(s).toContain('"text":"✓","color":"#059669"');
+    expect(s).toContain('"text":"●","color":"#1d4ed8"');
+  });
+  it('keeps "ขั้นตอนหลังพิมพ์" while post-press staff is not the ship queue', () => {
+    const flex = buildOrderFlex('202609035', {
+      order: { name: 'กล่องกาแฟ BB', customer: 'บริษัท เอบีซี', dateIn: '05/09/2026', dateDue: '12/09/2026' },
+      job: { dept: 'post', staff: 'post1', date: '12/09/2026' },
+      shipped: null, cancelled: null,
+    });
+    expect(flex.altText).toContain('ขั้นตอนหลังพิมพ์');
+  });
   it('shows an overdue day-hint for a past due date', () => {
     const flex = buildOrderFlex('202601020', {
       order: { name: 'งานเลยกำหนด', customer: 'ลูกค้า', dateIn: '01/01/2020', dateDue: '05/01/2020' },
