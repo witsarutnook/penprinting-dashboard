@@ -4,7 +4,7 @@
 // /track-in-group command and the web tokenized page.
 import 'server-only';
 import { sql } from '@/lib/postgres';
-import { displayDate } from '@/lib/jobs';
+import { displayDatePadded } from '@/lib/jobs';
 import { getBangkokToday } from '@/lib/calendar';
 import { deriveTrackStatus, type TrackStatusKind } from '@/lib/track-status';
 
@@ -52,8 +52,8 @@ export async function loadActiveJobsByCustomer(
       orderId: Number(r.order_id),
       name: String(o.name ?? '-'),
       customer: String(o.customer ?? ''),
-      dateIn: displayDate(o.dateIn as string | null | undefined),
-      dateDue: displayDate(o.dateDue as string | null | undefined),
+      dateIn: displayDatePadded(o.dateIn as string | null | undefined),
+      dateDue: displayDatePadded(o.dateDue as string | null | undefined),
       ...status,
     };
   });

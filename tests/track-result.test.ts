@@ -66,7 +66,7 @@ describe('buildTrackResult', () => {
       awaitingShipment: false,
       daysHint: '',
     });
-    expect(r.shippedDate).toBe('5/7/2026');
+    expect(r.shippedDate).toBe('05/07/2026');
     expect(r.cancelReason).toBeUndefined();
   });
 
@@ -82,8 +82,8 @@ describe('buildTrackResult', () => {
       orderId: 12345,
       name: 'ใบงานทดสอบ',
       customerMasked: 'AB•••',
-      dateIn: '1/6/2026',
-      dateDue: '10/7/2026',
+      dateIn: '01/06/2026',
+      dateDue: '10/07/2026',
       status: 'in_progress',
       statusLabel: 'อยู่ระหว่างพิมพ์',
       step: 'พิมพ์ (zz•)',
