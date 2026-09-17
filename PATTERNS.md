@@ -416,6 +416,12 @@ function schedule() {
 - Phase 3.5.x iterations (3.5.1 → 3.5.8) each ship one feature path end-to-end
 - Don't try to port everything before shipping — staff can use both stacks side-by-side during migration
 
+### 7.4 Shared semantic core — surface ที่ port มาต้องใช้ผลลัพธ์ให้ครบทุก field (2026-09-17, `3952c33`)
+- `lib/track-status.ts` (`deriveTrackStatus`) ถูกสกัดมาเพื่อให้ `/track` เว็บ · การ์ด Flex `/track` · การ์ดรายการงานลูกค้า ตัดสินสถานะเหมือนกัน — presentation แยกตาม surface ได้ แต่ **semantic ต้องมาจาก core ตัวเดียว**
+- กับดัก: field ที่เพิ่มเข้า core ทีหลัง (`awaitingShipment`) ไหลเข้าแค่ 2 ใน 3 surface — `lib/ai-quote/track-flex.ts` ยังอ่านแค่ `currentDept` อยู่หลายเดือนโดยไม่มีอะไรเตือน
+- กฎ: เพิ่ม field เข้า shared core เมื่อไหร่ → `grep` ทุก caller แล้วไล่ให้ครบทุก surface ในคอมมิตเดียว + เทสต์ต่อ surface (ไม่ใช่เทสต์แค่ที่ core)
+- เทสต์ที่จับได้: `tests/ai-quote-track-flex.test.ts` เคส `staff=ship` — เทสต์ core อย่างเดียวผ่านหมดทั้งที่ surface เพี้ยน
+
 ---
 
 ## 8. Things to NOT do (learned the hard way)
@@ -430,6 +436,8 @@ function schedule() {
 - **Don't call `notFound()`/`redirect()` inside a `try` that catches generic errors** — Next's control-flow throws get swallowed by the catch and render as your error UI instead of the 404/redirect. Set a flag in the try, throw outside. (Latent bug in /orders/[id]/edit — caught while porting PERF-H1, `2988153` 2026-07-22.)
 - **Don't change cookie name without re-login plan** — WP did this in v5.3.0 to force re-login (intentional). Plan it.
 - **Don't `--no-verify` git commits** unless user explicitly asks.
+- **Don't เทียบการ์ด LINE กับหน้าเว็บโดยไม่ส่งการ์ดใหม่ก่อน** — Flex message เป็นภาพนิ่ง ส่งแล้วไม่อัปเดตตาม DB. screenshot การ์ดเก่า + เว็บสดคือ snapshot คนละเวลา จะได้ "บั๊ก" ปลอม (2026-09-17: ชื่อลูกค้าที่ดูเหมือนไม่ตรงกัน จริงๆ คือข้อมูลถูกแก้ระหว่างสองช็อต)
+- **Don't เห็นด้วยกับสมมติฐานที่ตรวจสอบได้โดยยังไม่ตรวจ** — "น่าจะแค่ font" ใช้เวลาพิสูจน์ 2 นาทีด้วย `sharp` (ซูม 10×: U/S ละติน vs บ/ร มีหัวขมวด = คนละ string จริง). `sharp` มีใน `node_modules` อยู่แล้ว ส่วน PIL/ImageMagick ไม่มีใน cloud container
 
 ---
 
@@ -511,4 +519,4 @@ const mockOrder: Order = {
 3. เขียนสั้น: pattern + reason + example file path
 4. ถ้าเป็น cross-project pattern → เพิ่มที่ workspace `CLAUDE.md` ด้วย
 
-_อัปเดตล่าสุด: 2026-05-23 — added §9 (Testing rules — ported from Superpowers TDD anti-patterns)_
+_อัปเดตล่าสุด: 2026-09-17 — added §7.4 (shared semantic core ต้องไหลครบทุก surface) + 2 bullets ใน §8 (Flex เป็นภาพนิ่ง · ตรวจก่อนเห็นด้วยกับสมมติฐาน)_
