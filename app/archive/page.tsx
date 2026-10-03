@@ -6,6 +6,7 @@ import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { displayDate, displayDateTime } from '@/lib/jobs';
 import { IconCheck, IconFolderOpen, IconFileText, IconPencil } from '@/lib/icons';
 import { DashboardShell } from '@/components/dashboard-shell';
+import { isOrderLocked } from '@/lib/order-lock';
 import {
   normalizeArchiveQuery,
   searchArchiveOrders,
@@ -200,10 +201,9 @@ function ResultRow({ row }: { row: ArchiveOrderRow }) {
           <IconFileText size={13} />
           ใบสั่งงาน
         </Link>
-        {/* /orders locks editing for shipped/cancelled (orders-table.tsx
-            canEdit: role === 'admin' && orderStatus !== 'shipped' &&
-            orderStatus !== 'cancelled') — mirror that here. */}
-        {state.kind !== 'shipped' && state.kind !== 'cancelled' && (
+        {/* Same decision as the edit route + /api/orders/update
+            (lib/order-lock) — no แก้ไข link into the lock panel. */}
+        {!isOrderLocked(row, row.hasShipped, row.hasCancelled) && (
           <Link
             href={`/orders/${row.id}/edit`}
             aria-label={`แก้ไข #${row.id}`}

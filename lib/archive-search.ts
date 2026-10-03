@@ -1,6 +1,7 @@
 import 'server-only';
 import { sql, isPostgresConfigured } from '@/lib/postgres';
 import { PostgresReadError } from '@/lib/api-postgres';
+import { orderLockReason } from '@/lib/order-lock';
 
 /**
  * /archive search — all-years order lookup straight from Postgres.
@@ -57,6 +58,11 @@ export interface ArchiveOrderRow {
   /** Latest cancelled row for this order (by cancelled.id). */
   cancelledAt: string | null;
   cancelledReason: string | null;
+  /** A shipped / cancelled row EXISTS for this order — what the edit lock
+   *  (lib/order-lock) decides on. The date columns above can be blank on
+   *  Sheet-era rows, so never infer existence from them (audit L2). */
+  hasShipped: boolean;
+  hasCancelled: boolean;
 }
 
 export interface ArchiveSearchResult {
@@ -79,6 +85,8 @@ interface ArchiveSqlRow {
   shipped_date: string | null;
   cancelled_at: string | null;
   cancelled_reason: string | null;
+  has_shipped: boolean | null;
+  has_cancelled: boolean | null;
   total: number | string;
 }
 
@@ -109,13 +117,14 @@ export async function searchArchiveOrders(
   const r = await sql<ArchiveSqlRow>`
     SELECT o.id, o.name, o.customer, o.orderer, o.date_in, o.date_due, o.price, o.status,
            s.shipped_date, c.cancelled_at, c.reason AS cancelled_reason,
+           s.id IS NOT NULL AS has_shipped, c.id IS NOT NULL AS has_cancelled,
            COUNT(*) OVER() AS total
     FROM orders o
     LEFT JOIN LATERAL (
-      SELECT shipped_date FROM shipped WHERE order_id = o.id ORDER BY id DESC LIMIT 1
+      SELECT id, shipped_date FROM shipped WHERE order_id = o.id ORDER BY id DESC LIMIT 1
     ) s ON TRUE
     LEFT JOIN LATERAL (
-      SELECT cancelled_at, reason FROM cancelled WHERE order_id = o.id ORDER BY id DESC LIMIT 1
+      SELECT id, cancelled_at, reason FROM cancelled WHERE order_id = o.id ORDER BY id DESC LIMIT 1
     ) c ON TRUE
     WHERE o.name ILIKE ${pattern} ESCAPE '\\'
        OR o.customer ILIKE ${pattern} ESCAPE '\\'
@@ -137,6 +146,8 @@ export async function searchArchiveOrders(
     shippedDate: row.shipped_date || null,
     cancelledAt: row.cancelled_at || null,
     cancelledReason: row.cancelled_reason || null,
+    hasShipped: row.has_shipped === true,
+    hasCancelled: row.has_cancelled === true,
   }));
   const total = Number(r.rows[0]?.total ?? 0);
   return { rows, total, truncated: total > rows.length };
@@ -153,18 +164,26 @@ export interface ArchiveRowState {
 
 /** Status pill for one archive row. Precedence cancelled > shipped > draft >
  *  active, matching lib/track-status.ts (a cancelled order stays cancelled
- *  even if a stale shipped row survives). `status` is compared
- *  case/whitespace-insensitively — Sheet-era rows carry mixed casing. */
+ *  even if a stale shipped row survives). The cancelled/shipped decision IS
+ *  `orderLockReason` — row existence, not date columns — so the pill and
+ *  the edit lock can never disagree (audit L2: a blank-dated Sheet-era
+ *  shipped row used to show "กำลังทำ" + an แก้ไข link into the lock panel).
+ *  `status` is compared case/whitespace-insensitively — Sheet-era rows
+ *  carry mixed casing. */
 export function archiveRowState(
-  row: Pick<ArchiveOrderRow, 'status' | 'shippedDate' | 'cancelledAt' | 'cancelledReason'>,
+  row: Pick<
+    ArchiveOrderRow,
+    'status' | 'shippedDate' | 'cancelledAt' | 'cancelledReason' | 'hasShipped' | 'hasCancelled'
+  >,
 ): ArchiveRowState {
-  const status = row.status.trim().toLowerCase();
-  if (row.cancelledAt || status === 'cancelled') {
+  const lock = orderLockReason(row, row.hasShipped, row.hasCancelled);
+  if (lock === 'cancelled') {
     return { kind: 'cancelled', label: 'ยกเลิก', detail: row.cancelledReason || row.cancelledAt || null };
   }
-  if (row.shippedDate || status === 'shipped') {
+  if (lock === 'shipped') {
     return { kind: 'shipped', label: 'ส่งแล้ว', detail: row.shippedDate || null };
   }
+  const status = row.status.trim().toLowerCase();
   if (status === 'draft') {
     return { kind: 'draft', label: 'ร่าง', detail: null };
   }

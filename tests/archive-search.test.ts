@@ -77,6 +77,8 @@ function sqlRow(over: Record<string, unknown> = {}) {
     shipped_date: null,
     cancelled_at: null,
     cancelled_reason: null,
+    has_shipped: false,
+    has_cancelled: false,
     total: '1',
     ...over,
   };
@@ -176,8 +178,10 @@ describe('searchArchiveOrders', () => {
   it('maps snake_case rows to ArchiveOrderRow with total from the window function', async () => {
     queueResult({
       rows: [
-        sqlRow({ id: '202503012', total: '3', shipped_date: '10/03/2025' }),
-        sqlRow({ id: '202502007', total: '3', cancelled_at: '02/02/2025', cancelled_reason: 'ลูกค้าเปลี่ยนใจ' }),
+        sqlRow({ id: '202503012', total: '3', shipped_date: '10/03/2025', has_shipped: true }),
+        sqlRow({
+          id: '202502007', total: '3', cancelled_at: '02/02/2025', cancelled_reason: 'ลูกค้าเปลี่ยนใจ', has_cancelled: true,
+        }),
       ],
       rowCount: 2,
     });
@@ -197,8 +201,11 @@ describe('searchArchiveOrders', () => {
       shippedDate: '10/03/2025',
       cancelledAt: null,
       cancelledReason: null,
+      hasShipped: true,
+      hasCancelled: false,
     });
     expect(r.rows[1].cancelledAt).toBe('02/02/2025');
+    expect(r.rows[1].hasCancelled).toBe(true);
     expect(r.rows[1].cancelledReason).toBe('ลูกค้าเปลี่ยนใจ');
   });
 
@@ -233,6 +240,17 @@ describe('searchArchiveOrders', () => {
     expect(r.rows[0].shippedDate).toBeNull();
   });
 
+  it('selects row existence from the LATERALs, not just the date columns (audit L2)', async () => {
+    queueResult({ rows: [sqlRow({ shipped_date: '', has_shipped: true })], rowCount: 1 });
+    const r = await searchArchiveOrders('ใบปลิว');
+    expect(sqlCalls[0].text).toContain('IS NOT NULL AS has_shipped');
+    expect(sqlCalls[0].text).toContain('IS NOT NULL AS has_cancelled');
+    // Sheet-era shipped row with a blank date: no date to show, but the row exists
+    expect(r.rows[0].shippedDate).toBeNull();
+    expect(r.rows[0].hasShipped).toBe(true);
+    expect(r.rows[0].hasCancelled).toBe(false);
+  });
+
   it('maps empty-string shipped/cancelled columns to null', async () => {
     queueResult({ rows: [sqlRow({ shipped_date: '', cancelled_at: '', cancelled_reason: '' })], rowCount: 1 });
     const r = await searchArchiveOrders('ใบปลิว');
@@ -250,16 +268,34 @@ describe('searchArchiveOrders', () => {
 });
 
 describe('archiveRowState', () => {
-  const base = { status: 'sent', shippedDate: null, cancelledAt: null, cancelledReason: null };
+  const base = {
+    status: 'sent', shippedDate: null, cancelledAt: null, cancelledReason: null,
+    hasShipped: false, hasCancelled: false,
+  };
 
-  it('cancelled wins even when a shippedDate exists (mirrors track-status precedence)', () => {
+  it('cancelled wins even when a shipped row exists (mirrors track-status precedence)', () => {
     expect(
-      archiveRowState({ ...base, shippedDate: '10/03/2025', cancelledAt: '11/03/2025', cancelledReason: 'ซ้ำ' }),
+      archiveRowState({
+        ...base, shippedDate: '10/03/2025', hasShipped: true,
+        cancelledAt: '11/03/2025', cancelledReason: 'ซ้ำ', hasCancelled: true,
+      }),
     ).toEqual({ kind: 'cancelled', label: 'ยกเลิก', detail: 'ซ้ำ' });
   });
 
+  it('a shipped row with a blank shipped_date is still shipped — pill agrees with the edit lock (audit L2)', () => {
+    expect(archiveRowState({ ...base, hasShipped: true })).toEqual({
+      kind: 'shipped', label: 'ส่งแล้ว', detail: null,
+    });
+  });
+
+  it('a cancelled row with blank cancelled_at + reason is still cancelled (audit L2)', () => {
+    expect(archiveRowState({ ...base, hasCancelled: true })).toEqual({
+      kind: 'cancelled', label: 'ยกเลิก', detail: null,
+    });
+  });
+
   it('cancelled detail falls back to cancelledAt when there is no reason', () => {
-    expect(archiveRowState({ ...base, cancelledAt: '11/03/2025' })).toEqual({
+    expect(archiveRowState({ ...base, cancelledAt: '11/03/2025', hasCancelled: true })).toEqual({
       kind: 'cancelled', label: 'ยกเลิก', detail: '11/03/2025',
     });
     expect(archiveRowState({ ...base, status: 'Cancelled ' })).toEqual({
@@ -268,7 +304,7 @@ describe('archiveRowState', () => {
   });
 
   it('shipped by row or by status', () => {
-    expect(archiveRowState({ ...base, shippedDate: '10/03/2025' })).toEqual({
+    expect(archiveRowState({ ...base, shippedDate: '10/03/2025', hasShipped: true })).toEqual({
       kind: 'shipped', label: 'ส่งแล้ว', detail: '10/03/2025',
     });
     expect(archiveRowState({ ...base, status: 'shipped' })).toEqual({
