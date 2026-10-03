@@ -16,6 +16,20 @@ function loadAll(orders: Order[]): LoadAllResponse {
 }
 
 describe('computeMonthlyReport — dept rows', () => {
+  it('cancelled wins over a stale shipped row (same precedence as lib/order-lock)', () => {
+    const data: LoadAllResponse = {
+      ...loadAll([order(202606010)]),
+      shipped: [{ id: 1, name: 'order-202606010', shippedDate: '20/06/2026', orderId: 202606010 }],
+      cancelled: [{
+        id: 1, name: 'order-202606010', dept: 'post', staff: 'ship', cancelledBy: 'nook',
+        cancelledAt: '21/06/2026', reason: 'ลูกค้ายกเลิก', orderId: 202606010,
+      }],
+    };
+    const report = computeMonthlyReport(data, 2026, 6);
+    const row = report.perDept.graphic.rows.find((r) => r.orderId === 202606010);
+    expect(row!.status).toBe('cancelled');
+  });
+
   it('normal order keeps size/qty from top-level rawData', () => {
     const data = loadAll([
       order(202606001, { rawData: { size: 'A4', sizeUnit: 'ซม.', qty: '100', qtyUnit: 'แผ่น' } }),
