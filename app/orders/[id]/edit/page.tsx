@@ -1,8 +1,11 @@
 import type { Metadata } from 'next';
+import { cache } from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { loadOrder, loadOrderLockState, loadRecentOrdersSlim, type RecentOrderSlim } from '@/lib/api';
-import { orderLockReason, orderLockMessage, orderLockLabel, type OrderLockReason } from '@/lib/order-lock';
+import {
+  orderLockReason, orderLockMessage, orderLockLabel, orderEditPageTitle, type OrderLockReason,
+} from '@/lib/order-lock';
 import { PostgresReadError } from '@/lib/api-postgres';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -11,9 +14,28 @@ import type { OrderSummary } from '@/lib/board';
 import Link from 'next/link';
 import { IconArrowLeft, IconFileText } from '@/lib/icons';
 
-export const metadata: Metadata = {
-  title: 'แก้ไขใบสั่งงาน',
-};
+// Per-request memo: generateMetadata and the page share ONE lock read
+// instead of two (audit L6).
+const getOrderLockState = cache((id: number) => loadOrderLockState(id));
+
+export async function generateMetadata(
+  props: { params: Promise<{ id: string }> },
+): Promise<Metadata> {
+  const fallback: Metadata = { title: orderEditPageTitle(0, null) };
+  const id = Number((await props.params).id);
+  if (!id || !Number.isFinite(id)) return fallback;
+  // Same gate as the page — never read (or reveal via the title) lock state
+  // for a visitor the page is about to redirect.
+  const session = await verifySession((await cookies()).get(COOKIE_NAME)?.value);
+  if (session?.role !== 'admin') return fallback;
+  try {
+    const lock = await getOrderLockState(id);
+    return { title: orderEditPageTitle(id, lock ? orderLockReason(lock, lock.shipped, lock.cancelled) : null) };
+  } catch {
+    // The page's own Promise.all surfaces the error banner.
+    return fallback;
+  }
+}
 
 export default async function EditOrderPage(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -49,7 +71,7 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
     const [lookup, recent, lock] = await Promise.all([
       loadOrder(id, { orderOnly: true }),
       loadRecentOrdersSlim(),
-      loadOrderLockState(id),
+      getOrderLockState(id),
     ]);
     const o = lookup.order as unknown as Record<string, unknown>;
     // Lock null = the orders row vanished between the two reads → treat as

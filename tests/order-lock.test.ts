@@ -3,6 +3,7 @@ import {
   orderLockReason,
   isOrderLocked,
   orderLockMessage,
+  orderEditPageTitle,
 } from '@/lib/order-lock';
 
 /**
@@ -86,5 +87,15 @@ describe('orderLockMessage', () => {
   });
   it('cancelled → friendly Thai message', () => {
     expect(orderLockMessage('cancelled')).toBe('ใบสั่งงานนี้ยกเลิกแล้ว — แก้ไขไม่ได้');
+  });
+});
+
+describe('orderEditPageTitle (audit L6)', () => {
+  it('editable order keeps the form title', () => {
+    expect(orderEditPageTitle(202609001, null)).toBe('แก้ไขใบสั่งงาน');
+  });
+  it('locked order says so in the tab title — matches the panel header + pill', () => {
+    expect(orderEditPageTitle(202609001, 'shipped')).toBe('ใบสั่งงาน #202609001 · จัดส่งแล้ว');
+    expect(orderEditPageTitle(202609001, 'cancelled')).toBe('ใบสั่งงาน #202609001 · ยกเลิกแล้ว');
   });
 });

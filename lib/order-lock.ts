@@ -62,3 +62,10 @@ export function orderLockLabel(reason: OrderLockReason): string {
 export function orderLockMessage(reason: OrderLockReason): string {
   return `ใบสั่งงานนี้${LABEL[reason]} — แก้ไขไม่ได้`;
 }
+
+/** Browser-tab title for `/orders/[id]/edit`. A locked order renders the
+ *  lock panel, not the form, so the tab must not say "แก้ไข" (audit L6) —
+ *  it mirrors the panel's "ใบสั่งงาน #id" header + status pill instead. */
+export function orderEditPageTitle(id: number, reason: OrderLockReason | null): string {
+  return reason ? `ใบสั่งงาน #${id} · ${LABEL[reason]}` : 'แก้ไขใบสั่งงาน';
+}
