@@ -365,10 +365,10 @@ async function handleSubmit() {
 
 ### 6.4 Smart polling backoff via self-rescheduling setTimeout (2026-05-07 afternoon, `1d6e57f`)
 - Replace fixed `setInterval(15000)` with self-rescheduling `setTimeout` whose delay depends on user-activity recency. Idle tabs poll less; active tabs feel real-time.
-- **Schedule** (tuned for Penprinting workflow):
-  - 15s if last activity within 2 min (active typing/clicking/scrolling)
-  - 30s if last activity within 2-10 min (warm tab)
-  - 60s if last activity > 10 min (idle tab)
+- **Schedule** — ⚠️ ตัวเลขด้านล่าง + sketch เป็นของเดิม 2026-05-07; **ปัจจุบัน** (source of truth = [lib/poll-schedule.ts](lib/poll-schedule.ts), loop อยู่ใน [lib/delta-sync.tsx](lib/delta-sync.tsx)): 15s (<2 min) → 30s (2-5 min) → 120s (5-30 min) → **หยุดสนิทหลัง 30 นาที** ไม่มี activity (PA-H1 2026-05-19) — input/visibility กลับมา = refresh ทันที. วัดจริง 2026-10-03: hidden 25 นาที = 0 fetch, visible idle = 1 fetch ว่าง/15s 0 re-render
+  - (เดิม) 15s if last activity within 2 min (active typing/clicking/scrolling)
+  - (เดิม) 30s if last activity within 2-10 min (warm tab)
+  - (เดิม) 60s if last activity > 10 min (idle tab)
 - **Activity events**: passive listeners on `pointerdown`, `keydown`, `wheel`, `touchstart`. Update `lastActivityAt` ref on each.
 - **Pattern sketch** ([lib/auto-sync.tsx](lib/auto-sync.tsx)):
 ```ts
