@@ -136,8 +136,8 @@ export async function loadOrderFormTemplates(): Promise<Template[]> {
 }
 
 /** Postgres-only single-order lookup with its active jobs. Used by write
- *  paths that need "look up order + cascade ops on its jobs": promote-draft,
- *  /api/orders/update (cascade rename), /api/orders/cancel, /api/orders/delete. */
+ *  paths that need "look up order + cascade ops on its jobs": promote-draft
+ *  and /api/orders/update (cascade rename). */
 export async function loadOrderAndJobs(id: number): Promise<{
   order: Record<string, unknown> | null;
   jobs: Array<Record<string, unknown>>;
