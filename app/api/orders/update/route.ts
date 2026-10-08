@@ -195,7 +195,11 @@ export async function POST(req: Request) {
     assignDept,
     assignStaff,
     orderer,
-    status: existing.status || 'sent',
+    // Status from the fresh lock read, never from `existing`: on the
+    // srcUnchanged path `existing` is the client's page-load snapshot, and
+    // writing its status back could un-send an order that sales promoted
+    // while the edit form was open (audit M3 2026-10-08).
+    status: lock.status || existing.status || 'sent',
     details: formSnapshot,
     rawData: formSnapshot,
   };

@@ -147,6 +147,24 @@ describe('POST /api/orders/update — shipped/cancelled edit-lock', () => {
     expect(updateMock).not.toHaveBeenCalled();
   });
 
+  it('status comes from the fresh lock read, not the client snapshot — a stale "draft" cannot un-send an order (audit M3 2026-10-08)', async () => {
+    // Admin opened /orders/5/edit while it was still a draft; sales then
+    // promoted it (status → 'sent', live job). Admin saves a spec-only edit:
+    // the srcOrder perf gate says "nothing changed" so the route uses the
+    // snapshot as `existing` — and used to write its status ('draft') back
+    // over the live 'sent', leaving an order stuck as draft with a live job.
+    lockMock.mockResolvedValue({ status: 'sent', shipped: false, cancelled: false });
+
+    const res = await POST(mkReq({
+      ...baseBody,
+      srcOrder: { name: baseBody.name, dateDue: baseBody.dateDue, status: 'draft' },
+    }));
+
+    expect(res.status).toBe(200);
+    expect(loadMock).not.toHaveBeenCalled(); // perf gate still skips the re-read
+    expect(updateMock.mock.calls[0][0]).toMatchObject({ id: 5, status: 'sent' });
+  });
+
   it('an active order still saves (lock check is transparent on the happy path)', async () => {
     const res = await POST(mkReq(baseBody));
     const json = await res.json();
