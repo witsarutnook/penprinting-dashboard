@@ -136,6 +136,48 @@ describe('runQuoteTurn', () => {
   });
 });
 
+// ── Sonnet 5.5 migration (2026-10-08) ─────────────────────────────────────
+// Two things the model swap changes at the request/response boundary:
+// effort levels are recalibrated (so the level is set explicitly, not
+// inherited from the API default), and safeguard refusals arrive as a normal
+// 200 with stop_reason 'refusal' and no text — which used to fall through to
+// the generic "ระบบยังประมวลผลไม่เสร็จ" retry copy, inviting the customer to
+// resend the same request forever.
+function createParams(client: Anthropic, call = 0): Record<string, unknown> {
+  return (client.messages.create as unknown as { mock: { calls: unknown[][] } }).mock.calls[call][0] as Record<string, unknown>;
+}
+
+describe('runQuoteTurn — Sonnet 5.5 request shape', () => {
+  it('sets output_config.effort explicitly (medium) — the recalibrated default is not a choice', async () => {
+    const client = fakeClient([finalMsg]);
+    await runQuoteTurn(
+      { history: [], userMessage: 'x' },
+      { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'claude-sonnet-5-5' },
+    );
+    expect(createParams(client).output_config).toEqual({ effort: 'medium' });
+  });
+
+  it('a safeguard refusal hands off to the team (escalated) instead of the generic retry copy — compute never runs', async () => {
+    const refusal = {
+      stop_reason: 'refusal',
+      stop_details: { type: 'refusal', category: 'general_harms', explanation: 'policy' },
+      content: [],
+    };
+    const client = fakeClient([refusal, finalMsg]);
+    const compute = vi.fn();
+    const out = await runQuoteTurn(
+      { history: [], userMessage: 'x' },
+      { client, compute, systemPrompt: 'SYS', model: 'claude-sonnet-5-5' },
+    );
+    expect(client.messages.create).toHaveBeenCalledTimes(1); // the loop stops on a refusal
+    expect(compute).not.toHaveBeenCalled();
+    expect(out.escalated).toBe(true);
+    expect(out.reply).toContain('ทีมงาน');
+    expect(out.reply).not.toContain('พิมพ์คำขออีกครั้ง');
+    expect(out.newHistory.at(-1)?.text).toBe(out.reply);
+  });
+});
+
 describe('stripChatMarkdown', () => {
   it('unwraps paired **bold** keeping the inner text', () => {
     expect(stripChatMarkdown('ราคา **5.05 บาท/ชิ้น** ค่ะ')).toBe('ราคา 5.05 บาท/ชิ้น ค่ะ');

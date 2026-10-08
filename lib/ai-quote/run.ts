@@ -4,12 +4,23 @@ import type { ConversationTurn, ProductType, QuoteSpec, ComputeResult } from './
 import { COMPUTE_QUOTE_TOOL, type ComputeQuoteInput, type ComputeQuoteOutcome } from './tools';
 
 const MAX_TOOL_ROUNDS = 6;     // safety cap on the agentic loop
-// Replies are short, but Sonnet 5 runs adaptive thinking by default (thinking
-// is unset below) and those thinking tokens count against max_tokens. 2048 risked
-// truncating mid-thought → an empty text turn → the retry fallback. 4096 leaves
-// room for thinking + a tool call + the reply; still well under the streaming
-// threshold. (Haiku 4.5, which doesn't think by default, was fine at 2048.)
+// Replies are short, but the Sonnet 5.x line runs adaptive thinking by default
+// (thinking is unset below) and those thinking tokens count against max_tokens.
+// 2048 risked truncating mid-thought → an empty text turn → the retry fallback.
+// 4096 leaves room for thinking + a tool call + the reply; still well under the
+// streaming threshold. (Haiku 4.5, which doesn't think by default, was fine at 2048.)
 const MAX_TOKENS = 4096;
+// Sonnet 5.5 recalibrated the effort levels (same name ≠ same amount of
+// thinking as Sonnet 5), so the level is pinned rather than inherited from
+// the API default (`high`). `medium` is the documented starting point for
+// multistep tool use; `low` is the next thing to try if latency bites —
+// a prompt asking for "less thinking" has no effect at medium and up.
+const EFFORT = 'medium' as const;
+// A safeguard decline comes back as a normal 200 with stop_reason 'refusal'
+// and no text. Resending the same request cannot change the verdict, so
+// instead of the generic "พิมพ์คำขออีกครั้ง" retry copy the turn hands off:
+// the wording trips detectEscalation → lead flagged + staff LINE push.
+const REFUSAL_HANDOFF = 'ขออภัยค่ะ น้อง PP ตอบคำขอนี้เองไม่ได้ — ส่งต่อให้ทีมงานดูแลต่อนะคะ';
 
 export interface RunQuoteTurnInput {
   history: ConversationTurn[]; // prior turns (user/assistant text)
@@ -106,11 +117,20 @@ export async function runQuoteTurn(
     const res = await client.messages.create({
       model,
       max_tokens: MAX_TOKENS,
+      output_config: { effort: EFFORT },
       // Cache the big stable system block (verify cache_read_input_tokens > 0).
       system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       tools: [COMPUTE_QUOTE_TOOL as Anthropic.Tool],
       messages,
     });
+
+    if (res.stop_reason === 'refusal') {
+      // Category + explanation go to the server log only — never to the
+      // customer. (Sentry/console; see REFUSAL_HANDOFF above.)
+      console.warn('[ai-quote] model refusal:', res.stop_details?.category ?? null, res.stop_details?.explanation ?? '');
+      replyText = REFUSAL_HANDOFF;
+      break;
+    }
 
     // Capture any text the model produced this round.
     const roundText = textOf(res.content);

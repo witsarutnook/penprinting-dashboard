@@ -18,9 +18,11 @@ import { checkRateLimit } from '@/lib/rate-limit';
 
 export type CustomerChannel = 'line' | 'messenger';
 
-// Same engine decision as the staff route (2026-07-02): Sonnet 5 quote engine,
-// Haiku stays on the slip-vision gate. See app/api/ai-quote/route.ts.
-const MODEL = 'claude-sonnet-5';
+// Same engine decision as the staff route (Sonnet 5.5 since 2026-10-08):
+// Sonnet quote engine, Haiku 4.5 stays on the slip-vision gate (its
+// max_tokens: 8 verdict would be eaten by Haiku 5.5's default thinking).
+// See app/api/ai-quote/route.ts.
+const MODEL = 'claude-sonnet-5-5';
 const AI_RATE_LIMIT = { limit: 30, windowSec: 3600 };   // spec §6 / 1c §2 — per channel user id
 
 /** Rate-limit key per channel user. The prefixes are live counter state in the
