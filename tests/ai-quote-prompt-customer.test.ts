@@ -96,3 +96,13 @@ describe('customer prompt — Green Read 75 alias (2026-07-24)', () => {
     expect(p).toContain('กรีนรีด');
   });
 });
+
+// Same settled-answers rule as the staff prompt (Sonnet 5.5 smoke 2026-10-08):
+// a customer asking a second job must not get the first one re-quoted too.
+describe('settled answers (Sonnet 5.5 follow-up turns)', () => {
+  it('earlier quotes are done — this turn only computes what was asked this turn', () => {
+    const p = buildCustomerSystemPrompt();
+    expect(p).toContain('งานที่ตอบราคาไปแล้วในเทิร์นก่อนถือว่าจบ');
+    expect(p).toContain('ไม่ใช่ทุกเทิร์น');
+  });
+});

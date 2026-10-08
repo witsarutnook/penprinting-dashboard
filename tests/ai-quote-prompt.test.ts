@@ -203,3 +203,16 @@ describe('buildSystemPrompt — Green Read 75 alias (2026-07-24)', () => {
     expect(p).toContain('กรีนรีด');
   });
 });
+
+// Sonnet 5.5 smoke 2026-10-08: on every follow-up turn the model went back
+// and re-quoted the flyer from turn 1 unprompted ("คำนวณซ้ำรอบนี้ ตัวเลขตรง
+// กับที่แจ้งไปก่อนหน้า") — reading "เรียกใหม่เสมอ" as "re-quote everything
+// each turn". Extra compute_quote call, +latency, noisy reply. The settled-
+// answers rule scopes the re-call to the job actually asked about.
+describe('settled answers (Sonnet 5.5 follow-up turns)', () => {
+  it('earlier quotes are done — this turn only computes what was asked this turn', () => {
+    const p = buildSystemPrompt();
+    expect(p).toContain('งานที่ตอบราคาไปแล้วในเทิร์นก่อนถือว่าจบ');
+    expect(p).toContain('ไม่ใช่ทุกเทิร์น');
+  });
+});
