@@ -1342,3 +1342,57 @@ describe('ID-collision guard — post-insert read-back (§6/R5)', () => {
     expect(r.failed).toHaveLength(0);
   });
 });
+
+// ── Audit M6 (2026-10-08): setCowork / updateJob were tombstone-blind ──
+// Both SELECTed and UPDATEd by id alone, so a job that had just been shipped
+// (phase2_deleted_at set) still answered found:true — 200 ok + audit row —
+// and the edit vanished silently. Every other transition is gate-first on
+// `phase2_deleted_at IS NULL`; these two now are as well, with RETURNING so
+// a row tombstoned between the SELECT and the UPDATE is also found:false.
+describe('setCoworkInPostgres — tombstoned rows (audit M6)', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('filters tombstoned rows on BOTH the read and the write', async () => {
+    queueResult({ rows: [{ raw: { id: 42, cowork: null } }], rowCount: 1 }); // SELECT
+    queueResult({ rows: [{ id: 42 }], rowCount: 1 });                        // UPDATE … RETURNING
+
+    const r = await setCoworkInPostgres({ id: 42, cowork: ['mo'] });
+
+    expect(r).toEqual({ ok: true, found: true });
+    expect(findCallContaining('SELECT raw FROM jobs')?.text).toContain('phase2_deleted_at IS NULL');
+    expect(findCallContaining('UPDATE jobs')?.text).toContain('phase2_deleted_at IS NULL');
+  });
+
+  it('found:false when the row is tombstoned between the SELECT and the UPDATE (0 rows updated)', async () => {
+    queueResult({ rows: [{ raw: { id: 42, cowork: null } }], rowCount: 1 }); // SELECT (still live)
+    queueResult({ rows: [], rowCount: 0 });                                  // UPDATE hit nothing
+
+    const r = await setCoworkInPostgres({ id: 42, cowork: ['mo'] });
+
+    expect(r).toEqual({ ok: true, found: false });
+  });
+});
+
+describe('updateJobInPostgres — tombstoned rows (audit M6)', () => {
+  beforeEach(() => resetMockPostgres());
+
+  it('filters tombstoned rows on BOTH the read and the write', async () => {
+    queueResult({ rows: [{ raw: { id: 42, name: 'old', dept: 'print', staff: 'mo' } }], rowCount: 1 });
+    queueResult({ rows: [{ id: 42 }], rowCount: 1 });
+
+    const r = await updateJobInPostgres({ id: 42, name: 'new', dept: 'print', staff: 'mo' });
+
+    expect(r).toEqual({ ok: true, found: true });
+    expect(findCallContaining('SELECT raw FROM jobs')?.text).toContain('phase2_deleted_at IS NULL');
+    expect(findCallContaining('UPDATE jobs')?.text).toContain('phase2_deleted_at IS NULL');
+  });
+
+  it('found:false when the row is tombstoned between the SELECT and the UPDATE (0 rows updated)', async () => {
+    queueResult({ rows: [{ raw: { id: 42, name: 'old', dept: 'print', staff: 'mo' } }], rowCount: 1 });
+    queueResult({ rows: [], rowCount: 0 });
+
+    const r = await updateJobInPostgres({ id: 42, name: 'new', dept: 'print', staff: 'mo' });
+
+    expect(r).toEqual({ ok: true, found: false });
+  });
+});

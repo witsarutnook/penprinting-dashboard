@@ -181,9 +181,14 @@ export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: 
     throw new PostgresWriteError('setCowork', 'Invalid job id');
   }
 
-  // Read current raw snapshot. If the row doesn't exist in Postgres,
-  // return found:false so the caller can surface a 409 to the client.
-  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint LIMIT 1`;
+  // Read the current raw snapshot — LIVE rows only. A missing or tombstoned
+  // (shipped / cancelled / deleted / forwarded) row is found:false so the
+  // caller surfaces a 409. Pre audit M6 (2026-10-08) both statements went by
+  // id alone, so a co-work set on a just-shipped job answered 200 and
+  // vanished.
+  const cur = await sql<{ raw: AnyRow | null }>`
+    SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1
+  `;
   if (cur.rows.length === 0) {
     return { ok: true, found: false };
   }
@@ -193,13 +198,15 @@ export async function setCoworkInPostgres(input: SetCoworkInput): Promise<{ ok: 
   const coworkJson = cowork == null ? null : JSON.stringify(cowork);
   const newRawJson = JSON.stringify(newRaw);
 
-  await sql`
+  // Gate on the write too: 0 rows = tombstoned between the read and here.
+  const upd = await sql<{ id: number }>`
     UPDATE jobs
     SET cowork = ${coworkJson}::jsonb,
         raw = ${newRawJson}::jsonb
-    WHERE id = ${idNum}::bigint
+    WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL
+    RETURNING id
   `;
-  return { ok: true, found: true };
+  return { ok: true, found: (upd.rowCount ?? upd.rows.length) > 0 };
 }
 
 export interface UpdateJobInput {
@@ -219,8 +226,10 @@ export interface UpdateJobInput {
 /** Atomic UPDATE of a job's editable fields. Postgres is authoritative;
  *  no downstream sync. The caller (route) is responsible for input
  *  validation; this function trusts the payload but defends against
- *  missing rows by returning `found:false` (matches the setCoworkInPostgres
- *  contract — caller surfaces a 409 to the client).
+ *  missing OR tombstoned rows by returning `found:false` (matches the
+ *  setCoworkInPostgres contract — caller surfaces a 409 to the client).
+ *  Live-row gating on both statements since audit M6 (2026-10-08): an
+ *  edit of a just-shipped job used to answer 200 and vanish.
  *
  *  The merge strategy preserves any raw fields not in `UpdateJobInput`
  *  (e.g. `notes`, `assignedAt`, future schema extensions) so an edit
@@ -234,7 +243,9 @@ export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: 
     throw new PostgresWriteError('updateJob', 'Invalid job id');
   }
 
-  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM jobs WHERE id = ${idNum}::bigint LIMIT 1`;
+  const cur = await sql<{ raw: AnyRow | null }>`
+    SELECT raw FROM jobs WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL LIMIT 1
+  `;
   if (cur.rows.length === 0) {
     return { ok: true, found: false };
   }
@@ -263,7 +274,8 @@ export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: 
   const coworkJson = merged.cowork == null ? null : JSON.stringify(merged.cowork);
   const newRawJson = JSON.stringify(merged);
 
-  await sql`
+  // Gate on the write too: 0 rows = tombstoned between the read and here.
+  const upd = await sql<{ id: number }>`
     UPDATE jobs SET
       order_id = ${orderId}::bigint,
       name = ${name},
@@ -274,9 +286,10 @@ export async function updateJobInPostgres(input: UpdateJobInput): Promise<{ ok: 
       status = ${status},
       cowork = ${coworkJson}::jsonb,
       raw = ${newRawJson}::jsonb
-    WHERE id = ${idNum}::bigint
+    WHERE id = ${idNum}::bigint AND phase2_deleted_at IS NULL
+    RETURNING id
   `;
-  return { ok: true, found: true };
+  return { ok: true, found: (upd.rowCount ?? upd.rows.length) > 0 };
 }
 
 export interface AddJobInput {
