@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { loadOrder } from '@/lib/api';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import { requireSession } from '@/lib/route-helpers';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -49,14 +50,16 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
     // "ดึงงานล่าสุด" button and lazy spec fetches.
     result = await loadOrder(id, { orderOnly: true });
   } catch (err) {
+    // loadOrder throws (never resolves order:null) — the typed subclass is
+    // the 404, anything else is a read failure (audit H1 2026-10-08).
+    if (err instanceof OrderNotFoundError) {
+      return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `อ่านข้อมูลไม่ได้ — ${msg}` }, { status: 502 });
   }
 
   const order = result.order;
-  if (!order) {
-    return NextResponse.json({ error: `ไม่พบใบสั่งงาน #${id}` }, { status: 404 });
-  }
 
   const raw = (order.rawData && typeof order.rawData === 'object'
     ? order.rawData

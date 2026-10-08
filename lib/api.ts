@@ -170,7 +170,10 @@ export async function loadOrderAndJobs(id: number): Promise<{
 }
 
 export interface LoadOrderResponse {
-  order: Order | null;
+  /** Never null: a missing row THROWS `OrderNotFoundError` (lib/postgres-errors).
+   *  The old `Order | null` type invited dead `if (!order)` 404 branches in
+   *  every caller — audit H1, 2026-10-08. */
+  order: Order;
   job: Record<string, unknown> | null;
   shipped: Record<string, unknown> | null;
   cancelled: Record<string, unknown> | null;

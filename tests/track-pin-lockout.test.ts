@@ -23,6 +23,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { POST } from '@/app/api/track/lookup/route';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 
 function mkReq(body: unknown): Request {
   return new Request('http://localhost/api/track/lookup', {
@@ -84,12 +85,14 @@ describe('POST /api/track/lookup — Layer-3 PIN lockout (atomic)', () => {
     expect(refundMock).toHaveBeenCalledWith('track:pin-fail:123456');
   });
 
-  it('order-not-found refunds too — only PIN failures count', async () => {
-    loadMock.mockResolvedValue({ order: null, job: null, shipped: null, cancelled: null });
+  it('order-not-found → 404 "ไม่พบใบสั่งงานนี้" + refund — loadOrder THROWS OrderNotFoundError, it never returns order:null (audit H1 2026-10-08)', async () => {
+    loadMock.mockRejectedValue(new OrderNotFoundError(123456));
 
     const res = await POST(mkReq({ id: '123456', pin: '1234' }));
+    const json = await res.json();
 
     expect(res.status).toBe(404);
+    expect(json.error).toBe('ไม่พบใบสั่งงานนี้');
     expect(refundMock).toHaveBeenCalledWith('track:pin-fail:123456');
   });
 

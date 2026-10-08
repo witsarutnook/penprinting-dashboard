@@ -6,7 +6,7 @@ import { loadOrder, loadOrderLockState, loadRecentOrdersSlim, type RecentOrderSl
 import {
   orderLockReason, orderLockMessage, orderLockLabel, orderEditPageTitle, type OrderLockReason,
 } from '@/lib/order-lock';
-import { PostgresReadError } from '@/lib/api-postgres';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { OrderEditClient } from './client';
@@ -97,7 +97,7 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
     // Row-not-found → the 404 page. Thrown OUTSIDE the try (below): the old
     // code called notFound() inside it, so Next's control-flow throw was
     // swallowed by this catch and rendered as the error banner instead.
-    if (err instanceof PostgresReadError && err.message.includes('not found')) {
+    if (err instanceof OrderNotFoundError) {
       missing = true;
     } else {
       errorMessage = err instanceof Error ? err.message : String(err);

@@ -1,6 +1,7 @@
 // tests/ai-quote-webhook-router.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { routeInbound, handleInbound, parseTrackCommand } from '@/lib/ai-quote/webhook-router';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import type { InboundMessage } from '@/lib/ai-quote/channels/types';
 
 const base = { channel: 'line' as const, channelUserId: 'U1', replyToken: 'rt' };
@@ -118,9 +119,14 @@ describe('handleInbound', () => {
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track 202606110', replyToken: 'rt' }, deps as never);
     expect(replies[0]).toMatchObject({ type: 'flex' }); // flex object sent
   });
-  it('replies (not-found bubble) when the order does not exist', async () => {
-    const { replies, deps } = stubDeps({ loadOrder: async () => ({ order: null, job: null, shipped: null, cancelled: null }) });
+  it('replies with the not-found bubble when loadOrder THROWS OrderNotFoundError — the real dep never returns order:null (audit H1 2026-10-08)', async () => {
+    const flexSpy = vi.fn(() => ({ type: 'flex' }));
+    const { replies, deps } = stubDeps({
+      loadOrder: async () => { throw new OrderNotFoundError(999999); },
+      buildOrderFlex: flexSpy,
+    });
     await handleInbound({ channel: 'line', channelUserId: 'U', kind: 'text', text: '/track 999999', replyToken: 'rt' }, deps as never);
+    expect(flexSpy).toHaveBeenCalledWith('999999', null);
     expect(replies.length).toBe(1);
   });
   it('ignores non-track text when AI disabled', async () => {

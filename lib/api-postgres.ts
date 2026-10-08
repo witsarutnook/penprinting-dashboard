@@ -16,14 +16,11 @@ import type { LoadOrderResponse } from '@/lib/api';
  *
  * Throws `PostgresReadError` when Postgres isn't configured (env vars
  * missing) or a requested row isn't found — caller renders an error UI.
+ * A missing order row is the `OrderNotFoundError` subclass (audit H1).
  */
 
-export class PostgresReadError extends Error {
-  constructor(reason: string) {
-    super(`Postgres read failed: ${reason}`);
-    this.name = 'PostgresReadError';
-  }
-}
+import { PostgresReadError, OrderNotFoundError } from './postgres-errors';
+export { PostgresReadError, OrderNotFoundError };
 
 /** Load full snapshot from Postgres — same shape as the legacy Apps Script
  *  loadAll. Set `audit: false` to skip the 500-row audit_log scan (saves
@@ -100,9 +97,7 @@ export async function loadOrderFromPostgres(
   // 4 reads still fan out in parallel with no added latency.
   if (opts.orderOnly) {
     const orderR = await sql<{ raw: Order }>`SELECT raw FROM orders WHERE id = ${id} LIMIT 1`;
-    if (!orderR.rows[0]) {
-      throw new PostgresReadError(`order ${id} not found in Postgres`);
-    }
+    if (!orderR.rows[0]) throw new OrderNotFoundError(id);
     return { order: orderR.rows[0].raw, job: null, shipped: null, cancelled: null };
   }
 
@@ -113,9 +108,7 @@ export async function loadOrderFromPostgres(
     sql<{ raw: Cancelled }>`SELECT raw FROM cancelled WHERE order_id = ${id} ORDER BY id DESC LIMIT 1`,
   ]);
 
-  if (!orderR.rows[0]) {
-    throw new PostgresReadError(`order ${id} not found in Postgres`);
-  }
+  if (!orderR.rows[0]) throw new OrderNotFoundError(id);
 
   return {
     order: orderR.rows[0].raw,

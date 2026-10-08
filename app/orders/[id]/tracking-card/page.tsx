@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import QRCode from 'qrcode';
 import { loadOrder } from '@/lib/api';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { TrackingCardClient } from './client';
 
@@ -32,7 +33,11 @@ export default async function TrackingCardPage(props: { params: Promise<{ id: st
     const result = await loadOrder(id, { orderOnly: true });
     order = result.order;
   } catch (err) {
-    errorMessage = err instanceof Error ? err.message : String(err);
+    // Unknown id → leave `order` unset so notFound() fires below, OUTSIDE
+    // the try (Next's control-flow throw must not land in this catch).
+    if (!(err instanceof OrderNotFoundError)) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
   }
   if (errorMessage) {
     return (

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { loadOrder } from '@/lib/api';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import { getBangkokToday } from '@/lib/calendar';
 import type { Job, Shipped, Cancelled } from '@/lib/types';
 import { buildTrackResult } from '@/lib/track-result';
@@ -150,24 +151,27 @@ export async function POST(req: Request) {
 
   // Single-order lookup is much faster than loadAll for /track:
   // public users only need ONE order — ~1KB payload vs ~200KB.
-  // Post §12 loadOrder() reads Postgres directly and throws
-  // PostgresReadError on row-not-found — surfaces as the not-found UI.
+  // loadOrder() reads Postgres directly and THROWS on row-not-found
+  // (`OrderNotFoundError`) — it never resolves `{ order: null }`. Until
+  // audit H1 (2026-10-08) the 404 branch below checked `!order` and was
+  // dead: a mistyped id came back as 502 "ระบบเชื่อมต่อไม่ได้ — Postgres
+  // read failed: order N not found in Postgres".
   let lookup;
   try {
     lookup = await loadOrder(id);
   } catch (err) {
-    // Not a PIN failure — refund the reserved attempt so an outage can't
-    // lock a legitimate customer's order id for an hour.
+    // Neither outcome is a PIN failure — refund the reserved attempt so a
+    // wrong id or an outage can't lock a legitimate customer's order id
+    // for an hour.
     void refundAttempt(pinKey);
+    if (err instanceof OrderNotFoundError) {
+      return respond({ error: 'ไม่พบใบสั่งงานนี้' }, 404);
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return respond({ error: `ระบบเชื่อมต่อไม่ได้ — ${msg}` }, 502);
   }
 
   const order = lookup.order;
-  if (!order) {
-    void refundAttempt(pinKey); // wrong id, not a PIN failure
-    return respond({ error: 'ไม่พบใบสั่งงานนี้' }, 404);
-  }
 
   const raw = (order.rawData && typeof order.rawData === 'object'
     ? order.rawData

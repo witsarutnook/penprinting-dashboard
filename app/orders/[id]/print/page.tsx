@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import QRCode from 'qrcode';
 import { loadOrder } from '@/lib/api';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 
 // "พิมพ์+สั่ง" pops this page open ~1-2s after addOrder completes.
@@ -67,7 +68,11 @@ export default async function OrderPrintPage(props: { params: Promise<{ id: stri
     const result = await loadOrder(id, { orderOnly: true });
     order = result.order;
   } catch (err) {
-    errorMessage = err instanceof Error ? err.message : String(err);
+    // Unknown id → leave `order` unset so notFound() fires below, OUTSIDE
+    // the try (Next's control-flow throw must not land in this catch).
+    if (!(err instanceof OrderNotFoundError)) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
   }
   if (errorMessage) {
     return <ErrorPage message={errorMessage} />;

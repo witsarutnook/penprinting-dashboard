@@ -1,6 +1,7 @@
 // lib/ai-quote/webhook-router.ts
 import type { InboundMessage, ChannelAdapter } from './channels/types';
 import { extractOrderId } from './track-flex';
+import { OrderNotFoundError } from '@/lib/postgres-errors';
 import type { ThunderVerifyResponse } from './slip';
 import type { ConversationTurn } from './types';
 import type { RunQuoteTurnOutput, ProducedQuote } from './run';
@@ -197,8 +198,18 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   if (route === 'track') {
     const id = extractOrderId(m.text!);
     if (!id) return;
-    const state = await deps.loadOrder(Number(id));
-    const flex = deps.buildOrderFlex(id, state.order ? state : null);
+    // loadOrder THROWS OrderNotFoundError for an unknown id — it never
+    // resolves `{ order: null }`. Pre audit H1 (2026-10-08) the throw
+    // escaped to the route's catch and the customer got no reply at all
+    // (the bot looked dead); a real read failure still propagates.
+    let state: Awaited<ReturnType<typeof deps.loadOrder>> | null;
+    try {
+      state = await deps.loadOrder(Number(id));
+    } catch (err) {
+      if (!(err instanceof OrderNotFoundError)) throw err;
+      state = null;
+    }
+    const flex = deps.buildOrderFlex(id, state);
     await deps.adapter.reply(m, flex);
     return;
   }
