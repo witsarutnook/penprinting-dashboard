@@ -485,7 +485,8 @@ function OrderDetailModal({
             <IconPrinter size={14} />
             พิมพ์ใบสั่งงาน
           </Link>
-          {canDelete && order.orderStatus !== 'cancelled' && (
+          {/* shipped = final: /api/orders/cancel refuses it (audit M5) */}
+          {canDelete && order.orderStatus !== 'cancelled' && order.orderStatus !== 'shipped' && (
             <button
               type="button"
               onClick={cancelOrder}

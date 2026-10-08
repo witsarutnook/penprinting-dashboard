@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
+import { gateLockedOrder } from '@/lib/order-lock-gate';
+import { orderCancelLockMessage } from '@/lib/order-lock';
 import {
   cancelOrderInPostgres,
   appendAuditToPostgres,
@@ -34,6 +36,13 @@ export async function POST(req: Request) {
   if (!id || !Number.isFinite(id)) {
     return NextResponse.json({ error: 'Missing order id' }, { status: 400 });
   }
+
+  // Shipped = final (audit M5, 2026-10-08): with no active job to cascade,
+  // cancelOrderInPostgres used to just flip `status='cancelled'` on a
+  // shipped order — no cancelled row — and /orders, /shipped, the monthly
+  // report, /track and LINE all disagreed about it afterwards.
+  const locked = await gateLockedOrder(id, orderCancelLockMessage);
+  if (locked) return locked;
 
   try {
     const r = await cancelOrderInPostgres({

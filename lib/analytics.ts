@@ -444,9 +444,12 @@ export function computeMonthlyReport(
     const orderId = Number(orderIdStr);
     const ord = orderById.get(orderId);
     if (!ord) return null;
-    // cancelled wins over shipped — same precedence as lib/order-lock,
+    // cancelled wins over shipped — same ROW precedence as lib/order-lock,
     // orders-list, /archive and track-status (a stale shipped row must not
-    // resurrect a cancelled order).
+    // resurrect a cancelled order). Row-only: `orders.status` is not read
+    // here, unlike order-lock/orders-list (audit M5 follow-up, 2026-10-08
+    // — the state that made them disagree, cancelling a shipped order, is
+    // now refused at /api/orders/cancel).
     let status: MonthlyReportRow['status'];
     if (cancelledOrderIds.has(orderId)) status = 'cancelled';
     else if (shippedOrderIds.has(orderId)) status = 'shipped';

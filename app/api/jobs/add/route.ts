@@ -8,6 +8,8 @@ import {
 } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
 import { mintJobId } from '@/lib/id-allocation';
+import { gateLockedOrder } from '@/lib/order-lock-gate';
+import { orderAttachLockMessage } from '@/lib/order-lock';
 import { addJobToPostgres, appendAuditToPostgres, isActiveJobConflict, PostgresWriteError } from '@/lib/postgres-write';
 import { sql } from '@/lib/postgres';
 
@@ -50,14 +52,21 @@ export async function POST(req: Request) {
     );
   }
 
-  // Fast-path guard (auditor H1, 2026-05-08): when caller supplies an
-  // orderId, reject early with the existing job id if an active job already
-  // references it — friendly 409 for the common stale-UI case. NOT the race
-  // gate: concurrent adds both pass this read; the partial unique index
-  // uq_jobs_active_order is the real gate (M-jobs-add-guard-race,
-  // 2026-07-21 — its violation maps to the same 409 in addJob below).
   const orderIdNum = body.orderId ? Number(body.orderId) : null;
   if (orderIdNum && Number.isFinite(orderIdNum)) {
+    // The order must exist and be open (audit M4, 2026-10-08): a job
+    // attached to a shipped/cancelled order is live on /board while every
+    // order-level view — /orders, /track, LINE — says the order is done.
+    // Restore already refused a cancelled parent; add did not.
+    const locked = await gateLockedOrder(orderIdNum, (reason) => orderAttachLockMessage(orderIdNum, reason));
+    if (locked) return locked;
+
+    // Fast-path guard (auditor H1, 2026-05-08): reject early with the
+    // existing job id if an active job already references the order —
+    // friendly 409 for the common stale-UI case. NOT the race gate:
+    // concurrent adds both pass this read; the partial unique index
+    // uq_jobs_active_order is the real gate (M-jobs-add-guard-race,
+    // 2026-07-21 — its violation maps to the same 409 in addJob below).
     try {
       const r = await sql<{ id: number }>`
         SELECT id FROM jobs

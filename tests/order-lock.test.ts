@@ -4,6 +4,8 @@ import {
   isOrderLocked,
   orderLockMessage,
   orderEditPageTitle,
+  orderCancelLockMessage,
+  orderAttachLockMessage,
 } from '@/lib/order-lock';
 
 /**
@@ -97,5 +99,23 @@ describe('orderEditPageTitle (audit L6)', () => {
   it('locked order says so in the tab title — matches the panel header + pill', () => {
     expect(orderEditPageTitle(202609001, 'shipped')).toBe('ใบสั่งงาน #202609001 · จัดส่งแล้ว');
     expect(orderEditPageTitle(202609001, 'cancelled')).toBe('ใบสั่งงาน #202609001 · ยกเลิกแล้ว');
+  });
+});
+
+describe('orderCancelLockMessage (audit M5)', () => {
+  it('shipped → cancel is refused, in Thai', () => {
+    expect(orderCancelLockMessage('shipped')).toBe('ใบสั่งงานนี้จัดส่งแล้ว — ยกเลิกไม่ได้');
+  });
+  it('cancelled → already cancelled', () => {
+    expect(orderCancelLockMessage('cancelled')).toBe('ใบสั่งงานนี้ยกเลิกแล้ว');
+  });
+});
+
+describe('orderAttachLockMessage (audit M4)', () => {
+  it('names the order, the lock, and the "สั่งซ้ำ" way out', () => {
+    expect(orderAttachLockMessage(202609001, 'shipped'))
+      .toBe('ใบสั่งงาน #202609001 จัดส่งแล้ว — เพิ่มงานไม่ได้ ถ้าต้องพิมพ์ซ้ำให้ "สั่งซ้ำ" เป็นใบใหม่');
+    expect(orderAttachLockMessage(202609001, 'cancelled'))
+      .toBe('ใบสั่งงาน #202609001 ยกเลิกแล้ว — เพิ่มงานไม่ได้ ถ้าต้องพิมพ์ซ้ำให้ "สั่งซ้ำ" เป็นใบใหม่');
   });
 });

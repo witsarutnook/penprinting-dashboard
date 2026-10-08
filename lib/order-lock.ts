@@ -63,6 +63,23 @@ export function orderLockMessage(reason: OrderLockReason): string {
   return `ใบสั่งงานนี้${LABEL[reason]} — แก้ไขไม่ได้`;
 }
 
+/** 409 `error` from /api/orders/cancel (audit M5, 2026-10-08): shipped is
+ *  final — cancelling it flipped `status` with no cancelled row and left
+ *  every surface disagreeing. Re-cancelling a cancelled order is a no-op. */
+export function orderCancelLockMessage(reason: OrderLockReason): string {
+  return reason === 'shipped'
+    ? 'ใบสั่งงานนี้จัดส่งแล้ว — ยกเลิกไม่ได้'
+    : 'ใบสั่งงานนี้ยกเลิกแล้ว';
+}
+
+/** 409 `error` from /api/jobs/add + /api/jobs/update when a job would be
+ *  attached to a shipped/cancelled order (audit M4, 2026-10-08) — a live job
+ *  under a terminal order is the one state every classifier gets wrong.
+ *  Re-prints are a new order via "สั่งซ้ำ". */
+export function orderAttachLockMessage(orderId: number | string, reason: OrderLockReason): string {
+  return `ใบสั่งงาน #${orderId} ${LABEL[reason]} — เพิ่มงานไม่ได้ ถ้าต้องพิมพ์ซ้ำให้ "สั่งซ้ำ" เป็นใบใหม่`;
+}
+
 /** Browser-tab title for `/orders/[id]/edit`. A locked order renders the
  *  lock panel, not the form, so the tab must not say "แก้ไข" (audit L6) —
  *  it mirrors the panel's "ใบสั่งงาน #id" header + status pill instead. */

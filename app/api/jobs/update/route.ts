@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/route-helpers';
 import { toISODate, validateJobInput, type JobPayload } from '@/lib/jobs';
 import { STAFF, type Dept } from '@/lib/board';
+import { gateLockedOrder } from '@/lib/order-lock-gate';
+import { orderAttachLockMessage } from '@/lib/order-lock';
 import { updateJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
 
 export const maxDuration = 30;
@@ -60,6 +62,14 @@ export async function POST(req: Request) {
     status: String(body.status || 'pending'),
     orderId: body.orderId ? Number(body.orderId) : '',
   };
+
+  // A job may not be (re)pointed at a shipped/cancelled order — same gate
+  // as /api/jobs/add (audit M4, 2026-10-08). Jobs without an order skip it.
+  if (typeof payload.orderId === 'number') {
+    const target = payload.orderId;
+    const locked = await gateLockedOrder(target, (reason) => orderAttachLockMessage(target, reason));
+    if (locked) return locked;
+  }
 
   // Pass through cowork unchanged — the form doesn't edit it (Phase 3.5.7),
   // but we don't want updateJob to wipe an existing assignment.
