@@ -48,28 +48,45 @@ export interface ThunderVerifyResponse {
   _meta?: { status: number; contentType: string | null; attempts: number };
 }
 
-/** One retry is worth it only for a failure that a second call could answer
- *  differently: the connection died, or Thunder itself was unhealthy. A 4xx is
- *  deterministic (bad key, bad payload, unreadable slip) and 429 means we are
- *  already over the line — retrying either burns a quota slot for the same
- *  answer, or deepens the rate limit. */
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status >= 500;
+/** The only failure worth one retry: the connection was never made, so the
+ *  request provably never reached Thunder. Anything after the request left —
+ *  a reset mid-flight, a 5xx, a timeout — may already have been processed on
+ *  their side: billed, AND recorded by checkDuplicate, so a second call both
+ *  spends a quota slot and can turn a first-time slip into isDuplicate:true
+ *  ("สลิปนี้เคยส่งแล้ว" to a customer who sent it once). Until audit M1
+ *  (2026-10-08) every thrown fetch and every 5xx/408 was retried. A 4xx is
+ *  deterministic and 429 means we are already over the line — never retried. */
+const NEVER_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']);
+function connectionNeverMade(e: unknown): boolean {
+  // undici: TypeError('fetch failed') with the syscall error as `cause`
+  const err = e as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = err?.cause?.code ?? err?.code;
+  return typeof code === 'string' && NEVER_SENT_CODES.has(code);
+}
+function isTimeoutAbort(e: unknown): boolean {
+  const name = (e as { name?: unknown } | null)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
 }
 
 const RETRY_DELAY_MS = 600;
+/** Per-attempt ceiling. The webhook routes run under `maxDuration = 60` and
+ *  do all of this inside `after()`: a Thunder call that hung past that was
+ *  killed with the function — no reply, no slip_checks row, nothing to
+ *  attribute (audit M2, 2026-10-08). Timeouts surface as `TIMEOUT` and are
+ *  not retried (same ambiguity as a mid-flight reset). */
+const THUNDER_TIMEOUT_MS = 20_000;
 
 /** Verify a Thai bank slip image via Thunder v2 (multipart). matchAmount optional
  *  — Penprinting slips are unsolicited (no known expected amount), so we verify
  *  authenticity + whitelisted receiving account + duplicate, and report the read
  *  amount. Field name MUST be "image". Bearer THUNDER_API_KEY.
  *
- *  Retries ONCE on a dead connection or a 5xx/408 (see isRetryableStatus) —
- *  the FormData is rebuilt per attempt because sending it consumes the blob
- *  stream. Every return carries `_meta` for slip_checks. */
+ *  Retries ONCE, only when the connection was never made (see
+ *  connectionNeverMade) — the FormData is rebuilt per attempt because sending
+ *  it consumes the blob stream. Every return carries `_meta` for slip_checks. */
 export async function verifyBankSlipImage(
   image: Blob,
-  opts: { matchAmount?: number; matchAccount?: boolean } = {},
+  opts: { matchAmount?: number; matchAccount?: boolean; timeoutMs?: number } = {},
 ): Promise<ThunderVerifyResponse> {
   const key = process.env.THUNDER_API_KEY;
   if (!key) {
@@ -79,14 +96,9 @@ export async function verifyBankSlipImage(
       _meta: { status: 0, contentType: null, attempts: 0 },
     };
   }
+  const timeoutMs = opts.timeoutMs ?? THUNDER_TIMEOUT_MS;
 
-  let last: ThunderVerifyResponse = {
-    success: false,
-    error: { code: 'NETWORK', message: 'no attempt made' },
-    _meta: { status: 0, contentType: null, attempts: 0 },
-  };
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; ; attempt++) {
     // rebuilt per attempt — a sent FormData has already drained the blob
     const fd = new FormData();
     fd.append('image', image);
@@ -98,35 +110,29 @@ export async function verifyBankSlipImage(
     try {
       res = await fetch(`${THUNDER_BASE}/verify/bank`, {
         method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: fd,
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      last = {
+      const meta = { status: 0, contentType: null, attempts: attempt };
+      if (isTimeoutAbort(e)) {
+        return { success: false, error: { code: 'TIMEOUT', message: `no reply within ${timeoutMs}ms` }, _meta: meta };
+      }
+      if (attempt === 1 && connectionNeverMade(e)) { await sleep(RETRY_DELAY_MS); continue; }
+      return {
         success: false,
         error: { code: 'NETWORK', message: e instanceof Error ? e.message : 'fetch failed' },
-        _meta: { status: 0, contentType: null, attempts: attempt },
+        _meta: meta,
       };
-      if (attempt === 1) { await sleep(RETRY_DELAY_MS); continue; }
-      return last;
     }
 
     const meta = { status: res.status, contentType: res.headers.get('content-type'), attempts: attempt };
-    let body: ThunderVerifyResponse;
     try {
-      body = (await res.json()) as ThunderVerifyResponse;
+      const body = (await res.json()) as ThunderVerifyResponse;
+      return { ...body, _meta: meta };
     } catch {
-      last = { success: false, error: { code: 'INVALID_RESPONSE', message: `HTTP ${res.status}` }, _meta: meta };
-      if (attempt === 1 && isRetryableStatus(res.status)) { await sleep(RETRY_DELAY_MS); continue; }
-      return last;
+      return { success: false, error: { code: 'INVALID_RESPONSE', message: `HTTP ${res.status}` }, _meta: meta };
     }
-
-    last = { ...body, _meta: meta };
-    // A parsed body on a retryable status is still Thunder being unhealthy —
-    // give it the one retry; anything else (incl. SLIP_NOT_FOUND) is final.
-    if (attempt === 1 && !body.success && isRetryableStatus(res.status)) { await sleep(RETRY_DELAY_MS); continue; }
-    return last;
   }
-
-  return last;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -235,6 +241,11 @@ export async function isSlipImage(
           { type: 'text', text: SLIP_PREFILTER_PROMPT },
         ],
       }],
+    }, {
+      // SDK default is 10 min — longer than the route's maxDuration (60s).
+      // A hung model call must fail (→ fail-safe pass) inside the function's
+      // lifetime, not take the whole slip reply down with it (audit M2).
+      timeout: 15_000,
     });
     const text = (res.content as Array<{ type: string; text?: string }>)
       .filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ').trim().toLowerCase();

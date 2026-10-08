@@ -87,6 +87,13 @@ describe('isSlipImage (Haiku vision pre-filter)', () => {
     expect(await isSlipImage(b64, 'image/png', { client: noText, model: 'm' }))
       .toEqual({ pass: true, answer: '' });
   });
+  it('bounds the model call with a 15s request timeout — the SDK default is 10 min, longer than the route lives (audit M2)', async () => {
+    const create = vi.fn<(params: unknown, opts?: { timeout?: number }) => Promise<unknown>>(
+      async () => ({ content: [{ type: 'text', text: 'yes' }] }),
+    );
+    await isSlipImage(b64, 'image/png', { client: { messages: { create } } as never, model: 'm' });
+    expect(create.mock.calls[0][1]).toMatchObject({ timeout: 15_000 });
+  });
 });
 
 import { afterEach, beforeEach, vi } from 'vitest';
@@ -145,29 +152,65 @@ describe('verifyBankSlipImage', () => {
     expect(r._meta?.status).toBe(429);
   });
 
-  it('retries ONCE on a 5xx and reports the attempt count', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(reply({ success: false, error: { code: 'SERVER_ERROR', message: 'x' } }, { status: 503 }))
-      .mockResolvedValueOnce(reply({ success: true, data: { isDuplicate: false } }));
+  // ── Audit M1 + M2 (2026-10-08): retry only what provably never reached
+  // Thunder. A 5xx or a connection that died mid-request may already have
+  // been processed on their side: the retry then spends a second quota slot
+  // AND — because attempt 1 was recorded by checkDuplicate — comes back
+  // isDuplicate:true, so a first-time customer is told "สลิปนี้เคยส่งแล้ว".
+  // Only a refused / unresolvable connection (the request never left) is
+  // retried. Every attempt is bounded by a timeout so a hung Thunder can't
+  // outlive the route's maxDuration and vanish without a slip_checks row.
+  function fetchFailed(code: string): TypeError {
+    // undici shape: TypeError('fetch failed') with the syscall error as cause
+    return Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
+  }
+
+  it('does NOT retry a 5xx — Thunder may already have processed the slip (audit M1)', async () => {
+    const fetchMock = vi.fn(async () => reply({ success: false, error: { code: 'SERVER_ERROR', message: 'x' } }, { status: 503 }));
     vi.stubGlobal('fetch', fetchMock);
     const r = await verifyBankSlipImage(image);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(r.success).toBe(true);
-    expect(r._meta?.attempts).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(r._meta).toEqual({ status: 503, contentType: 'application/json', attempts: 1 });
+    expect(slipFailureKind(r)).toBe('system');
   });
 
-  it('retries ONCE on a dead connection, then reports NETWORK with _meta', async () => {
-    const fetchMock = vi.fn(async () => { throw new Error('ECONNRESET'); });
+  it('does NOT retry a connection that died mid-request (ECONNRESET) — the request may have reached Thunder (audit M1)', async () => {
+    const fetchMock = vi.fn(async () => { throw fetchFailed('ECONNRESET'); });
     vi.stubGlobal('fetch', fetchMock);
     const r = await verifyBankSlipImage(image);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(r.error?.code).toBe('NETWORK');
-    expect(r._meta).toEqual({ status: 0, contentType: null, attempts: 2 });
+    expect(r._meta).toEqual({ status: 0, contentType: null, attempts: 1 });
+  });
+
+  it('retries ONCE when the connection was never made (ECONNREFUSED / ENOTFOUND / EAI_AGAIN) and reports the attempt count', async () => {
+    for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']) {
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(fetchFailed(code))
+        .mockResolvedValueOnce(reply({ success: true, data: { isDuplicate: false } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await verifyBankSlipImage(image);
+      expect(fetchMock, code).toHaveBeenCalledTimes(2);
+      expect(r.success, code).toBe(true);
+      expect(r._meta?.attempts, code).toBe(2);
+    }
+  });
+
+  it('a hung Thunder call is aborted after timeoutMs → TIMEOUT (system failure), one attempt (audit M2)', async () => {
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_, reject) => {
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason));
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await verifyBankSlipImage(image, { timeoutMs: 20 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(r.error?.code).toBe('TIMEOUT');
+    expect(r._meta).toEqual({ status: 0, contentType: null, attempts: 1 });
+    expect(slipFailureKind(r)).toBe('system');
   });
 
   it('rebuilds the multipart body per attempt — a sent FormData has drained the blob', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(reply({ success: false }, { status: 500 }))
+      .mockRejectedValueOnce(fetchFailed('ECONNREFUSED'))
       .mockResolvedValueOnce(reply({ success: true, data: {} }));
     vi.stubGlobal('fetch', fetchMock);
     await verifyBankSlipImage(image);
