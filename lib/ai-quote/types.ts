@@ -2,8 +2,9 @@
 // Shared shapes for the AI Quote Assistant (Phase 1a).
 // Box/bag are recognised by the model but NOT quoted (escalate) — see D8.
 // namecard added 2026-07-13 (fix rate/box on the calc API).
+// calendar + pvccard added 2026-10-19 (price-table products).
 
-export type ProductType = 'brochure' | 'book' | 'notebook' | 'namecard';
+export type ProductType = 'brochure' | 'book' | 'notebook' | 'namecard' | 'calendar' | 'pvccard';
 
 /** Loose spec — the calc /api/quote endpoint is the source of truth for
  *  validation (returns 422 with issues on a bad spec). We forward as-is. */

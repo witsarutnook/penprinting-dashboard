@@ -1,6 +1,7 @@
 // tests/ai-quote-tools.test.ts
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { runComputeQuote, COMPUTE_QUOTE_TOOL } from '@/lib/ai-quote/tools';
+import { runComputeQuote, COMPUTE_QUOTE_TOOL, SEND_PRICE_TABLE_TOOL } from '@/lib/ai-quote/tools';
+import { PRICE_TABLE_IDS } from '@/lib/ai-quote/price-tables';
 
 const OK = {
   productType: 'brochure',
@@ -46,8 +47,14 @@ describe('runComputeQuote', () => {
     ).rejects.toThrow();
   });
 
-  it('tool definition only allows the 4 quotable product types (namecard added 2026-07-13)', () => {
+  it('compute_quote enum lists all 6 product types', () => {
     const pt = (COMPUTE_QUOTE_TOOL.input_schema as unknown as { properties: { productType: { enum: string[] } } }).properties.productType.enum;
-    expect(pt).toEqual(['brochure', 'book', 'notebook', 'namecard']);
+    expect(pt).toEqual(['brochure', 'book', 'notebook', 'namecard', 'calendar', 'pvccard']);
+  });
+
+  it('send_price_table tool enum matches PRICE_TABLE_IDS', () => {
+    expect(SEND_PRICE_TABLE_TOOL.name).toBe('send_price_table');
+    expect(SEND_PRICE_TABLE_TOOL.input_schema.properties.table.enum).toEqual([...PRICE_TABLE_IDS]);
+    expect(SEND_PRICE_TABLE_TOOL.input_schema.required).toEqual(['table']);
   });
 });
