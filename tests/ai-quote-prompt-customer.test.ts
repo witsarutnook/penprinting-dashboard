@@ -127,7 +127,7 @@ describe('customer prompt — calendar + PVC card + price tables (2026-10-19)', 
   it('tells the model to send the price table once and mark it in the reply', () => {
     expect(p).toContain('send_price_table');
     expect(p).toContain('📊 ตารางราคา');
-    expect(p).toMatch(/1 ครั้งต่อตาราง|ครั้งเดียว/);
+    expect(p).toContain('1 ครั้งต่อตาราง');
   });
   it('never guesses calendar size; other sizes hand off', () => {
     expect(p).toMatch(/ขนาดห้ามเดา|ห้ามเดาขนาด/);
@@ -138,6 +138,29 @@ describe('customer prompt — calendar + PVC card + price tables (2026-10-19)', 
     expect(p).toContain('6 ประเภทนี้ค่ะ');
     expect(p).not.toContain('4 ชนิด');
     expect(p).not.toContain('4 ประเภท');
+  });
+  // Review fix round 1: the router sends TEXT ONLY on a hand-off (spec §6.3), so
+  // a "📊 …อยู่ด้านบน" line there points at an image that never arrived.
+  it('hand-off turn: no send_price_table call and no 📊 line (even if the tool was already called)', () => {
+    expect(p).toMatch(/เทิร์นที่ส่งต่อทีมงาน[^\n]*ไม่เรียก send_price_table[^\n]*ห้ามใส่บรรทัด 📊/);
+    expect(p).toContain('ตัดบรรทัด 📊 ออกจากข้อความส่งต่อ');
+    expect(p).toMatch(/above_max[^\n]*ข้อความส่งต่อห้ามมีบรรทัด 📊/);
+  });
+  // run.ts keeps only the LAST round's text as reply + history; a 📊 line in the
+  // preamble next to the tool_use is lost and the once-per-table marker breaks.
+  it('📊 line must be in the final reply (after tool results), not the pre-tool preamble', () => {
+    expect(p).toMatch(/📊 ต้องอยู่ในข้อความตอบสุดท้าย[^\n]*ไม่ใช่ข้อความก่อนเรียกเครื่องมือ/);
+  });
+  // The designed flow is two steps; the generic "ถามรวมครั้งเดียว" rule sits right
+  // next to it and must not collapse kind + size + qty into one question.
+  it('calendar is a two-step ask: kind only -> table -> size + qty together', () => {
+    expect(p).toMatch(/ถามแค่แบบก่อน[^\n]*ส่งตาราง[^\n]*ขนาด[^\n]*รวมครั้งเดียว/);
+    expect(p).toContain('ไม่ใช่ถามรวมทีเดียว');
+  });
+  // Review fix round 1: the generic format rule says 📋 appears ONLY when defaults
+  // were filled in; calendar/PVC never get defaults but still need their 📋 line.
+  it('📋 rule has an explicit calendar/PVC exception (no self-contradiction)', () => {
+    expect(p).toMatch(/บรรทัด 📋 ใส่เฉพาะเมื่อเติมค่ามาตรฐาน[^\n]*ยกเว้นปฏิทิน\/บัตร PVC/);
   });
   // customer only
   it('below_min keeps the customer talking (no hand-off phrase) and asks the popular-3 question verbatim', () => {
