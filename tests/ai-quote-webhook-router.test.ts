@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { routeInbound, handleInbound, parseTrackCommand, parseEnterAiSeed } from '@/lib/ai-quote/webhook-router';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
-import { RATE_LIMIT_TEXT } from '@/lib/ai-quote/customer-triggers';
+import { RATE_LIMIT_TEXT, ERROR_TEXT, SEEDED_EXIT_HINT } from '@/lib/ai-quote/customer-triggers';
 import type { InboundMessage } from '@/lib/ai-quote/channels/types';
 
 const base = { channel: 'line' as const, channelUserId: 'U1', replyToken: 'rt' };
@@ -382,7 +382,29 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
     expect(runTurn).not.toHaveBeenCalled();
     expect(replies.length).toBe(1);
-    expect(String(replies[0])).toBe(RATE_LIMIT_TEXT);   // rate-limit reply, not the out-of-mode hint
+    // rate-limit reply (not the out-of-mode hint) — and, since the customer entered via a topic
+    // button and never saw INTRO_TEXT, it must carry the exit instructions too
+    expect(String(replies[0])).toBe(`${RATE_LIMIT_TEXT}\n\n${SEEDED_EXIT_HINT}`);
+  });
+  it('seeded entry: engine failure reply also carries the exit hint', async () => {
+    const { ai } = stubAi({ runTurn: async () => { throw new Error('calc 500'); }, modeActive: () => false });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    expect(replies.length).toBe(1);
+    expect(String(replies[0])).toBe(`${ERROR_TEXT}\n\n${SEEDED_EXIT_HINT}`);
+  });
+  it('non-seeded rate-limit / engine-failure replies stay exactly the bare text (no exit hint)', async () => {
+    const limited = stubAi({ checkRateLimit: async () => false });
+    const a = stubDeps({ aiEnabled: true, aiCustomer: limited.ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000'), a.deps as never);
+    expect(a.replies).toEqual([RATE_LIMIT_TEXT]);
+
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failing = stubAi({ runTurn: async () => { throw new Error('calc 500'); } });
+    const b = stubDeps({ aiEnabled: true, aiCustomer: failing.ai });
+    await handleInbound(text1on1('โบรชัวร์ 1000'), b.deps as never);
+    expect(b.replies).toEqual([ERROR_TEXT]);
   });
   it('out-of-mode PVC text gets the PVC button; generic text keeps the default button', async () => {
     const { ai } = stubAi({ modeActive: () => false, loadMode: async () => null });
@@ -472,6 +494,74 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
     await handleInbound(text1on1('บัตร PVC'), deps as never);
     expect(typeof replies[0]).toBe('string');
+  });
+  it('image send failure degrades to a text-only retry (never silence); history persisted once, unchanged', async () => {
+    const REPLY = '📊 ตารางราคาบัตร PVC อยู่ด้านบนนะคะ กี่ใบดีคะ';
+    const saved: Array<{ role: string; text: string }[]> = [];
+    const { ai } = stubAi({
+      runTurn: async () => ({ reply: REPLY, quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }),
+      saveConversation: async (_id: number, conv: { role: string; text: string }[]) => { saved.push(conv); },
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sent: unknown[] = [];
+    let call = 0;
+    const adapter = {
+      downloadImage: async () => new Blob(['x']),
+      push: async () => {},
+      reply: async (_m: unknown, message: unknown) => {
+        call += 1;
+        if (call === 1) { sent.push(message); throw new Error('Send API 400: image fetch failed'); }
+        sent.push(message);
+      },
+    };
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai, adapter });
+    await expect(handleInbound(text1on1('บัตร PVC'), deps as never)).resolves.toBeUndefined();   // no throw escapes
+    expect(sent).toHaveLength(2);
+    expect(Array.isArray(sent[0])).toBe(true);      // first attempt = [image, text]
+    expect(sent[1]).toBe(REPLY);                    // retry = the plain text string
+    expect(saved).toHaveLength(1);                  // persist-before-reply, not re-persisted on retry
+    expect(saved[0][saved[0].length - 1]).toMatchObject({ role: 'assistant', text: REPLY });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('[ai-quote/line] price-table image send failed:'), 'Send API 400: image fetch failed');
+  });
+  it('image send failure on a seeded entry: text-only retry keeps the exit hint', async () => {
+    const REPLY = '📊 ตารางราคาบัตร PVC อยู่ด้านบนนะคะ';
+    const { ai } = stubAi({
+      runTurn: async () => ({ reply: REPLY, quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }),
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sent: unknown[] = [];
+    let call = 0;
+    const adapter = {
+      downloadImage: async () => new Blob(['x']),
+      push: async () => {},
+      reply: async (_m: unknown, message: unknown) => { call += 1; sent.push(message); if (call === 1) throw new Error('boom'); },
+    };
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai, adapter });
+    await handleInbound(text1on1('ขอราคา AI บัตร PVC'), deps as never);
+    expect(sent[1]).toBe(`${REPLY}\n\n${SEEDED_EXIT_HINT}`);
+  });
+  it('plain-text reply (no price tables) that rejects still propagates — behaviour unchanged', async () => {
+    const { ai } = stubAi({ runTurn: async () => ({ reply: 'ขอทราบจำนวนค่ะ', quotes: [], escalated: false, newHistory: [], priceTables: [] }) });
+    const sent: unknown[] = [];
+    const adapter = {
+      downloadImage: async () => new Blob(['x']),
+      push: async () => {},
+      reply: async (_m: unknown, message: unknown) => { sent.push(message); throw new Error('Send API 500'); },
+    };
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai, adapter });
+    await expect(handleInbound(text1on1('บัตร PVC'), deps as never)).rejects.toThrow('Send API 500');
+    expect(sent).toHaveLength(1);   // no retry
+  });
+  it('text-only retry that also fails still propagates', async () => {
+    const { ai } = stubAi({ runTurn: async () => ({ reply: 'ตารางด้านบนค่ะ', quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }) });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const adapter = {
+      downloadImage: async () => new Blob(['x']),
+      push: async () => {},
+      reply: async () => { throw new Error('Send API down'); },
+    };
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai, adapter });
+    await expect(handleInbound(text1on1('บัตร PVC'), deps as never)).rejects.toThrow('Send API down');
   });
   it('hand-off turn never attaches price-table images (escalate path unchanged)', async () => {
     const { ai, calls } = stubAi({

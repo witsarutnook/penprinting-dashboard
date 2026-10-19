@@ -128,7 +128,7 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
       {!compact && (
         <p className="flex items-center gap-2 text-sm text-stone-500">
           <IconSparkles size={16} className="text-accent" />
-          วางข้อความที่ลูกค้าถามมา — ระบบช่วยสกัดสเปกและคิดราคา (โบรชัวร์ / หนังสือ / สมุด / นามบัตร)
+          วางข้อความที่ลูกค้าถามมา — ระบบช่วยสกัดสเปกและคิดราคา (โบรชัวร์ / หนังสือ / สมุด / นามบัตร / ปฏิทิน / บัตร PVC)
         </p>
       )}
 

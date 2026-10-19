@@ -77,7 +77,10 @@ export async function runComputeQuote(
 
   if (res.status === 422) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string; issues?: { path: string; message: string }[] };
-    const detail = body.message
+    // The prompts key off the calc API's machine codes (`below_min` / `above_max`), so when the
+    // API sends both a string code and a message, show the model "[code] message" — it can only
+    // follow the rule if it can see the code.
+    const detail = (typeof body.error === 'string' && body.message ? `[${body.error}] ${body.message}` : body.message)
       ?? (body.issues?.map((i) => `${i.path}: ${i.message}`).join('; '))
       ?? body.error
       ?? 'สเปคไม่ครบหรือไม่ถูกต้อง';

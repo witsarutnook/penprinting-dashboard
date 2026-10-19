@@ -38,6 +38,31 @@ describe('runComputeQuote', () => {
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.recoverable).toBe(true);
+    // plain `issues` path (no `message`) is unchanged: the per-field list, no [code] prefix
+    if (!r.ok) expect(r.message).toBe('paperName: ไม่รู้จัก');
+  });
+
+  it('422 with a string error code + message: the model sees "[code] message" (below_min / above_max rule)', async () => {
+    vi.stubGlobal('fetch', mockFetch(422, { error: 'above_max', message: 'จำนวนเกิน 5,000 ชุด ต้องให้ทีมงานประเมิน' }));
+    const r = await runComputeQuote(
+      { productType: 'calendar', spec: { qty: 99999 } },
+      { url: 'https://calc/api/quote', token: 't' },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.recoverable).toBe(true);
+      expect(r.message).toBe('[above_max] จำนวนเกิน 5,000 ชุด ต้องให้ทีมงานประเมิน');
+    }
+  });
+
+  it('422 with only a message (no error code) is passed through unprefixed', async () => {
+    vi.stubGlobal('fetch', mockFetch(422, { message: 'สเปคไม่ถูกต้อง' }));
+    const r = await runComputeQuote(
+      { productType: 'brochure', spec: {} },
+      { url: 'https://calc/api/quote', token: 't' },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toBe('สเปคไม่ถูกต้อง');
   });
 
   it('throws on 401 (server misconfig — not the model\'s problem)', async () => {

@@ -318,7 +318,9 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
 
   if (!(await ai.checkRateLimit(uid))) {
     await ai.touchMode(uid, {});
-    await deps.adapter.reply(m, RATE_LIMIT_TEXT);
+    // Seeded entry: the customer never saw INTRO_TEXT, so even a declined first turn
+    // must say how to leave the mode (same reason replyText appends it below).
+    await deps.adapter.reply(m, seed !== null ? `${RATE_LIMIT_TEXT}\n\n${SEEDED_EXIT_HINT}` : RATE_LIMIT_TEXT);
     return;
   }
 
@@ -391,7 +393,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   } catch (err) {
     console.error(`[ai-quote/${m.channel}] engine turn failed:`, err instanceof Error ? err.message : err);
     await ai.touchMode(uid, { sessionId: sid });
-    await deps.adapter.reply(m, ERROR_TEXT);
+    await deps.adapter.reply(m, seed !== null ? `${ERROR_TEXT}\n\n${SEEDED_EXIT_HINT}` : ERROR_TEXT);
     return;
   }
   // Note: not idempotent under LINE redelivery — a mid-loop throw persists the
@@ -433,5 +435,20 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     ai.saveConversation(sid, persistedConv(replyText)),
     ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds }),
   ]);
-  await deps.adapter.reply(m, withPriceTables(out, replyText, m.channel));
+  if (out.priceTables.length === 0) {
+    await deps.adapter.reply(m, replyText);
+    return;
+  }
+  // Price-table images are a bonus, the text is the answer: Messenger sends array
+  // items one by one and throws on the first failed Send API call, so a bad image
+  // (CDN hiccup, Meta can't fetch the URL) would otherwise swallow the text and
+  // leave the customer in silence. Degrade to the plain text — history is already
+  // persisted with that exact text (its 📊 line tells the customer about the table),
+  // so we neither re-persist nor rewrite it. A failing text-only retry propagates.
+  try {
+    await deps.adapter.reply(m, withPriceTables(out, replyText, m.channel));
+  } catch (err) {
+    console.error(`[ai-quote/${m.channel}] price-table image send failed:`, err instanceof Error ? err.message : err);
+    await deps.adapter.reply(m, replyText);
+  }
 }

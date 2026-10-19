@@ -10,6 +10,10 @@ export const PRODUCT_LABEL: Record<string, string> = {
   namecard: 'นามบัตร',
   calendar: 'ปฏิทิน',
   pvccard: 'บัตร PVC',
+  // Not quotable by the engine, but historical quote rows (and old quote-logs
+  // snapshots) may still carry these — keep them readable instead of showing the raw key.
+  box: 'กล่อง',
+  bag: 'ถุงกระดาษ',
 };
 
 /** What one "unit price" is a price of. Anything not listed is `ชิ้น`. */
