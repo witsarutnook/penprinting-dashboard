@@ -61,6 +61,10 @@ export function ceilTo05(n: number): number {
   return Math.max(1, Math.ceil(n * 20 - 1e-9)) / 20;
 }
 
+/** Products whose calc totalPrice must survive customer rounding (see
+ *  roundOutcomeForCustomer). */
+const KEEP_CALC_TOTAL: ReadonlySet<string> = new Set(['namecard', 'calendar', 'pvccard']);
+
 /** Transform the calc outcome before the customer-flow model sees it: the model
  *  can't leak a full-precision price it never saw (staff flows wire
  *  runComputeQuote directly and keep exact numbers). The rounded price also
@@ -69,14 +73,17 @@ export function ceilTo05(n: number): number {
  *  (D4), and a raw VAT figure next to a rounded base would contradict it.
  *  totalPrice: recomputed from the ROUNDED unit × qty (prod smoke 7/15 caught
  *  "ใบละ 2.40 รวม 4,776.25" — a raw total next to a rounded unit), dropped when
- *  qty is unknown. namecard keeps its total as-is: boxes × fix rate (whole
- *  baht), NOT qty × unit — recomputing would undercharge partial boxes. */
+ *  qty is unknown. KEEP_CALC_TOTAL products keep calc's total as-is:
+ *  namecard = boxes × fix rate (whole baht), NOT qty × unit — recomputing would
+ *  undercharge partial boxes; calendar = unit already on a 0.25 grid so
+ *  unit × qty is exact; pvccard = total includes the flat designFee 300 when
+ *  qty < 30 — recomputing unit × qty would drop it (20 ใบ: 1,800 vs 2,100). */
 export function roundOutcomeForCustomer(outcome: ComputeQuoteOutcome): ComputeQuoteOutcome {
   if (!outcome.ok) return outcome;
   const result = { ...outcome.result, unitPrice: ceilTo05(outcome.result.unitPrice) };
   delete result.unitPriceVat;
   delete result.totalPriceVat;
-  if (outcome.productType !== 'namecard') {
+  if (!KEEP_CALC_TOTAL.has(outcome.productType)) {
     const qty = outcome.spec.qty;
     if (typeof qty === 'number' && qty > 0) {
       result.totalPrice = Math.round(result.unitPrice * qty * 100) / 100;

@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   detectHumanRequest, detectOrderIntent, detectCustomerEscalation,
   ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, TRIGGER_LABEL, INTRO_TEXT, HINT_TEXT, HINT_QUICK_REPLY,
+  detectPriceTableTopic, hintQuickReply, SEEDED_EXIT_HINT,
 } from '@/lib/ai-quote/customer-triggers';
 
 describe('detectHumanRequest (trigger ① — checked before the engine call)', () => {
@@ -65,5 +66,28 @@ describe('canned copy', () => {
   it('hint quick-reply sends an enter keyword (bare — gate "/" reverted 2026-07-17)', () => {
     expect(HINT_QUICK_REPLY.text).toBe('ขอราคา AI');
     expect(HINT_TEXT).toContain('ทีมงาน');
+  });
+});
+
+describe('price-table topics (calendar / PVC)', () => {
+  it.each([['บัตร PVC ราคาเท่าไหร่', 'pvc'], ['ทำบัตรพีวีซีไหม', 'pvc'], ['ปฏิทินแขวน 500 ชุด', 'calendar'], ['อยากได้ปฏิทินกับบัตร pvc', 'pvc'], ['โบรชัวร์ A4', 'null']])('detectPriceTableTopic(%s) → %s', (t, want) => {
+    expect(String(detectPriceTableTopic(t))).toBe(want);
+  });
+  it('hintQuickReply labels fit the LINE 20-char limit and carry the AI token', () => {
+    for (const topic of ['pvc', 'calendar', null] as const) {
+      const q = hintQuickReply(topic);
+      expect(Array.from(q.label).length).toBeLessThanOrEqual(20);
+      expect(q.text).toMatch(/^ขอราคา AI/);
+    }
+    expect(hintQuickReply(null)).toEqual(HINT_QUICK_REPLY);
+  });
+  it('intro + hint list the two new products', () => {
+    for (const t of [INTRO_TEXT, HINT_TEXT]) {
+      expect(t).toContain('ปฏิทิน');
+      expect(t).toContain('บัตร PVC');
+    }
+  });
+  it('SEEDED_EXIT_HINT tells the customer how to leave', () => {
+    expect(SEEDED_EXIT_HINT).toBe("(พิมพ์ 'ออก' เมื่อต้องการกลับไปคุยกับทีมงานค่ะ)");
   });
 });

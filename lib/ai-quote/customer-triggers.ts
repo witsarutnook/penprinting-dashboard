@@ -3,6 +3,8 @@
 // customer AI-quote flow (Phase 1b-B, spec §4). Pure module — no I/O — the
 // webhook router imports it directly (no injection needed for pure fns).
 
+import type { QuickReply } from './channels/types';
+
 export type TriggerType = 'human' | 'out_of_scope' | 'rounds' | 'order_intent';
 
 /** ① Customer asks for a human. Checked BEFORE the engine call. */
@@ -51,7 +53,7 @@ export const TRIGGER_LABEL: Record<TriggerType, string> = {
 export const INTRO_TEXT =
   'สวัสดีค่ะ 🤖 น้อง PP ผู้ช่วยประเมินราคาอัตโนมัติของ Penprinting ยินดีให้บริการค่ะ\n' +
   'พิมพ์สเปกงานมาได้เลย เช่น "โบรชัวร์ A4 1,000 ใบ" หรือ "หนังสือ A5 100 หน้า 500 เล่ม"\n' +
-  '• ตีราคาได้: โบรชัวร์/ใบปลิว · หนังสือ · สมุด · นามบัตร\n' +
+  '• ตีราคาได้: โบรชัวร์/ใบปลิว · หนังสือ · สมุด · นามบัตร · ปฏิทิน · บัตร PVC\n' +
   '• พิมพ์ "ออก" เมื่อต้องการกลับไปคุยกับทีมงาน\n' +
   'ราคาที่ได้เป็นการประเมินเบื้องต้น ทีมงานยืนยันอีกครั้งค่ะ';
 
@@ -62,13 +64,38 @@ export const HINT_TEXT =
   'รอสักครู่นะค้า ทีมงานจะรีบตอบกลับลูกค้าโดยเร็วค่ะ\n' +
   '\n' +
   'หากต้องการประเมินราคาเบื้องต้นกับน้อง PP (AI) สามารถกดปุ่มด้านล่างได้เลยค่ะ\n' +
-  '(เฉพาะรายการโบรชัวร์ · หนังสือ · สมุด · นามบัตร)\n' +
+  '(เฉพาะรายการโบรชัวร์ · หนังสือ · สมุด · นามบัตร · ปฏิทิน · บัตร PVC)\n' +
   '\n' +
   'รายการ Packaging และอื่นๆ ทีมงานจะรีบตอบกลับลูกค้าอีกครั้งในชั่วโมงทำการนะค้า ☺️💗';
 
 // Gate "/" reverted 2026-07-17 — bare text matches isEnterAiKeyword (which
 // still accepts the old "/ขอราคา AI" from buttons delivered before the revert).
 export const HINT_QUICK_REPLY = { label: '🤖 เริ่มขอราคา AI', text: 'ขอราคา AI' };
+
+/** Customer mentions a price-table product outside AI mode (calendar / PVC card)
+ *  → the hint button seeds that topic so the AI opens on the right table.
+ *  PVC is checked BEFORE calendar: a message naming both → 'pvc'. */
+export type PriceTableTopic = 'pvc' | 'calendar';
+
+export function detectPriceTableTopic(text: string): PriceTableTopic | null {
+  if (/pvc|พีวีซี|บัตรพลาสติก/i.test(text)) return 'pvc';
+  if (/ปฏิทิน/.test(text)) return 'calendar';
+  return null;
+}
+
+/** Topic-aware hint button. Labels stay ≤20 code points (LINE quick-reply cap);
+ *  every payload starts with "ขอราคา AI". NOTE: webhook-router's isEnterAiKeyword
+ *  is `$`-anchored — the topic payloads need the router (Task 9) to accept the
+ *  optional topic suffix before these buttons can enter the mode. */
+export function hintQuickReply(topic: PriceTableTopic | null): QuickReply {
+  if (topic === 'pvc') return { label: '🤖 ดูราคาบัตร PVC', text: 'ขอราคา AI บัตร PVC' };
+  if (topic === 'calendar') return { label: '🤖 ดูราคาปฏิทิน', text: 'ขอราคา AI ปฏิทิน' };
+  return HINT_QUICK_REPLY;
+}
+
+/** Appended after a seeded-entry reply (customer entered AI mode via a topic
+ *  button, so never saw INTRO_TEXT's exit instructions). */
+export const SEEDED_EXIT_HINT = "(พิมพ์ 'ออก' เมื่อต้องการกลับไปคุยกับทีมงานค่ะ)";
 
 export const RATE_LIMIT_TEXT =
   'ขออภัยค่ะ มีการใช้งานถี่เกินไป รบกวนรอสักครู่ หรือรอทีมงานติดต่อกลับนะคะ 🙏';

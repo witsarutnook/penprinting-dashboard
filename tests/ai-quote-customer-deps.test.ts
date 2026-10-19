@@ -116,6 +116,14 @@ describe('customer price rounding (ceil to 0.05)', () => {
     }
     expect(out.ok).toBe(true);
   });
+  it('keeps calendar/pvccard totalPrice from calc (design fee + 0.25-step unit must survive)', () => {
+    const r = roundOutcomeForCustomer({ ok: true, productType: 'pvccard', spec: { qty: 20 }, result: { unitPrice: 90, designFee: 300, totalPrice: 2100, unitPriceVat: 96.3, totalPriceVat: 2247 } });
+    if (r.ok) { expect(r.result.totalPrice).toBe(2100); expect(r.result.unitPrice).toBe(90); expect(r.result.unitPriceVat).toBeUndefined(); }
+    expect(r.ok).toBe(true);
+    const c = roundOutcomeForCustomer({ ok: true, productType: 'calendar', spec: { qty: 800 }, result: { unitPrice: 20.25, totalPrice: 16200 } });
+    if (c.ok) { expect(c.result.unitPrice).toBe(20.25); expect(c.result.totalPrice).toBe(16200); }
+    expect(c.ok).toBe(true);
+  });
   it('roundOutcomeForCustomer passes calc errors through untouched', () => {
     const err = { ok: false as const, recoverable: true as const, message: 'สเปคไม่ครบ' };
     expect(roundOutcomeForCustomer(err)).toBe(err);
