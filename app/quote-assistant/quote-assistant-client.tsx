@@ -3,13 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { IconSparkles, IconCopy, IconCheck } from '@/lib/icons';
 import type { AiQuote, AiQuoteResponse, ConversationTurn } from '@/lib/ai-quote/types';
+import { PRODUCT_LABEL, unitLabel } from '@/lib/ai-quote/product-labels';
+import { PRICE_TABLE_LABEL, priceTableUrl, type PriceTableId } from '@/lib/ai-quote/price-tables';
 
-const PRODUCT_LABEL: Record<string, string> = {
-  brochure: 'โบรชัวร์/ใบปลิว',
-  book: 'หนังสือ',
-  notebook: 'สมุด',
-  namecard: 'นามบัตร',
-};
 const MODE_LABEL: Record<string, string> = { offset: 'ออฟเซ็ต', digital: 'ดิจิทัล' };
 
 const PRICE_NOTE = 'ราคานี้ยังไม่รวม VAT 7% · ราคาประเมินเบื้องต้น ทีมขายยืนยันอีกครั้ง';
@@ -23,6 +19,7 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [lastQuotes, setLastQuotes] = useState<AiQuote[]>([]);
+  const [lastTables, setLastTables] = useState<PriceTableId[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -58,6 +55,7 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
       setSessionId(data.sessionId);
       setMessages((prev) => [...prev, { role: 'assistant', text: data.reply }]);
       setLastQuotes(data.quotes ?? []);
+      setLastTables(data.priceTables ?? []);
       setLeadSaved(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -191,7 +189,7 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-bold text-accent tabular-nums">
-                    ≈ {q.unitPrice.toFixed(2)} <span className="text-xs font-normal text-stone-400">บาท/ชิ้น</span>
+                    ≈ {q.unitPrice.toFixed(2)} <span className="text-xs font-normal text-stone-400">บาท/{unitLabel(q.productType)}</span>
                   </div>
                   <div className="text-[11px] text-stone-400 tabular-nums">เต็ม {q.unitPrice} บาท</div>
                 </div>
@@ -209,6 +207,27 @@ export function QuoteAssistantClient({ compact = false }: { compact?: boolean } 
               {copied ? 'คัดลอกแล้ว' : 'คัดลอกข้อความราคา'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Price-table images the AI sent to the customer this turn */}
+      {lastTables.length > 0 && (
+        <div className="bg-white rounded-2xl border border-stone-200 p-4 space-y-1.5">
+          <p className="text-xs text-stone-500">📊 ตารางราคาที่ส่งให้ลูกค้า:</p>
+          <ul className="flex flex-wrap gap-x-4 gap-y-1">
+            {lastTables.map((id) => (
+              <li key={id}>
+                <a
+                  href={priceTableUrl(id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium text-accent underline underline-offset-2 hover:opacity-80"
+                >
+                  {PRICE_TABLE_LABEL[id]}
+                </a>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

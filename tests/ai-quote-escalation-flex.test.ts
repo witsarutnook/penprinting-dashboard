@@ -32,6 +32,18 @@ describe('buildEscalationFlex (1b-B §4)', () => {
     expect(s).toContain('4.78');
     expect(s).toContain('โบรชัวร์');
   });
+  it('labels calendar/pvccard quotes with product name and unit', () => {
+    const flex = JSON.stringify(buildEscalationFlex({ ...base, lastQuote: { productType: 'calendar', unitPrice: 20.25 } }));
+    expect(flex).toContain('ปฏิทิน');
+    expect(flex).toContain('20.25 บ./ชุด');
+    const pvc = JSON.stringify(buildEscalationFlex({ ...base, lastQuote: { productType: 'pvccard', unitPrice: 90 } }));
+    expect(pvc).toContain('บัตร PVC');
+    expect(pvc).toContain('90.00 บ./ใบ');
+  });
+  it('keeps the default ชิ้น unit for brochure', () => {
+    const flex = JSON.stringify(buildEscalationFlex({ ...base, lastQuote: { productType: 'brochure', unitPrice: 4.78 } }));
+    expect(flex).toContain('4.78 บ./ชิ้น');
+  });
   it('links to /quote-leads and truncates long messages', () => {
     const f = buildEscalationFlex({ ...base, lastUserText: 'ก'.repeat(300) });
     const s = JSON.stringify(f);

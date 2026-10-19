@@ -2,6 +2,7 @@
 // Escalation hand-off → Flex card pushed to the staff LINE group (Phase 1b-B
 // spec §4). Pure + total like slip-flex.ts: never throws, null-safe fields.
 import { TRIGGER_LABEL, type TriggerType } from './customer-triggers';
+import { PRODUCT_LABEL, unitLabel } from './product-labels';
 
 const ACCENT = '#c8553d'; // Penprinting brand
 const TEXT = '#2c2c2a';
@@ -23,8 +24,6 @@ const HEADER: Record<'A' | 'B', { bg: string; fg: string; label: string }> = {
   A: { bg: '#fdf0e7', fg: '#b45309', label: '🔔 AI ส่งต่อลูกค้าให้ทีมงาน' },
   B: { bg: '#e1f5ee', fg: '#0f6e56', label: '🛒 ลูกค้าพร้อมสั่ง (จาก AI)' },
 };
-
-const PRODUCT_LABEL: Record<string, string> = { brochure: 'โบรชัวร์/ใบปลิว', book: 'หนังสือ', notebook: 'สมุด', namecard: 'นามบัตร' };
 
 function kvRow(label: string, value: string): Record<string, unknown> {
   return {
@@ -51,7 +50,7 @@ export function buildEscalationFlex(input: EscalationFlexInput): Record<string, 
   if (input.lastQuote) {
     body.push(kvRow(
       'ราคาล่าสุด',
-      `${PRODUCT_LABEL[input.lastQuote.productType] ?? input.lastQuote.productType} · ~${input.lastQuote.unitPrice.toFixed(2)} บ./ชิ้น`,
+      `${PRODUCT_LABEL[input.lastQuote.productType] ?? input.lastQuote.productType} · ~${input.lastQuote.unitPrice.toFixed(2)} บ./${unitLabel(input.lastQuote.productType)}`,
     ));
   }
   if (input.lastUserText) {

@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { loadQuoteLogDetail, mergeTimeline, type TurnFlag } from '@/lib/ai-quote/logs';
+import { PRODUCT_LABEL } from '@/lib/ai-quote/product-labels';
 import { FlagButton } from './flag-button';
 
 export const dynamic = 'force-dynamic';
@@ -27,11 +28,6 @@ function fmtBkk(iso: string | undefined, withDate = false): string | null {
     hour: '2-digit', minute: '2-digit',
   });
 }
-
-const PRODUCT_LABEL: Record<string, string> = {
-  brochure: 'โบรชัวร์/ใบปลิว', book: 'หนังสือ', notebook: 'สมุด',
-  box: 'กล่อง', bag: 'ถุงกระดาษ', namecard: 'นามบัตร',
-};
 
 function specSummary(spec: Record<string, unknown>): string {
   const parts: string[] = [];

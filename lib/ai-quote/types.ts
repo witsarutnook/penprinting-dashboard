@@ -3,6 +3,7 @@
 // Box/bag are recognised by the model but NOT quoted (escalate) — see D8.
 // namecard added 2026-07-13 (fix rate/box on the calc API).
 // calendar + pvccard added 2026-10-19 (price-table products).
+import type { PriceTableId } from './price-tables';
 
 export type ProductType = 'brochure' | 'book' | 'notebook' | 'namecard' | 'calendar' | 'pvccard';
 
@@ -93,6 +94,7 @@ export interface AiQuoteResponse {
   reply: string;            // assistant text for the staff to read/copy
   quotes: AiQuote[];        // any compute_quote results produced this turn
   escalated: boolean;       // true if the model signalled an escalation
+  priceTables?: PriceTableId[]; // price-table images sent to the customer this turn (staff panel shows links)
 }
 
 /** POST /api/ai-quote/leads — explicit "save as lead" (no-auto-save). */

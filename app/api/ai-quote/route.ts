@@ -89,6 +89,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       id: savedQuoteIds[i] ?? i, sessionId: sessionId ?? 0, productType: q.productType, spec: q.spec, result: q.result, unitPrice: q.unitPrice, createdAt: new Date().toISOString(),
     })),
     escalated: out.escalated,
+    priceTables: out.priceTables,
   };
   return NextResponse.json(resp);
 }
