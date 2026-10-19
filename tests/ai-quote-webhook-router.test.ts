@@ -1,7 +1,8 @@
 // tests/ai-quote-webhook-router.test.ts
 import { describe, it, expect, vi } from 'vitest';
-import { routeInbound, handleInbound, parseTrackCommand } from '@/lib/ai-quote/webhook-router';
+import { routeInbound, handleInbound, parseTrackCommand, parseEnterAiSeed } from '@/lib/ai-quote/webhook-router';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
+import { RATE_LIMIT_TEXT } from '@/lib/ai-quote/customer-triggers';
 import type { InboundMessage } from '@/lib/ai-quote/channels/types';
 
 const base = { channel: 'line' as const, channelUserId: 'U1', replyToken: 'rt' };
@@ -237,6 +238,20 @@ describe('routeInbound — 1b-B mode keywords (aiEnabled=true)', () => {
   it.each(['ขอราคา', 'ตีราคา', 'ขอราคา AI', 'ขอราคาai'])('bare keyword: %s → enter-ai', (t) => {
     expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
   });
+  // Seeded entry (Messenger topic buttons carry "ขอราคา AI <product>"): the `ai`
+  // token is REQUIRED — enter-ai bypasses the 24h/48h hint gates, so it stays narrow.
+  it.each(['ขอราคา AI บัตร PVC', '/ขอราคา AI ปฏิทิน', 'ขอราคาai ปฏิทิน'])('seed form %s → enter-ai', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('enter-ai');
+  });
+  it.each(['ขอราคา ปฏิทิน 500 ชุด', 'ขอราคาบัตร PVC หน่อย', 'ตีราคา แขวน'])('natural sentence without the AI token %s → ai (NOT enter-ai)', (t) => {
+    expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('ai');
+  });
+  it('parseEnterAiSeed extracts the trailing product phrase', () => {
+    expect(parseEnterAiSeed('ขอราคา AI บัตร PVC')).toBe('บัตร PVC');
+    expect(parseEnterAiSeed('  /ตีราคาai   ปฏิทิน 500 ชุด ')).toBe('ปฏิทิน 500 ชุด');
+    expect(parseEnterAiSeed('ขอราคา AI')).toBeNull();
+    expect(parseEnterAiSeed('ขอราคา ปฏิทิน')).toBeNull();
+  });
   it.each(['จบ', 'ออก', 'ออกจากโหมด AI'])('exit keyword: %s → exit-ai', (t) => {
     expect(routeInbound({ ...base, kind: 'text', text: t }, on)).toBe('exit-ai');
   });
@@ -304,6 +319,81 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     await handleInbound(text1on1('/ขอราคา AI'), deps as never);
     expect(calls).toContain('enter');
     expect(String(replies[0])).toContain('ประเมินราคาอัตโนมัติ');
+  });
+  it('bare postback ai_quote_start still sends the intro (no seed)', async () => {
+    const runTurn = vi.fn();
+    const { ai, calls } = stubAi({ runTurn });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound({ channel: 'line', channelUserId: 'U1', kind: 'postback', postbackData: 'ai_quote_start', replyToken: 'rt' }, deps as never);
+    expect(calls).toContain('enter');
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(String(replies[0])).toContain('ประเมินราคาอัตโนมัติ');
+  });
+  it('seeded entry enters the mode and runs the first turn with the seed, appending the exit hint', async () => {
+    const runTurn = vi.fn(async () => ({ reply: '📊 ตารางราคาบัตร PVC อยู่ด้านบนนะคะ กี่ใบดีคะ', quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }));
+    const { ai, calls } = stubAi({ runTurn });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI บัตร PVC'), deps as never);
+    expect(calls).toContain('enter');
+    expect(runTurn).toHaveBeenCalledWith(expect.anything(), 'บัตร PVC');
+    const sent = replies[0] as unknown[];
+    expect(sent[0]).toMatchObject({ type: 'image' }); expect(sent[1]).toContain('ออก');
+    expect(String(replies[0])).not.toContain('ประเมินราคาอัตโนมัติ');   // no INTRO
+  });
+  it('seeded entry: mode is loaded AFTER enterMode, even when out-of-mode state would fail the active gate', async () => {
+    const order: string[] = [];
+    const runTurn = vi.fn(async () => ({ reply: 'กี่ชุดดีคะ', quotes: [], escalated: false, newHistory: [], priceTables: [] }));
+    const { ai, calls } = stubAi({
+      runTurn,
+      enterMode: async () => { order.push('enter'); },
+      loadMode: async () => { order.push('load'); return ACTIVE_MODE; },
+      modeActive: () => false,   // stale row would be inactive — the seeded turn must skip this gate
+    });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    expect(order).toEqual(['enter', 'load']);
+    expect(runTurn).toHaveBeenCalledWith(expect.anything(), 'ปฏิทิน');   // engine ran, not the hint path
+    expect(calls).not.toContain('hint-sent');
+    expect(String(replies[0])).toContain('กี่ชุดดีคะ');
+  });
+  it('seeded entry: persisted assistant turn equals the reply the customer saw (exit hint included)', async () => {
+    const saved: unknown[][] = [];
+    const { ai } = stubAi({ saveConversation: async (_id: number, conv: unknown[]) => { saved.push(conv); } });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    const conv = saved[0] as Array<{ role: string; text: string }>;
+    expect(conv[conv.length - 2]).toMatchObject({ role: 'user', text: 'ปฏิทิน' });
+    expect(conv[conv.length - 1]).toMatchObject({ role: 'assistant', text: String(replies[0]) });
+    expect(String(replies[0])).toContain("(พิมพ์ 'ออก'");
+  });
+  it('seeded entry: trigger ① still fires on the seed (hand-off reply carries no exit hint)', async () => {
+    const runTurn = vi.fn();
+    const { ai, calls } = stubAi({ runTurn, modeActive: () => false });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI คุยกับทีมงาน'), deps as never);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(calls).toContain('status:escalated');
+    expect(String(replies[0])).not.toContain("(พิมพ์ 'ออก'");
+  });
+  it('seeded entry: rate limit still applies to the seeded turn', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn, checkRateLimit: async () => false, modeActive: () => false });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(replies.length).toBe(1);
+    expect(String(replies[0])).toBe(RATE_LIMIT_TEXT);   // rate-limit reply, not the out-of-mode hint
+  });
+  it('out-of-mode PVC text gets the PVC button; generic text keeps the default button', async () => {
+    const { ai } = stubAi({ modeActive: () => false, loadMode: async () => null });
+    const quick: unknown[] = [];
+    const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai, adapter: { downloadImage: async () => new Blob(), push: async () => {}, reply: async (_m: unknown, _msg: unknown, qrs?: unknown) => { quick.push(qrs); } } });
+    await handleInbound(text1on1('บัตร PVC ราคาเท่าไหร่'), deps as never);
+    expect(quick[0]).toEqual([{ label: '🤖 ดูราคาบัตร PVC', text: 'ขอราคา AI บัตร PVC' }]);
+    await handleInbound(text1on1('ปฏิทิน 2570'), { ...deps, aiCustomer: { ...ai, hintAllowed: () => true } } as never);
+    expect(quick[1]).toEqual([{ label: '🤖 ดูราคาปฏิทิน', text: 'ขอราคา AI ปฏิทิน' }]);
+    await handleInbound(text1on1('สวัสดีค่ะ'), { ...deps, aiCustomer: { ...ai, hintAllowed: () => true } } as never);
+    expect(quick[2]).toEqual([{ label: '🤖 เริ่มขอราคา AI', text: 'ขอราคา AI' }]);
   });
   it('exit keyword in-mode exits and confirms', async () => {
     const { ai, calls } = stubAi();

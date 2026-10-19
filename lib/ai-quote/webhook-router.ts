@@ -12,15 +12,17 @@ import type { EscalationFlexInput } from './escalation-flex';
 import {
   detectHumanRequest, detectOrderIntent, detectCustomerEscalation,
   ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, INTRO_TEXT, EXIT_TEXT, HINT_TEXT,
-  HINT_QUICK_REPLY, RATE_LIMIT_TEXT, ERROR_TEXT, type TriggerType,
+  RATE_LIMIT_TEXT, ERROR_TEXT, SEEDED_EXIT_HINT, detectPriceTableTopic, hintQuickReply,
+  type TriggerType,
 } from './customer-triggers';
 
 /** Customer-AI turn reply: price-table images FIRST (so they sit above the text in
- *  the chat), the model's text LAST. No tables → the plain string, unchanged.
- *  Used ONLY by the final in-mode reply — hand-off (escalate) replies never carry images. */
-function withPriceTables(out: RunQuoteTurnOutput, channel: InboundMessage['channel']): OutboundMessage | OutboundMessage[] {
-  if (out.priceTables.length === 0) return out.reply;
-  return [...out.priceTables.map((id) => priceTableImageMessage(id, channel)), out.reply];
+ *  the chat), the text LAST. No tables → the plain string, unchanged.
+ *  Used ONLY by the final in-mode reply — hand-off (escalate) replies never carry images.
+ *  `text` is passed in (not read from out.reply) so a seeded entry can append its exit hint. */
+function withPriceTables(out: RunQuoteTurnOutput, text: string, channel: InboundMessage['channel']): OutboundMessage | OutboundMessage[] {
+  if (out.priceTables.length === 0) return text;
+  return [...out.priceTables.map((id) => priceTableImageMessage(id, channel)), text];
 }
 
 export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'ignore';
@@ -53,9 +55,21 @@ export function parseTrackCommand(text: string):
  *  Soft-launch "/" gate reverted 2026-07-17 (rich menu + hint live, entry via
  *  postback ai_quote_start ครอบอยู่แล้ว): bare "ขอราคา"/"ตีราคา" enters. The
  *  "/" prefix stays OPTIONAL — hint quick-reply buttons already delivered to
- *  customer chats carry the old "/ขอราคา AI" text and must keep working. */
+ *  customer chats carry the old "/ขอราคา AI" text and must keep working.
+ *  2026-10-19: also accepts the seeded form "ขอราคา AI <product>" (topic buttons) —
+ *  see parseEnterAiSeed; the `ai` token stays mandatory there. */
 export function isEnterAiKeyword(text: string): boolean {
-  return /^\/?(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim());
+  return /^\/?(ขอราคา|ตีราคา)(\s*ai)?$/i.test(text.trim()) || parseEnterAiSeed(text) !== null;
+}
+
+/** Seeded entry — `ขอราคา AI <product>` (the topic-aware hint buttons, e.g.
+ *  "ขอราคา AI บัตร PVC") enters the mode AND runs the first turn on <product>.
+ *  The literal `ai` token is REQUIRED: enter-ai bypasses the 24h/48h hint gates, so a
+ *  natural sentence ("ขอราคา ปฏิทิน 500 ชุด") must keep routing to the plain `ai` arm.
+ *  Returns the trimmed trailing phrase, or null (bare keyword / no `ai` token). */
+export function parseEnterAiSeed(text: string): string | null {
+  const m = text.trim().match(/^\/?(?:ขอราคา|ตีราคา)\s*ai\s+(\S.*)$/i);
+  return m ? m[1].trim() : null;
 }
 
 /** Mode exit keywords (spec §1). "คุยกับทีมงาน" is deliberately NOT here —
@@ -261,14 +275,23 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   const uid = m.channelUserId;
   const now = Date.now();
 
+  // Only three things enter the mode: the bare keyword, `ขอราคา AI <product>` (seeded),
+  // and the ai_quote_start postback (routeInbound). Bare/postback → INTRO and stop;
+  // seeded → fall through and run the first turn on the seed.
+  let seed: string | null = null;
   if (route === 'enter-ai') {
+    seed = m.kind === 'text' && m.text ? parseEnterAiSeed(m.text) : null;
     await ai.enterMode(uid);
-    await deps.adapter.reply(m, INTRO_TEXT);
-    return;
+    if (seed === null) {
+      await deps.adapter.reply(m, INTRO_TEXT);
+      return;
+    }
   }
 
+  // Loaded AFTER enterMode on purpose: a seeded turn must read the fresh row
+  // (rounds_no_quote = 0, last_activity = now), not the pre-entry one.
   const mode = await ai.loadMode(uid);
-  const active = mode !== null && ai.modeActive(mode.lastActivityAt, now);
+  const active = seed !== null || (mode !== null && ai.modeActive(mode.lastActivityAt, now));
 
   if (route === 'exit-ai') {
     if (active) {
@@ -289,7 +312,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     if (mode && ai.staffActive(mode.lastStaffReplyAt, now)) return;
     if (mode && !ai.hintAllowed(mode.lastHintAt, now)) return;
     await ai.markHintSent(uid);
-    await deps.adapter.reply(m, HINT_TEXT, [HINT_QUICK_REPLY]);
+    await deps.adapter.reply(m, HINT_TEXT, [hintQuickReply(detectPriceTableTopic(m.text!))]);
     return;
   }
 
@@ -301,7 +324,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
 
   // Load (owner-checked, M5) or create the LINE-channel session. A mismatch
   // returns null and we start fresh — indistinguishable from not-found.
-  let sessionId = mode!.sessionId;
+  let sessionId = mode?.sessionId ?? null;
   let conversation: ConversationTurn[] = [];
   let customerName: string | null = null;
   if (sessionId) {
@@ -315,7 +338,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     customerName = created.customerName;
   }
 
-  const text = m.text!;
+  const text = seed ?? m.text!;
   const sid = sessionId;
   const escalate = async (trigger: TriggerType, conv: ConversationTurn[], replyText: string) => {
     // Parallel persists (perf M-webhook 2026-07-23): the three DB ops are
@@ -393,18 +416,22 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     return;
   }
   // ③ วนหลายรอบไม่ได้ราคา — แทน reply ของ model ด้วยข้อความส่งต่อ
-  const rounds = out.quotes.length > 0 ? 0 : mode!.roundsNoQuote + 1;
+  const rounds = out.quotes.length > 0 ? 0 : (mode?.roundsNoQuote ?? 0) + 1;
   if (out.quotes.length === 0 && rounds >= ROUNDS_NO_QUOTE_LIMIT) {
     await escalate('rounds', persistedConv(CUSTOMER_REPLY.rounds), CUSTOMER_REPLY.rounds);
     return;
   }
 
+  // Seeded entry: the customer never saw INTRO_TEXT's exit instructions, so the
+  // first reply carries them. What we persist = what the customer sees.
+  const replyText = seed !== null ? `${out.reply}\n\n${SEEDED_EXIT_HINT}` : out.reply;
+
   // Parallel persists (perf M-webhook 2026-07-23): conversation and mode live
   // in different tables with no ordering dependency — run concurrently, but
   // both must land BEFORE the reply (persist-before-reply, 7/23 incident rule).
   await Promise.all([
-    ai.saveConversation(sid, persistedConv(out.reply)),
+    ai.saveConversation(sid, persistedConv(replyText)),
     ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds }),
   ]);
-  await deps.adapter.reply(m, withPriceTables(out, m.channel));
+  await deps.adapter.reply(m, withPriceTables(out, replyText, m.channel));
 }

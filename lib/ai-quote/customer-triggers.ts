@@ -84,9 +84,8 @@ export function detectPriceTableTopic(text: string): PriceTableTopic | null {
 }
 
 /** Topic-aware hint button. Labels stay ≤20 code points (LINE quick-reply cap);
- *  every payload starts with "ขอราคา AI". NOTE: webhook-router's isEnterAiKeyword
- *  is `$`-anchored — the topic payloads need the router (Task 9) to accept the
- *  optional topic suffix before these buttons can enter the mode. */
+ *  every payload starts with "ขอราคา AI"; webhook-router's
+ *  parseEnterAiSeed turns a tapped payload into mode entry + a first turn on the topic. */
 export function hintQuickReply(topic: PriceTableTopic | null): QuickReply {
   if (topic === 'pvc') return { label: '🤖 ดูราคาบัตร PVC', text: 'ขอราคา AI บัตร PVC' };
   if (topic === 'calendar') return { label: '🤖 ดูราคาปฏิทิน', text: 'ขอราคา AI ปฏิทิน' };
