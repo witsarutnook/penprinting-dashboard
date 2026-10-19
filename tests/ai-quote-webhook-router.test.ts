@@ -287,7 +287,7 @@ function stubAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
     countQuotes: async () => 0,
     loadLastQuote: async () => null,
     updateLeadStatus: async (_id: number, status: string) => { calls.push('status:' + status); },
-    runTurn: async () => ({ reply: 'ราคา ~5.00 บ./ชิ้น ยังไม่รวม VAT 7% — ราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ', quotes: [QUOTE], escalated: false, newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'y' }] }),
+    runTurn: async () => ({ reply: 'ราคา ~5.00 บ./ชิ้น ยังไม่รวม VAT 7% — ราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ', quotes: [QUOTE], escalated: false, priceTables: [], newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'y' }] }),
     buildEscalationFlex: () => ({ type: 'flex', altText: 'ESCALATE' }),
     pushStaff: async (msg: object) => { calls.push('push-staff'); pushed.push(msg); },
     ...over,
@@ -347,6 +347,51 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     expect(calls).toEqual(expect.arrayContaining(['save-quote', 'save-conv', 'touch']));
     expect(String(replies[0])).toContain('5.00');
   });
+  it('in-mode turn with price tables replies [image…, text] — image first, text last', async () => {
+    const { ai } = stubAi({ runTurn: async () => ({ reply: '📊 ตารางราคาบัตร PVC อยู่ด้านบนนะคะ กี่ใบดีคะ', quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }) });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('บัตร PVC'), deps as never);
+    const sent = replies[0] as unknown[];
+    expect(Array.isArray(sent)).toBe(true);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ type: 'image', originalContentUrl: expect.stringContaining('/price-tables/pvc_card.jpg') });
+    expect(sent[1]).toContain('กี่ใบ');
+  });
+  it('multiple price tables: every image precedes the text', async () => {
+    const { ai } = stubAi({ runTurn: async () => ({ reply: 'ตารางปฏิทินด้านบนค่ะ', quotes: [], escalated: false, newHistory: [], priceTables: ['calendar_desk', 'calendar_hanging'] }) });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    const sent = replies[0] as unknown[];
+    expect(sent).toHaveLength(3);
+    expect(sent[0]).toMatchObject({ originalContentUrl: expect.stringContaining('calendar_desk.jpg') });
+    expect(sent[1]).toMatchObject({ originalContentUrl: expect.stringContaining('calendar_hanging.jpg') });
+    expect(typeof sent[2]).toBe('string');
+  });
+  it('messenger channel gets an attachment image instead of a LINE image', async () => {
+    const { ai } = stubAi({ runTurn: async () => ({ reply: 'ตารางราคาอยู่ด้านบนค่ะ', quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }) });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    const msg: InboundMessage = { channel: 'messenger', channelUserId: 'PSID1', kind: 'text', text: 'บัตร PVC' };
+    await handleInbound(msg, deps as never);
+    const sent = replies[0] as unknown[];
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ attachment: { type: 'image' } });
+    expect(typeof sent[1]).toBe('string');
+  });
+  it('turn without price tables still replies a plain string', async () => {
+    const { ai } = stubAi({ runTurn: async () => ({ reply: 'ขอทราบจำนวนค่ะ', quotes: [], escalated: false, newHistory: [], priceTables: [] }) });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('บัตร PVC'), deps as never);
+    expect(typeof replies[0]).toBe('string');
+  });
+  it('hand-off turn never attaches price-table images (escalate path unchanged)', async () => {
+    const { ai, calls } = stubAi({
+      runTurn: async () => ({ reply: 'งานกล่องขอส่งต่อทีมงานประเมินให้นะคะ', quotes: [], escalated: true, newHistory: [], priceTables: ['pvc_card'] }),
+    });
+    const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
+    await handleInbound(text1on1('กล่องใส่บัตร PVC'), deps as never);
+    expect(calls).toContain('push-staff');
+    expect(typeof replies[0]).toBe('string');
+  });
   it('rate-limited turn declines politely without calling the engine', async () => {
     let engineCalled = false;
     const { ai } = stubAi({ checkRateLimit: async () => false, runTurn: async () => { engineCalled = true; throw new Error('no'); } });
@@ -400,7 +445,7 @@ describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
     let engineCalled = false;
     const { ai, calls } = stubAi({
       countQuotes: async () => 0,
-      runTurn: async () => { engineCalled = true; return { reply: 'ขอทราบจำนวนค่ะ', quotes: [], escalated: false, newHistory: [] }; },
+      runTurn: async () => { engineCalled = true; return { reply: 'ขอทราบจำนวนค่ะ', quotes: [], escalated: false, priceTables: [], newHistory: [] }; },
     });
     const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
     await handleInbound(text1on1('สั่งเลยค่ะ'), deps as never);
@@ -409,7 +454,7 @@ describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
   });
   it("② model hand-off (ส่งต่อทีมงาน, no quote): escalates with the model's own reply", async () => {
     const { ai, calls } = stubAi({
-      runTurn: async () => ({ reply: 'งานกล่องขอส่งต่อทีมงานประเมินให้นะคะ', quotes: [], escalated: true, newHistory: [] }),
+      runTurn: async () => ({ reply: 'งานกล่องขอส่งต่อทีมงานประเมินให้นะคะ', quotes: [], escalated: true, priceTables: [], newHistory: [] }),
     });
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
     await handleInbound(text1on1('กล่องใส่สินค้า 500 ใบ'), deps as never);
@@ -419,7 +464,7 @@ describe('handleInbound — 1b-B escalation triggers (spec §4)', () => {
   it('③ 4th no-quote round escalates with the fixed reply', async () => {
     const { ai, calls } = stubAi({
       loadMode: async () => ({ ...ACTIVE_MODE, roundsNoQuote: 3 }),
-      runTurn: async () => ({ reply: 'ขอทราบจำนวนหน้าค่ะ', quotes: [], escalated: false, newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'ขอทราบจำนวนหน้าค่ะ' }] }),
+      runTurn: async () => ({ reply: 'ขอทราบจำนวนหน้าค่ะ', quotes: [], escalated: false, priceTables: [], newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'ขอทราบจำนวนหน้าค่ะ' }] }),
     });
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
     await handleInbound(text1on1('หนังสือ'), deps as never);
@@ -611,6 +656,7 @@ describe('handleInbound — append-only conversation persist (M-quotelogs-flag-i
         quotes: [],
         escalated: true,
         newHistory: [{ role: 'user' as const, text: 'x' }, { role: 'assistant' as const, text: 'y' }],
+        priceTables: [],
       }),
     });
     const { deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });

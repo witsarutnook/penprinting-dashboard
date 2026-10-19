@@ -1,11 +1,12 @@
 // lib/ai-quote/webhook-router.ts
-import type { InboundMessage, ChannelAdapter } from './channels/types';
+import type { InboundMessage, ChannelAdapter, OutboundMessage } from './channels/types';
 import { extractOrderId } from './track-flex';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
 import type { ThunderVerifyResponse } from './slip';
 import type { ConversationTurn } from './types';
 import type { RunQuoteTurnOutput, ProducedQuote } from './run';
 import { mkTurn } from './run';
+import { priceTableImageMessage } from './price-tables';
 import type { LineModeRow } from './line-mode';
 import type { EscalationFlexInput } from './escalation-flex';
 import {
@@ -13,6 +14,14 @@ import {
   ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, INTRO_TEXT, EXIT_TEXT, HINT_TEXT,
   HINT_QUICK_REPLY, RATE_LIMIT_TEXT, ERROR_TEXT, type TriggerType,
 } from './customer-triggers';
+
+/** Customer-AI turn reply: price-table images FIRST (so they sit above the text in
+ *  the chat), the model's text LAST. No tables → the plain string, unchanged.
+ *  Used ONLY by the final in-mode reply — hand-off (escalate) replies never carry images. */
+function withPriceTables(out: RunQuoteTurnOutput, channel: InboundMessage['channel']): OutboundMessage | OutboundMessage[] {
+  if (out.priceTables.length === 0) return out.reply;
+  return [...out.priceTables.map((id) => priceTableImageMessage(id, channel)), out.reply];
+}
 
 export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'ignore';
 
@@ -397,5 +406,5 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     ai.saveConversation(sid, persistedConv(out.reply)),
     ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds }),
   ]);
-  await deps.adapter.reply(m, out.reply);
+  await deps.adapter.reply(m, withPriceTables(out, m.channel));
 }
