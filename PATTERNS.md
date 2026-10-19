@@ -427,7 +427,7 @@ function schedule() {
 - **helper เกลี่ยตัวเดียวทุกตาราง** (`tierUnitPrice` ใน calc): ช่วงที่เป็นช่วง = ราคาคงที่ · ระหว่างจุดติดกัน = เกลี่ยเชิงเส้น · ปัดขึ้นขั้น 0.25 — ตารางใหม่ = เพิ่มข้อมูล ไม่เพิ่มโค้ด
 - **ขอบตาราง = 422 ที่ recoverable** (`below_min` / `above_max` + message): model ได้ข้อความจริงไปแจ้ง/ส่งต่อ แทนการเดาหรือลากเส้นต่อเอง — เกินตาราง → วลี hand-off pin · ต่ำกว่าขั้นต่ำ → แจ้งแล้วถามต่อ (ห้ามใช้วลี pin)
 - **tool ที่ไม่มี I/O เป็นสัญญาณให้ router** (`send_price_table` → `{ sent: true }`): model "บอก" ว่าเทิร์นนี้ควรส่งรูปอะไร, `runQuoteTurn` รวมเป็น `priceTables` (dedupe) แล้ว router ประกอบ `[image…, text]` — model ไม่แตะ URL/ช่องทาง/ข้อจำกัด array เลย
-- **รูปกับตัวเลขต้องเปลี่ยนคู่กัน**: รูปอยู่ dashboard, ราคาอยู่ calc → แก้คู่ 2 repo + **รูปใหม่ใช้ชื่อไฟล์ใหม่** (URL ไม่มี version, Messenger `is_reusable` cache ตาม URL) แล้วแก้ `price-tables.ts` ตาม
+- **รูปกับตัวเลขต้องเปลี่ยนคู่กัน**: รูปอยู่ dashboard, ราคาอยู่ calc → แก้คู่ 2 repo (deploy ให้ใกล้กัน — ลำดับไหนก็มีช่วงสั้นๆ ที่รูปกับเลขไม่ตรง) + **รูปใหม่ใช้ชื่อไฟล์ใหม่** (URL ไม่มี version, Messenger `is_reusable` cache ตาม URL). ⚠️ id ของตาราง = ชื่อไฟล์ (`priceTableUrl = ${id}.jpg`) และ id ถูกฝังใน prompt ทั้งสอง (`prompt.ts` + `prompt-customer.ts` กฎ `send_price_table`) + เทสต์ → ชื่อใหม่ = **id ใหม่ใน `price-tables.ts` + แก้ prompt ทั้งสอง + เทสต์** ไม่ใช่แค่แก้ `price-tables.ts`; ทางเลือก: แยกชื่อไฟล์ออกจาก id ด้วย file map (id คงที่ → แก้แค่ map + ไฟล์)
 - **calc ไม่มี unit test → `scripts/smoke-baselines.json` คือ suite เดียว**: ใส่ค่ามือคำนวณจาก spec ก่อนเขียนโค้ด (RED) แล้วทำให้โค้ดตามเลข — ห้ามดัดเลขตามโค้ด · pin ทุก field (`unitPrice` `totalPrice` `designFee` `sheetsPerSet`) + เคส 422 ผ่าน `expectStatus`
 
 ---
