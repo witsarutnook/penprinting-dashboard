@@ -4,7 +4,7 @@
 // at the bottom. Spec: docs/superpowers/specs/2026-07-08-ai-quote-phase1c-messenger-design.md
 import 'server-only';
 import crypto from 'node:crypto';
-import type { ChannelAdapter, InboundMessage, QuickReply } from './types';
+import type { ChannelAdapter, InboundMessage, OutboundMessage, QuickReply } from './types';
 
 /** Verify Meta webhook signature: header `X-Hub-Signature-256` =
  *  'sha256=' + hex(HMAC-SHA256(rawBody, FB_APP_SECRET)). Constant-time compare;
@@ -125,6 +125,18 @@ export async function sendMessenger(psid: string, message: string | object, qrs?
   if (!res.ok) throw new Error(`Messenger send HTTP ${res.status}`);
 }
 
+/** ส่งหลาย message ตามลำดับ (Send API = 1 call ต่อ message): await ต่อกันทีละตัว
+ *  เพื่อให้ลำดับถึงลูกค้าตรง (รูปก่อนข้อความ) · quick replies ติดตัวสุดท้ายเท่านั้น.
+ *  ตัวใดตัวหนึ่งล้ม → throw ทันที ตัวที่เหลือไม่ถูกส่ง. */
+async function sendMessengerMessages(
+  psid: string, message: OutboundMessage | OutboundMessage[], qrs?: QuickReply[],
+): Promise<void> {
+  const list = Array.isArray(message) ? message : [message];
+  for (let i = 0; i < list.length; i++) {
+    await sendMessenger(psid, list[i], i === list.length - 1 ? qrs : undefined);
+  }
+}
+
 /** ดึง bytes ของรูปจาก attachment CDN URL (ไม่ต้อง auth). URL หมดอายุได้ —
  *  เรียกทันทีที่ webhook มาถึงเท่านั้น ห้าม defer. */
 export async function downloadMessengerImage(url: string): Promise<Blob> {
@@ -155,7 +167,7 @@ export function buildMessengerAdapter(appSecret: string, ourAppId?: string): Cha
     verifySignature: (rawBody, sig) => verifyMessengerSignature(rawBody, sig, appSecret),
     parseEvents: (body) => parseMessengerEvents(body, { ourAppId }),
     downloadImage: (msg) => downloadMessengerImage(msg.imageMessageId!),
-    reply: (msg, message, qrs) => sendMessenger(msg.channelUserId, message, qrs),
-    push: (id, text) => sendMessenger(id, text),
+    reply: (msg, message, qrs) => sendMessengerMessages(msg.channelUserId, message, qrs),
+    push: (id, message) => sendMessengerMessages(id, message),
   };
 }

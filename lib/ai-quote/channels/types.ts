@@ -24,6 +24,9 @@ export interface InboundMessage {
   roomId?: string;              // sourceType==='room'
 }
 
+/** ข้อความขาออก 1 ชิ้น: string = text, object = flex/image/ready-made provider message. */
+export type OutboundMessage = string | object;
+
 export interface ChannelAdapter {
   /** Verify webhook authenticity (HMAC). Reject ก่อน process. */
   verifySignature(rawBody: string, signature: string): boolean;
@@ -31,8 +34,9 @@ export interface ChannelAdapter {
   parseEvents(body: unknown): InboundMessage[];
   /** ดึง bytes ของรูปจาก provider (สำหรับ slip). */
   downloadImage(msg: InboundMessage): Promise<Blob>;
-  /** ตอบกลับ (ฟรีถ้ามี replyToken). message = text หรือ flex/object. */
-  reply(msg: InboundMessage, message: string | object, quickReplies?: QuickReply[]): Promise<void>;
+  /** ตอบกลับ (ฟรีถ้ามี replyToken). message = text หรือ flex/object, หรือ array ของพวกนี้
+   *  (ส่งตามลำดับ — เช่น รูปก่อนข้อความ). quickReplies ติดตัวสุดท้ายเท่านั้น. */
+  reply(msg: InboundMessage, message: OutboundMessage | OutboundMessage[], quickReplies?: QuickReply[]): Promise<void>;
   /** ส่ง push by user id (เผื่อ reply token หมด / แจ้งทีหลัง). */
-  push(channelUserId: string, text: string): Promise<void>;
+  push(channelUserId: string, message: OutboundMessage | OutboundMessage[]): Promise<void>;
 }

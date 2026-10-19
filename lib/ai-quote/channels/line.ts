@@ -1,7 +1,7 @@
 // lib/ai-quote/channels/line.ts
 import 'server-only';
 import crypto from 'node:crypto';
-import type { ChannelAdapter, InboundMessage, QuickReply } from './types';
+import type { ChannelAdapter, InboundMessage, OutboundMessage, QuickReply } from './types';
 
 interface LineSource { type?: string; userId?: string; groupId?: string; roomId?: string }
 interface LineMessage { type?: string; text?: string; id?: string }
@@ -115,27 +115,44 @@ function quickReplyPayload(qrs?: QuickReply[]) {
   return { items: qrs.map((q) => ({ type: 'action', action: { type: 'message', label: q.label, text: q.text } })) };
 }
 
-/** ตอบกลับด้วย reply token (ฟรี). messages = text หรือ flex object. */
-export async function replyLine(replyToken: string, message: string | object, qrs?: QuickReply[]): Promise<void> {
+/** LINE reply/push API รับได้สูงสุด 5 messages ต่อครั้ง. */
+export const LINE_MAX_MESSAGES = 5;
+
+/** Pure: shape the `messages` array for LINE reply/push. string → text message ·
+ *  object → as-is · order kept · quickReply ติดตัวสุดท้ายเท่านั้น · เกิน 5 → เก็บ 4 ตัวแรก
+ *  + ตัวสุดท้าย (ตัวสุดท้ายคือข้อความตอบ ต้องรอดเสมอ). Never mutates the inputs. */
+export function buildLineMessages(
+  message: OutboundMessage | OutboundMessage[], qrs?: QuickReply[],
+): Record<string, unknown>[] {
+  const list = Array.isArray(message) ? message : [message];
+  const capped = list.length > LINE_MAX_MESSAGES
+    ? [...list.slice(0, LINE_MAX_MESSAGES - 1), list[list.length - 1]]
+    : list;
+  const out = capped.map((m): Record<string, unknown> =>
+    typeof m === 'string' ? { type: 'text', text: m } : (m as Record<string, unknown>));
   const qrp = quickReplyPayload(qrs);
-  const msg = typeof message === 'string'
-    ? { type: 'text', text: message, ...(qrp ? { quickReply: qrp } : {}) }
-    : message;
+  if (qrp && out.length) out[out.length - 1] = { ...out[out.length - 1], quickReply: qrp };
+  return out;
+}
+
+/** ตอบกลับด้วย reply token (ฟรี). message = text / flex object / array (≤5, ดู buildLineMessages). */
+export async function replyLine(
+  replyToken: string, message: OutboundMessage | OutboundMessage[], qrs?: QuickReply[],
+): Promise<void> {
   const res = await fetch(`${LINE_API}/message/reply`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ replyToken, messages: [msg] }),
+    body: JSON.stringify({ replyToken, messages: buildLineMessages(message, qrs) }),
   });
   if (!res.ok) throw new Error(`LINE reply HTTP ${res.status}`);
 }
 
 /** Push by userId (เผื่อ reply token หมด / แจ้งทีหลัง). */
-export async function pushLine(to: string, message: string | object): Promise<void> {
-  const msg = typeof message === 'string' ? { type: 'text', text: message } : message;
+export async function pushLine(to: string, message: OutboundMessage | OutboundMessage[]): Promise<void> {
   const res = await fetch(`${LINE_API}/message/push`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, messages: [msg] }),
+    body: JSON.stringify({ to, messages: buildLineMessages(message) }),
   });
   if (!res.ok) throw new Error(`LINE push HTTP ${res.status}`);
 }
@@ -153,6 +170,6 @@ export function buildLineAdapter(secret: string): ChannelAdapter {
       // group/room → push to the group/room id; 1-on-1 → push to the user id
       await pushLine(msg.groupId || msg.roomId || msg.channelUserId, message);
     },
-    push: (id, text) => pushLine(id, text),
+    push: (id, message) => pushLine(id, message),
   };
 }
