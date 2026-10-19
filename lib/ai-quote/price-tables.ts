@@ -25,7 +25,10 @@ export function priceTableUrl(id: PriceTableId): string {
 }
 
 /** Outbound image message for a channel. LINE needs both urls (preview ≤ 1 MB);
- *  Messenger sends a reusable attachment so repeat sends reuse Meta's cache. */
+ *  Messenger sends the image attachment by URL. `is_reusable: true` only makes Meta
+ *  return an `attachment_id` that nothing here stores, so NO reuse happens — what
+ *  caches is the URL itself (CDN / clients), which is why a changed image needs a
+ *  new filename (see PATTERNS.md §7.5). */
 export function priceTableImageMessage(id: PriceTableId, channel: 'line' | 'messenger'): Record<string, unknown> {
   const url = priceTableUrl(id);
   if (channel === 'line') {
