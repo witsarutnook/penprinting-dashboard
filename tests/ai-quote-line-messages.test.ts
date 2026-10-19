@@ -22,7 +22,7 @@ describe('buildLineMessages', () => {
   it('caps at 5 messages keeping the last one', () => {
     const out = buildLineMessages(['a', 'b', 'c', 'd', 'e', 'f', 'last']);
     expect(out).toHaveLength(LINE_MAX_MESSAGES);
-    expect(out.at(-1)).toEqual({ type: 'text', text: 'last' });
-    expect(out[0]).toEqual({ type: 'text', text: 'a' });
+    // exactly the first 4 + the last (not any other subset of 5)
+    expect(out).toEqual(['a', 'b', 'c', 'd', 'last'].map((text) => ({ type: 'text', text })));
   });
 });
