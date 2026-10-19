@@ -422,6 +422,14 @@ function schedule() {
 - กฎ: เพิ่ม field เข้า shared core เมื่อไหร่ → `grep` ทุก caller แล้วไล่ให้ครบทุก surface ในคอมมิตเดียว + เทสต์ต่อ surface (ไม่ใช่เทสต์แค่ที่ core)
 - เทสต์ที่จับได้: `tests/ai-quote-track-flex.test.ts` เคส `staff=ship` — เทสต์ core อย่างเดียวผ่านหมดทั้งที่ surface เพี้ยน
 
+### 7.5 สินค้าแบบตารางขั้นราคา + รูปตารางคู่กัน (2026-10-19, `c3d1da7..7a2c714`)
+- **เมื่อไหร่ใช้ tier table แทนสูตร**: ราคาที่ทีมตั้งเป็นขั้น (จำนวน → บาท/หน่วย) อยู่แล้ว ไม่มีสูตรกระดาษ/แม่พิมพ์ให้ derive (นามบัตร · ปฏิทิน · บัตร PVC) — เก็บตารางใน `DEFAULT_CONFIG` ตรงๆ อย่าสร้างสูตรปลอมที่ fit ตัวเลข
+- **helper เกลี่ยตัวเดียวทุกตาราง** (`tierUnitPrice` ใน calc): ช่วงที่เป็นช่วง = ราคาคงที่ · ระหว่างจุดติดกัน = เกลี่ยเชิงเส้น · ปัดขึ้นขั้น 0.25 — ตารางใหม่ = เพิ่มข้อมูล ไม่เพิ่มโค้ด
+- **ขอบตาราง = 422 ที่ recoverable** (`below_min` / `above_max` + message): model ได้ข้อความจริงไปแจ้ง/ส่งต่อ แทนการเดาหรือลากเส้นต่อเอง — เกินตาราง → วลี hand-off pin · ต่ำกว่าขั้นต่ำ → แจ้งแล้วถามต่อ (ห้ามใช้วลี pin)
+- **tool ที่ไม่มี I/O เป็นสัญญาณให้ router** (`send_price_table` → `{ sent: true }`): model "บอก" ว่าเทิร์นนี้ควรส่งรูปอะไร, `runQuoteTurn` รวมเป็น `priceTables` (dedupe) แล้ว router ประกอบ `[image…, text]` — model ไม่แตะ URL/ช่องทาง/ข้อจำกัด array เลย
+- **รูปกับตัวเลขต้องเปลี่ยนคู่กัน**: รูปอยู่ dashboard, ราคาอยู่ calc → แก้คู่ 2 repo + **รูปใหม่ใช้ชื่อไฟล์ใหม่** (URL ไม่มี version, Messenger `is_reusable` cache ตาม URL) แล้วแก้ `price-tables.ts` ตาม
+- **calc ไม่มี unit test → `scripts/smoke-baselines.json` คือ suite เดียว**: ใส่ค่ามือคำนวณจาก spec ก่อนเขียนโค้ด (RED) แล้วทำให้โค้ดตามเลข — ห้ามดัดเลขตามโค้ด · pin ทุก field (`unitPrice` `totalPrice` `designFee` `sheetsPerSet`) + เคส 422 ผ่าน `expectStatus`
+
 ---
 
 ## 8. Things to NOT do (learned the hard way)
