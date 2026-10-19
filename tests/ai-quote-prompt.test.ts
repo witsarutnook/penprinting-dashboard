@@ -216,3 +216,37 @@ describe('settled answers (Sonnet 5.5 follow-up turns)', () => {
     expect(p).toContain('ไม่ใช่ทุกเทิร์น');
   });
 });
+
+// Calendar + PVC card (spec 2026-10-19 §6.4): the staff prompt must list both as
+// quotable, pin what each price includes, and carry the send_price_table rule.
+// Customer twin lives in ai-quote-prompt-customer.test.ts (duplicate by design).
+describe('buildSystemPrompt — calendar + PVC card + price tables (2026-10-19)', () => {
+  const p = buildSystemPrompt();
+
+  it('lists calendar + pvccard as quotable with their tool specs', () => {
+    expect(p).toContain('calendar');
+    expect(p).toContain('pvccard');
+    expect(p).toContain('10.5x15');
+    expect(p).toContain("'8'");
+  });
+  it('pins what each calendar/PVC price includes + the PVC design-fee rule', () => {
+    expect(p).toContain('13 แผ่น');
+    expect(p).toContain('สันห่วง');
+    expect(p).toContain('5.4x8.6');
+    expect(p).toMatch(/ค่าออกแบบ 300/);
+    expect(p).toContain('ขั้นต่ำ 300');
+  });
+  it('tells the model to send the price table once and mark it in the reply', () => {
+    expect(p).toContain('send_price_table');
+    expect(p).toContain('📊 ตารางราคา');
+    expect(p).toMatch(/1 ครั้งต่อตาราง|ครั้งเดียว/);
+  });
+  it('never guesses calendar size; other sizes hand off', () => {
+    expect(p).toMatch(/ขนาดห้ามเดา|ห้ามเดาขนาด/);
+    expect(p).toMatch(/ขนาด\/แบบอื่น[^\n]*ส่งต่อทีมงาน|นอกตาราง[^\n]*ส่งต่อทีมงาน/);
+  });
+  it('counts 6 quotable types, not 4', () => {
+    expect(p).toContain('6 ชนิด');
+    expect(p).not.toContain('4 ชนิด');
+  });
+});

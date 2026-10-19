@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildCustomerSystemPrompt } from '@/lib/ai-quote/prompt-customer';
 import { VALID_PAPER_NAMES } from '@/lib/ai-quote/prompt';
+import { detectCustomerEscalation } from '@/lib/ai-quote/customer-triggers';
 
 const p = buildCustomerSystemPrompt();
 
@@ -104,5 +105,58 @@ describe('settled answers (Sonnet 5.5 follow-up turns)', () => {
     const p = buildCustomerSystemPrompt();
     expect(p).toContain('งานที่ตอบราคาไปแล้วในเทิร์นก่อนถือว่าจบ');
     expect(p).toContain('ไม่ใช่ทุกเทิร์น');
+  });
+});
+
+// Calendar + PVC card (spec 2026-10-19 §6.4) — customer twin of the staff
+// describe in ai-quote-prompt.test.ts.
+describe('customer prompt — calendar + PVC card + price tables (2026-10-19)', () => {
+  it('lists calendar + pvccard as quotable with their tool specs', () => {
+    expect(p).toContain('calendar');
+    expect(p).toContain('pvccard');
+    expect(p).toContain('10.5x15');
+    expect(p).toContain("'8'");
+  });
+  it('pins what each calendar/PVC price includes + the PVC design-fee rule', () => {
+    expect(p).toContain('13 แผ่น');
+    expect(p).toContain('สันห่วง');
+    expect(p).toContain('5.4x8.6');
+    expect(p).toMatch(/ค่าออกแบบ 300/);
+    expect(p).toContain('ขั้นต่ำ 300');
+  });
+  it('tells the model to send the price table once and mark it in the reply', () => {
+    expect(p).toContain('send_price_table');
+    expect(p).toContain('📊 ตารางราคา');
+    expect(p).toMatch(/1 ครั้งต่อตาราง|ครั้งเดียว/);
+  });
+  it('never guesses calendar size; other sizes hand off', () => {
+    expect(p).toMatch(/ขนาดห้ามเดา|ห้ามเดาขนาด/);
+    expect(p).toMatch(/ขนาด\/แบบอื่น[^\n]*ส่งต่อทีมงาน|นอกตาราง[^\n]*ส่งต่อทีมงาน/);
+  });
+  it('counts 6 quotable types, not 4', () => {
+    expect(p).toContain('6 ชนิด');
+    expect(p).toContain('6 ประเภทนี้ค่ะ');
+    expect(p).not.toContain('4 ชนิด');
+    expect(p).not.toContain('4 ประเภท');
+  });
+  // customer only
+  it('below_min keeps the customer talking (no hand-off phrase) and asks the popular-3 question verbatim', () => {
+    expect(p).toContain('แบบที่นิยมมี 3 แบบ');
+    expect(p).toMatch(/below_min[^\n]*ห้ามใช้วลี/);
+    expect(p).toContain('📅 ปฏิทิน');
+    expect(p).toContain('💳 บัตร PVC');
+  });
+  // The scripted ask-for-type reply and the below_min reply both leave the
+  // customer in the AI mode — neither may trip detectCustomerEscalation.
+  it('pins the popular-3 sentence verbatim and it is not a hand-off', () => {
+    const ask = 'ทำได้ค่ะ 😊 แบบที่นิยมมี 3 แบบ: ปฏิทินจีน · ตั้งโต๊ะ 6x8 นิ้ว · แขวน รับแบบไหนดีคะ (ขนาดอื่นนอกจากนี้ ทีมงานคุยรายละเอียดให้ค่ะ)';
+    expect(p).toContain(ask);
+    expect(detectCustomerEscalation(0, ask)).toBe(false);
+  });
+  it('below_min also bans the second detector phrase "ให้ทีมงานประเมิน"', () => {
+    expect(p).toMatch(/below_min[^\n]*ให้ทีมงานประเมิน/);
+  });
+  it('template lists the two new types after นามบัตร, in order', () => {
+    expect(p).toContain('🪪 นามบัตร\n📅 ปฏิทิน\n💳 บัตร PVC');
   });
 });
