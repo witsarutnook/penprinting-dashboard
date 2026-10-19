@@ -1,5 +1,6 @@
 // tests/ai-quote-run.test.ts
 import { describe, it, expect, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { runQuoteTurn, detectEscalation, shouldPersistTurn, sanitizeHistory, stripChatMarkdown, mkTurn } from '@/lib/ai-quote/run';
 
@@ -60,6 +61,7 @@ describe('runQuoteTurn', () => {
     );
     expect(out.reply).toContain('จำนวน');
     expect(out.quotes).toHaveLength(0);
+    expect(out.priceTables).toEqual([]);   // never undefined — no send_price_table call
   });
 
   // Regression (audit H1): an empty assistant turn would brick the whole
@@ -75,6 +77,7 @@ describe('runQuoteTurn', () => {
     const lastTurn = out.newHistory[out.newHistory.length - 1];
     expect(lastTurn.role).toBe('assistant');
     expect(lastTurn.text.trim()).not.toBe('');                               // empty turn never persisted
+    expect(out.priceTables).toEqual([]);                                     // fallback path keeps the array
   });
 
   it('caps at MAX_TOOL_ROUNDS and still returns a non-empty fallback reply', async () => {
@@ -175,6 +178,80 @@ describe('runQuoteTurn — Sonnet 5.5 request shape', () => {
     expect(out.reply).toContain('ทีมงาน');
     expect(out.reply).not.toContain('พิมพ์คำขออีกครั้ง');
     expect(out.newHistory.at(-1)?.text).toBe(out.reply);
+    expect(out.priceTables).toEqual([]);
+  });
+});
+
+// ── send_price_table (calendar / PVC price-table products, 2026-10-19) ─────
+// The model sends a price-table image via a second tool. Every tool_use block
+// MUST get a tool_result next round (a missing one 400s the API), duplicates
+// within a turn collapse, and an unknown id is fed back as is_error.
+describe('runQuoteTurn — send_price_table', () => {
+  const sendTableMsg = { stop_reason: 'tool_use', content: [
+    { type: 'tool_use', id: 'tu_a', name: 'send_price_table', input: { table: 'calendar_hanging' } },
+    { type: 'tool_use', id: 'tu_b', name: 'send_price_table', input: { table: 'calendar_hanging' } },   // duplicate
+    { type: 'tool_use', id: 'tu_c', name: 'send_price_table', input: { table: 'sticker' } },            // unknown
+  ] };
+
+  it('collects price tables once each and feeds a tool_result per call', async () => {
+    const client = fakeClient([sendTableMsg, { stop_reason: 'end_turn', content: [{ type: 'text', text: '📊 ตารางราคาปฏิทินแขวนอยู่ด้านบนนะคะ ขนาดไหน กี่ชุดดีคะ' }] }]);
+    const out = await runQuoteTurn({ history: [], userMessage: 'แขวน' }, { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'm' });
+    expect(out.priceTables).toEqual(['calendar_hanging']);
+    const second = (client.messages.create as Mock).mock.calls[1][0].messages.at(-1);   // tool_result turn
+    expect(second.content).toHaveLength(3);
+    expect(second.content[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'tu_a', content: JSON.stringify({ sent: true, table: 'calendar_hanging' }) });
+    expect(second.content[0].is_error).toBeUndefined();
+    expect(second.content[1]).toMatchObject({ type: 'tool_result', tool_use_id: 'tu_b' });   // duplicate still answered
+    expect(second.content[1].is_error).toBeUndefined();
+    expect(second.content[2]).toMatchObject({ type: 'tool_result', tool_use_id: 'tu_c', is_error: true, content: 'unknown table id' });
+    expect(out.quotes).toHaveLength(0);
+  });
+
+  it('keeps first-call order across tables and rounds, deduped', async () => {
+    const r1 = { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 't1', name: 'send_price_table', input: { table: 'pvc_card' } },
+    ] };
+    const r2 = { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 't2', name: 'send_price_table', input: { table: 'calendar_desk' } },
+      { type: 'tool_use', id: 't3', name: 'send_price_table', input: { table: 'pvc_card' } },
+    ] };
+    const client = fakeClient([r1, r2, finalMsg]);
+    const out = await runQuoteTurn({ history: [], userMessage: 'x' }, { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'm' });
+    expect(out.priceTables).toEqual(['pvc_card', 'calendar_desk']);
+  });
+
+  it('mixes compute_quote and send_price_table in one round — each gets its own tool_result', async () => {
+    const mixed = { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 'tq', name: 'compute_quote', input: { productType: 'brochure', spec: {} } },
+      { type: 'tool_use', id: 'tt', name: 'send_price_table', input: { table: 'calendar_chinese' } },
+    ] };
+    const client = fakeClient([mixed, finalMsg]);
+    const compute = vi.fn().mockResolvedValue({ ok: true, productType: 'brochure', spec: {}, result: { mode: 'offset', unitPrice: 1 } });
+    const out = await runQuoteTurn({ history: [], userMessage: 'x' }, { client, compute, systemPrompt: 'SYS', model: 'm' });
+    expect(out.quotes).toHaveLength(1);
+    expect(out.priceTables).toEqual(['calendar_chinese']);
+    const second = (client.messages.create as Mock).mock.calls[1][0].messages.at(-1);
+    expect(second.content.map((b: { tool_use_id: string }) => b.tool_use_id)).toEqual(['tq', 'tt']);
+  });
+
+  it('a non-string / missing table input is an unknown id (is_error), not a crash', async () => {
+    const bad = { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 'x1', name: 'send_price_table', input: {} },
+      { type: 'tool_use', id: 'x2', name: 'send_price_table', input: { table: 42 } },
+    ] };
+    const client = fakeClient([bad, finalMsg]);
+    const out = await runQuoteTurn({ history: [], userMessage: 'x' }, { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'm' });
+    expect(out.priceTables).toEqual([]);
+    const second = (client.messages.create as Mock).mock.calls[1][0].messages.at(-1);
+    expect(second.content).toHaveLength(2);
+    expect(second.content.every((b: { is_error?: boolean }) => b.is_error === true)).toBe(true);
+  });
+
+  it('both tools are offered to the model', async () => {
+    const client = fakeClient([finalMsg]);
+    await runQuoteTurn({ history: [], userMessage: 'x' }, { client, compute: vi.fn(), systemPrompt: 'SYS', model: 'm' });
+    const tools = createParams(client).tools as { name: string }[];
+    expect(tools.map((t) => t.name)).toEqual(['compute_quote', 'send_price_table']);
   });
 });
 

@@ -1,7 +1,8 @@
 // lib/ai-quote/run.ts
 import type Anthropic from '@anthropic-ai/sdk';
 import type { ConversationTurn, ProductType, QuoteSpec, ComputeResult } from './types';
-import { COMPUTE_QUOTE_TOOL, type ComputeQuoteInput, type ComputeQuoteOutcome } from './tools';
+import { COMPUTE_QUOTE_TOOL, SEND_PRICE_TABLE_TOOL, type ComputeQuoteInput, type ComputeQuoteOutcome } from './tools';
+import { isPriceTableId, type PriceTableId } from './price-tables';
 
 const MAX_TOOL_ROUNDS = 6;     // safety cap on the agentic loop
 // Replies are short, but the Sonnet 5.x line runs adaptive thinking by default
@@ -41,6 +42,7 @@ export interface ProducedQuote {
 export interface RunQuoteTurnOutput {
   reply: string;
   quotes: ProducedQuote[];
+  priceTables: PriceTableId[];     // price-table images to send this turn: deduped, in first-call order
   escalated: boolean;              // model handed off (no quote + handoff wording)
   newHistory: ConversationTurn[];  // history + this user turn + this assistant turn
 }
@@ -111,6 +113,7 @@ export async function runQuoteTurn(
   const { client, compute, systemPrompt, model } = deps;
   const messages = toMessages(input.history, input.userMessage);
   const quotes: ProducedQuote[] = [];
+  const priceTables: PriceTableId[] = [];
   let replyText = '';
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -120,7 +123,7 @@ export async function runQuoteTurn(
       output_config: { effort: EFFORT },
       // Cache the big stable system block (verify cache_read_input_tokens > 0).
       system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      tools: [COMPUTE_QUOTE_TOOL as Anthropic.Tool],
+      tools: [COMPUTE_QUOTE_TOOL as Anthropic.Tool, SEND_PRICE_TABLE_TOOL as Anthropic.Tool],
       messages,
     });
 
@@ -138,18 +141,32 @@ export async function runQuoteTurn(
 
     if (res.stop_reason !== 'tool_use') break;
 
-    // Execute each compute_quote call, append assistant turn + tool_result user turn.
+    // Execute each tool call, append assistant turn + tool_result user turn.
+    // Every tool_use block of an offered tool MUST get a tool_result, else the
+    // next round 400s.
     messages.push({ role: 'assistant', content: res.content });
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of res.content) {
-      if (block.type !== 'tool_use' || block.name !== 'compute_quote') continue;
-      const inp = block.input as ComputeQuoteInput;
-      const outcome = await compute(inp);   // throws on 401/500 → caller maps to 502
-      if (outcome.ok) {
-        quotes.push({ productType: outcome.productType, spec: outcome.spec, result: outcome.result, unitPrice: outcome.result.unitPrice });
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(outcome.result) });
-      } else {
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, is_error: true, content: outcome.message });
+      if (block.type !== 'tool_use') continue;
+      if (block.name === 'compute_quote') {
+        const inp = block.input as ComputeQuoteInput;
+        const outcome = await compute(inp);   // throws on 401/500 → caller maps to 502
+        if (outcome.ok) {
+          quotes.push({ productType: outcome.productType, spec: outcome.spec, result: outcome.result, unitPrice: outcome.result.unitPrice });
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(outcome.result) });
+        } else {
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, is_error: true, content: outcome.message });
+        }
+      } else if (block.name === 'send_price_table') {
+        // The image itself is sent by the channel layer from out.priceTables;
+        // here we only record the id (once per turn) and acknowledge the call.
+        const table = (block.input as { table?: unknown } | null)?.table;
+        if (isPriceTableId(table)) {
+          if (!priceTables.includes(table)) priceTables.push(table);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ sent: true, table }) });
+        } else {
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, is_error: true, content: 'unknown table id' });
+        }
       }
     }
     messages.push({ role: 'user', content: toolResults });
@@ -167,5 +184,5 @@ export async function runQuoteTurn(
     mkTurn('user', input.userMessage),
     mkTurn('assistant', reply),
   ];
-  return { reply, quotes, escalated: detectEscalation(quotes.length, reply), newHistory };
+  return { reply, quotes, priceTables, escalated: detectEscalation(quotes.length, reply), newHistory };
 }
