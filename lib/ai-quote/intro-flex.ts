@@ -14,6 +14,8 @@ const ACCENT = '#c8553d';
 const SOFT = '#fdf0e7';
 const MUTED = '#888780';
 const INK = '#2c2c2a';
+/** PP mascot (cropped from the LINE rich menu art, background keyed out) — served from public/pp/. */
+export const PP_BOT_AVATAR_URL = 'https://dashboard.penprinting.co/pp/pp-bot.png';
 
 /** The 6 products น้อง PP can quote — order = button order (3 rows × 2).
  *  Labels must stay short: a 2-column button in a mega bubble is ~136px wide and an
@@ -72,7 +74,7 @@ export function buildIntroFlex(): Record<string, unknown> {
       header: {
         type: 'box', layout: 'vertical', paddingAll: 'lg', backgroundColor: SOFT, spacing: 'xs',
         contents: [
-          { type: 'text', text: '🤖', size: 'xxl', align: 'center' },
+          { type: 'image', url: PP_BOT_AVATAR_URL, size: 'md', aspectRatio: '1:1', aspectMode: 'fit', align: 'center' },
           { type: 'text', text: 'น้อง PP', weight: 'bold', size: 'xl', color: ACCENT, align: 'center' },
           { type: 'text', text: 'ผู้ช่วยประเมินราคา Penprinting', size: 'xs', color: MUTED, align: 'center' },
         ],

@@ -1,7 +1,9 @@
 // tests/ai-quote-intro-flex.test.ts
 import { describe, it, expect } from 'vitest';
+import { statSync } from 'node:fs';
+import path from 'node:path';
 import {
-  INTRO_PRODUCTS, INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES, buildIntroFlex,
+  INTRO_PRODUCTS, INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES, buildIntroFlex, PP_BOT_AVATAR_URL,
   CALENDAR_KINDS, CALENDAR_KIND_QUICK_REPLIES, buildCalendarKindFlex,
   isCalendarKindAsk, isCalendarButtonText,
 } from '@/lib/ai-quote/intro-flex';
@@ -90,6 +92,14 @@ describe('buildIntroFlex', () => {
     const json = JSON.stringify(flex);
     expect(json).toContain('น้อง PP');
     expect(json).toContain('ผู้ช่วยประเมินราคา Penprinting');
+    // Header avatar = the PP mascot image (replaced the 🤖 emoji, คุณนุ๊ก 2026-10-20) — must be an
+    // https image component so LINE renders it; the file is served from public/pp/.
+    const header = (flex.contents as { header: FlexNode }).header;
+    const avatar = (header.contents ?? []).find((n) => n.type === 'image') as (FlexNode & { url?: string }) | undefined;
+    expect(avatar?.url).toBe(PP_BOT_AVATAR_URL);
+    expect(PP_BOT_AVATAR_URL).toMatch(/^https:\/\/dashboard\.penprinting\.co\/pp\/pp-bot\.png$/);
+    expect(statSync(path.join(process.cwd(), 'public/pp/pp-bot.png')).size).toBeLessThanOrEqual(1_000_000);
+    expect(json).not.toContain('"text":"🤖"');
     expect(json).toContain('สวัสดีค่ะ เลือกชนิดงานที่ต้องการขอราคาได้เลยค่ะ');
     const footer = (flex.contents as { footer: FlexNode }).footer;
     const lines = (footer.contents ?? []).filter((n) => n.type === 'text');
