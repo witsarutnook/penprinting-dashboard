@@ -29,11 +29,14 @@ const cp = (s: string) => Array.from(s).length;
 
 describe('INTRO_PRODUCTS', () => {
   it('lists the 6 products in order, emoji only in the label', () => {
+    // Labels stay short (a mega-bubble 2-column button is ~136px wide → longer ellipsizes):
+    // ใบปลิว/โบรชัวร์ is shortened to "ใบปลิว" but still SENDS the full text. 📇 not 🪪 (Emoji 14 =
+    // tofu box on older phones).
     expect(INTRO_PRODUCTS).toEqual([
-      { label: '📄 ใบปลิว/โบรชัวร์', text: 'ใบปลิว/โบรชัวร์' },
+      { label: '📄 ใบปลิว', text: 'ใบปลิว/โบรชัวร์' },
       { label: '📚 หนังสือ', text: 'หนังสือ' },
       { label: '📓 สมุด', text: 'สมุด' },
-      { label: '🪪 นามบัตร', text: 'นามบัตร' },
+      { label: '📇 นามบัตร', text: 'นามบัตร' },
       { label: '📅 ปฏิทิน', text: 'ปฏิทิน' },
       { label: '💳 บัตร PVC', text: 'บัตร PVC' },
     ]);
@@ -60,9 +63,10 @@ describe('INTRO_TEXT_SHORT', () => {
 describe('buildIntroFlex', () => {
   const flex = buildIntroFlex();
 
-  it('is a LINE flex message whose altText is the short intro', () => {
+  it('is a LINE flex message whose altText is the short intro (well under the 400-char LINE cap)', () => {
     expect(flex.type).toBe('flex');
     expect(flex.altText).toBe(INTRO_TEXT_SHORT);
+    expect(cp(INTRO_TEXT_SHORT)).toBeLessThanOrEqual(400);
     expect(flex.contents).toMatchObject({ type: 'bubble', size: 'mega' });
   });
 
@@ -91,6 +95,10 @@ describe('buildIntroFlex', () => {
     const lines = (footer.contents ?? []).filter((n) => n.type === 'text');
     expect(lines).toHaveLength(3);
     for (const l of lines) expect(l).toMatchObject({ size: 'xxs', color: '#888780' });
+  });
+
+  it('every button label fits a half-width mega-bubble button (≤ 12 code points)', () => {
+    for (const b of buttonsOf(flex)) expect(cp(b.action!.label)).toBeLessThanOrEqual(12);
   });
 
   it('is a pure builder (fresh object each call, same shape)', () => {
@@ -129,6 +137,20 @@ describe('buildCalendarKindFlex', () => {
     const body = (flex.contents as { body: FlexNode }).body;
     const text = (body.contents ?? []).find((n) => n.type === 'text');
     expect(text).toMatchObject({ text: CALENDAR_KIND_ASK, wrap: true });
+  });
+  // LINE rejects altText > 400 chars with HTTP 400 on reply AND push → the customer would get
+  // nothing. The body keeps the full text; only the notification preview is capped.
+  it('caps altText at 400 code points (emoji-safe) while the body text stays whole', () => {
+    const long = '😊ก'.repeat(500);   // 1,000 code points, astral emoji every other char
+    const flex = buildCalendarKindFlex(long);
+    expect(cp(flex.altText as string)).toBe(400);
+    expect(long.startsWith(flex.altText as string)).toBe(true);   // a clean prefix — no split surrogate
+    const body = (flex.contents as { body: FlexNode }).body;
+    expect((body.contents ?? []).find((n) => n.type === 'text')).toMatchObject({ text: long });
+  });
+  it('leaves a short altText untouched (exactly 400 passes through)', () => {
+    const exact = 'ก'.repeat(400);
+    expect(buildCalendarKindFlex(exact).altText).toBe(exact);
   });
 });
 

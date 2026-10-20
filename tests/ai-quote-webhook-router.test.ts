@@ -963,6 +963,14 @@ describe('handleInbound — ปฏิทิน button fast path (no engine call)
     expect(order.indexOf('save')).toBeLessThan(order.indexOf('reply'));
     expect(order.indexOf('touch')).toBeLessThan(order.indexOf('reply'));
   });
+  it('persist-before-reply: saveConversation rejecting on the fast path → handleInbound rejects, NOTHING is sent', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn, saveConversation: async () => { throw new Error('db down'); } });
+    const { sent, deps } = stubDepsQr(ai);
+    await expect(handleInbound(text1on1('ปฏิทิน'), deps as never)).rejects.toThrow('db down');
+    expect(sent, 'a failed persist must not send the bubble').toHaveLength(0);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
   it('Messenger: "ปฏิทิน" → plain text + the 3 kind chips', async () => {
     const runTurn = vi.fn();
     const { ai } = stubAi({ runTurn });
@@ -1052,5 +1060,91 @@ describe('handleInbound — calendar-kind decorator on the model reply', () => {
     const { sent, deps } = stubDepsQr(ai);
     await handleInbound(text1on1('ปฏิทินแขวน A3'), deps as never);
     expect(sent.at(-1)!.message).toBe('ขนาดนี้ขอส่งต่อทีมงานประเมินให้นะคะ');
+  });
+});
+
+// ─── Flex rejected by LINE (invalid / over-limit) → text equivalent, never silence ───
+// LINE answers 400 on the reply AND on the adapter's push fallback, so adapter.reply throws and the
+// customer would see nothing (the pre-Flex INTRO_TEXT / plain-text calendar ask could not fail this way).
+describe('handleInbound — Flex send failure falls back to the text equivalent', () => {
+  /** adapter.reply rejects for any Flex OBJECT (non-string, non-array); strings succeed unless textFails. */
+  function stubFlexRejecting(ai: CustomerAiDeps, opts: { textFails?: boolean } = {}) {
+    const calls: Sent[] = [];
+    const { deps } = stubDeps({
+      aiEnabled: true,
+      aiCustomer: ai,
+      adapter: {
+        downloadImage: async () => new Blob(['x']),
+        push: async () => {},
+        reply: async (_m: unknown, message: unknown, quickReplies?: unknown) => {
+          calls.push({ message, quickReplies });
+          if (typeof message === 'object' && !Array.isArray(message)) throw new Error('LINE push HTTP 400');
+          if (opts.textFails) throw new Error('text send down');
+        },
+      },
+    });
+    return { calls, deps };
+  }
+
+  it('intro bubble rejected → logs, then INTRO_TEXT_SHORT + the 6 chips', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ai, calls: aiCalls } = stubAi();
+    const { calls, deps } = stubFlexRejecting(ai);
+    await expect(handleInbound(text1on1('ขอราคา AI'), deps as never)).resolves.toBeUndefined();
+    expect(aiCalls).toContain('enter');
+    expect(calls).toHaveLength(2);
+    expect(calls[0].message).toMatchObject({ type: 'flex' });
+    expect(calls[1]).toEqual({ message: INTRO_TEXT_SHORT, quickReplies: INTRO_QUICK_REPLIES });
+    expect(errSpy).toHaveBeenCalledWith('[ai-quote/line] flex send failed:', 'LINE push HTTP 400');
+  });
+  it('fast-path calendar bubble rejected → ask text + 3 chips; the turn was already persisted once', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const saved: unknown[] = [];
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn, saveConversation: async (_id: number, conv: unknown) => { saved.push(conv); } });
+    const { calls, deps } = stubFlexRejecting(ai);
+    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({ message: CALENDAR_KIND_ASK, quickReplies: CALENDAR_KIND_QUICK_REPLIES });
+    expect(saved).toHaveLength(1);   // not re-persisted by the fallback
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+  it('seeded fast path: the text fallback carries the exit hint (= what was persisted)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ai } = stubAi({ modeActive: () => false });
+    const { calls, deps } = stubFlexRejecting(ai);
+    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    expect(calls[1]).toEqual({ message: `${CALENDAR_KIND_ASK}\n\n${SEEDED_EXIT_HINT}`, quickReplies: CALENDAR_KIND_QUICK_REPLIES });
+  });
+  it('decorator bubble rejected → the model text + 3 chips', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ai } = stubAi({ runTurn: async () => ({ reply: CALENDAR_KIND_ASK, quotes: [], escalated: false, newHistory: [], priceTables: [] }) });
+    const { calls, deps } = stubFlexRejecting(ai);
+    await handleInbound(text1on1('อยากทำปฏิทิน'), deps as never);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].message).toMatchObject({ type: 'flex' });
+    expect(calls[1]).toEqual({ message: CALENDAR_KIND_ASK, quickReplies: CALENDAR_KIND_QUICK_REPLIES });
+  });
+  it('only the Flex send is wrapped: a failing text fallback still propagates', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ai } = stubAi();
+    const { calls, deps } = stubFlexRejecting(ai, { textFails: true });
+    await expect(handleInbound(text1on1('ปฏิทิน'), deps as never)).rejects.toThrow('text send down');
+    expect(calls).toHaveLength(2);   // flex attempt + ONE text fallback — no retry loop
+  });
+  it('a healthy Flex send is not retried and logs nothing', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ai } = stubAi();
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ขอราคา AI'), deps as never);
+    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    expect(sent).toHaveLength(2);
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+  it('Messenger (already text): one send, a failure propagates without a second attempt', async () => {
+    const { ai } = stubAi();
+    const { calls, deps } = stubFlexRejecting(ai, { textFails: true });
+    await expect(handleInbound(messengerText('ปฏิทิน'), deps as never)).rejects.toThrow('text send down');
+    expect(calls).toHaveLength(1);
   });
 });

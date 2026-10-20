@@ -29,14 +29,33 @@ function withPriceTables(out: RunQuoteTurnOutput, text: string, channel: Inbound
   return [...out.priceTables.map((id) => priceTableImageMessage(id, channel)), text];
 }
 
+/** Send a LINE Flex; if LINE rejects it (invalid / over-limit → HTTP 400 on the reply AND on the
+ *  adapter's push fallback, so adapter.reply throws) log and send the text equivalent instead of
+ *  leaving the customer in silence. Only the Flex send is wrapped — a failing text fallback still
+ *  propagates. (The adapter's push fallback drops quick replies; the chips are best-effort.) */
+async function replyFlexOrText(
+  deps: HandleDeps, m: InboundMessage, flex: OutboundMessage, text: string, quickReplies: QuickReply[],
+): Promise<void> {
+  try {
+    await deps.adapter.reply(m, flex);
+  } catch (err) {
+    console.error(`[ai-quote/${m.channel}] flex send failed:`, err instanceof Error ? err.message : err);
+    await deps.adapter.reply(m, text, quickReplies);
+  }
+}
+
+/** Welcome: LINE → Flex bubble with the 6 product buttons · Messenger (no Flex) → short text + 6 chips. */
+async function replyIntro(deps: HandleDeps, m: InboundMessage): Promise<void> {
+  if (m.channel === 'line') await replyFlexOrText(deps, m, buildIntroFlex(), INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES);
+  else await deps.adapter.reply(m, INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES);
+}
+
 /** "Which calendar kind?" question as a tappable UI: LINE → small Flex bubble with the 3 kind
  *  buttons · Messenger (no Flex) → the same text + 3 quick-reply chips. `text` may carry the
- *  seeded exit hint — it is exactly what gets persisted. Returns the [message, quickReplies]
- *  args for adapter.reply. */
-function calendarKindReply(text: string, channel: InboundMessage['channel']): [OutboundMessage, QuickReply[] | undefined] {
-  return channel === 'line'
-    ? [buildCalendarKindFlex(text), undefined]
-    : [text, CALENDAR_KIND_QUICK_REPLIES];
+ *  seeded exit hint — it is exactly what gets persisted (and what the text fallback sends). */
+async function replyCalendarKind(deps: HandleDeps, m: InboundMessage, text: string): Promise<void> {
+  if (m.channel === 'line') await replyFlexOrText(deps, m, buildCalendarKindFlex(text), text, CALENDAR_KIND_QUICK_REPLIES);
+  else await deps.adapter.reply(m, text, CALENDAR_KIND_QUICK_REPLIES);
 }
 
 export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'ignore';
@@ -298,8 +317,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     seed = m.kind === 'text' && m.text ? parseEnterAiSeed(m.text) : null;
     await ai.enterMode(uid);
     if (seed === null) {
-      if (m.channel === 'line') await deps.adapter.reply(m, buildIntroFlex());
-      else await deps.adapter.reply(m, INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES);
+      await replyIntro(deps, m);
       return;
     }
   }
@@ -409,8 +427,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
       ai.saveConversation(sid, persistedConv(askText)),
       ai.touchMode(uid, { sessionId: sid, roundsNoQuote: (mode?.roundsNoQuote ?? 0) + 1 }),
     ]);
-    const [msg, quickReplies] = calendarKindReply(askText, m.channel);
-    await deps.adapter.reply(m, msg, quickReplies);
+    await replyCalendarKind(deps, m, askText);
     return;
   }
 
@@ -472,8 +489,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     // The model asked "which calendar kind?" (the pinned popular-3 sentence) → show it as
     // tappable buttons/chips. Display-only: replyText was persisted above as plain text.
     if (isCalendarKindAsk(replyText)) {
-      const [msg, quickReplies] = calendarKindReply(replyText, m.channel);
-      await deps.adapter.reply(m, msg, quickReplies);
+      await replyCalendarKind(deps, m, replyText);
     } else {
       await deps.adapter.reply(m, replyText);
     }

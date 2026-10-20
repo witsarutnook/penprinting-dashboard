@@ -15,12 +15,15 @@ const SOFT = '#fdf0e7';
 const MUTED = '#888780';
 const INK = '#2c2c2a';
 
-/** The 6 products น้อง PP can quote — order = button order (3 rows × 2). */
+/** The 6 products น้อง PP can quote — order = button order (3 rows × 2).
+ *  Labels must stay short: a 2-column button in a mega bubble is ~136px wide and an
+ *  over-long label ellipsizes, so "ใบปลิว/โบรชัวร์" shows as "ใบปลิว" but still SENDS the full
+ *  text. 📇 (not 🪪): Emoji 14 renders as a tofu box on older phones. */
 export const INTRO_PRODUCTS: ReadonlyArray<{ label: string; text: string }> = [
-  { label: '📄 ใบปลิว/โบรชัวร์', text: 'ใบปลิว/โบรชัวร์' },
+  { label: '📄 ใบปลิว', text: 'ใบปลิว/โบรชัวร์' },
   { label: '📚 หนังสือ', text: 'หนังสือ' },
   { label: '📓 สมุด', text: 'สมุด' },
-  { label: '🪪 นามบัตร', text: 'นามบัตร' },
+  { label: '📇 นามบัตร', text: 'นามบัตร' },
   { label: '📅 ปฏิทิน', text: 'ปฏิทิน' },
   { label: '💳 บัตร PVC', text: 'บัตร PVC' },
 ];
@@ -36,6 +39,16 @@ export const INTRO_TEXT_SHORT =
 export const INTRO_QUICK_REPLIES: QuickReply[] = INTRO_PRODUCTS.map((p) => ({ label: p.label, text: p.text }));
 
 type FlexButton = { label: string; text: string };
+
+/** LINE rejects a flex message whose altText exceeds 400 characters with HTTP 400 — on reply AND
+ *  push, so the customer would get nothing. Cap by code point (Array.from) so a trailing emoji is
+ *  never split into a lone surrogate. Only the notification preview is capped; the bubble body
+ *  keeps the full text. */
+const ALT_TEXT_MAX = 400;
+function altTextOf(text: string): string {
+  const cps = Array.from(text);
+  return cps.length <= ALT_TEXT_MAX ? text : cps.slice(0, ALT_TEXT_MAX).join('');
+}
 
 function primaryButton(b: FlexButton): Record<string, unknown> {
   return {
@@ -53,7 +66,7 @@ export function buildIntroFlex(): Record<string, unknown> {
   const muted = (text: string) => ({ type: 'text', text, size: 'xxs', color: MUTED, wrap: true, align: 'center' });
   return {
     type: 'flex',
-    altText: INTRO_TEXT_SHORT,
+    altText: altTextOf(INTRO_TEXT_SHORT),
     contents: {
       type: 'bubble', size: 'mega',
       header: {
@@ -94,11 +107,11 @@ export const CALENDAR_KINDS: ReadonlyArray<{ label: string; text: string }> = [
 /** Messenger chips for the calendar-kind question. Labels ≤20 code points. */
 export const CALENDAR_KIND_QUICK_REPLIES: QuickReply[] = CALENDAR_KINDS.map((k) => ({ label: k.label, text: k.text }));
 
-/** LINE small bubble: `bodyText` (the question) + the 3 kind buttons stacked. altText = bodyText. */
+/** LINE small bubble: `bodyText` (the question) + the 3 kind buttons stacked. altText = bodyText (capped at 400). */
 export function buildCalendarKindFlex(bodyText: string): Record<string, unknown> {
   return {
     type: 'flex',
-    altText: bodyText,
+    altText: altTextOf(bodyText),
     contents: {
       type: 'bubble', size: 'kilo',
       body: {
