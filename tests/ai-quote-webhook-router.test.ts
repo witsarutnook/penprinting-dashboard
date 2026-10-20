@@ -2,7 +2,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { routeInbound, handleInbound, parseTrackCommand, parseEnterAiSeed } from '@/lib/ai-quote/webhook-router';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
-import { RATE_LIMIT_TEXT, ERROR_TEXT, SEEDED_EXIT_HINT } from '@/lib/ai-quote/customer-triggers';
+import { RATE_LIMIT_TEXT, ERROR_TEXT, SEEDED_EXIT_HINT, CALENDAR_KIND_ASK } from '@/lib/ai-quote/customer-triggers';
+import { INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES, CALENDAR_KIND_QUICK_REPLIES } from '@/lib/ai-quote/intro-flex';
 import type { InboundMessage } from '@/lib/ai-quote/channels/types';
 
 const base = { channel: 'line' as const, channelUserId: 'U1', replyToken: 'rt' };
@@ -313,12 +314,12 @@ function stubAi(over: Partial<Record<keyof CustomerAiDeps, unknown>> = {}) {
 const text1on1 = (text: string): InboundMessage => ({ channel: 'line', channelUserId: 'U1', kind: 'text', text, replyToken: 'rt' });
 
 describe('handleInbound — 1b-B mode lifecycle', () => {
-  it('enter-ai keyword enters the mode and sends the intro', async () => {
+  it('enter-ai keyword enters the mode and sends the intro Flex (LINE)', async () => {
     const { ai, calls } = stubAi();
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
     await handleInbound(text1on1('/ขอราคา AI'), deps as never);
     expect(calls).toContain('enter');
-    expect(String(replies[0])).toContain('ประเมินราคาอัตโนมัติ');
+    expect(replies[0]).toMatchObject({ type: 'flex', altText: expect.stringContaining('น้อง PP') });
   });
   it('bare postback ai_quote_start still sends the intro (no seed)', async () => {
     const runTurn = vi.fn();
@@ -327,7 +328,7 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     await handleInbound({ channel: 'line', channelUserId: 'U1', kind: 'postback', postbackData: 'ai_quote_start', replyToken: 'rt' }, deps as never);
     expect(calls).toContain('enter');
     expect(runTurn).not.toHaveBeenCalled();
-    expect(String(replies[0])).toContain('ประเมินราคาอัตโนมัติ');
+    expect(replies[0]).toMatchObject({ type: 'flex', altText: expect.stringContaining('น้อง PP') });
   });
   it('seeded entry enters the mode and runs the first turn with the seed, appending the exit hint', async () => {
     const runTurn = vi.fn(async () => ({ reply: '📊 ตารางราคาบัตร PVC อยู่ด้านบนนะคะ กี่ใบดีคะ', quotes: [], escalated: false, newHistory: [], priceTables: ['pvc_card'] }));
@@ -338,7 +339,8 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     expect(runTurn).toHaveBeenCalledWith(expect.anything(), 'บัตร PVC');
     const sent = replies[0] as unknown[];
     expect(sent[0]).toMatchObject({ type: 'image' }); expect(sent[1]).toContain('ออก');
-    expect(String(replies[0])).not.toContain('ประเมินราคาอัตโนมัติ');   // no INTRO
+    expect(replies[0]).not.toMatchObject({ type: 'flex' });   // no intro Flex
+    expect(JSON.stringify(replies[0])).not.toContain('เลือกชนิดงานที่ต้องการขอราคาได้เลยค่ะ');
   });
   it('seeded entry: mode is loaded AFTER enterMode, even when out-of-mode state would fail the active gate', async () => {
     const order: string[] = [];
@@ -350,9 +352,9 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
       modeActive: () => false,   // stale row would be inactive — the seeded turn must skip this gate
     });
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
-    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    await handleInbound(text1on1('ขอราคา AI ปฏิทินแขวน'), deps as never);
     expect(order).toEqual(['enter', 'load']);
-    expect(runTurn).toHaveBeenCalledWith(expect.anything(), 'ปฏิทิน');   // engine ran, not the hint path
+    expect(runTurn).toHaveBeenCalledWith(expect.anything(), 'ปฏิทินแขวน');   // engine ran, not the hint path
     expect(calls).not.toContain('hint-sent');
     expect(String(replies[0])).toContain('กี่ชุดดีคะ');
   });
@@ -360,9 +362,9 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     const saved: unknown[][] = [];
     const { ai } = stubAi({ saveConversation: async (_id: number, conv: unknown[]) => { saved.push(conv); } });
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
-    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    await handleInbound(text1on1('ขอราคา AI ปฏิทินแขวน'), deps as never);
     const conv = saved[0] as Array<{ role: string; text: string }>;
-    expect(conv[conv.length - 2]).toMatchObject({ role: 'user', text: 'ปฏิทิน' });
+    expect(conv[conv.length - 2]).toMatchObject({ role: 'user', text: 'ปฏิทินแขวน' });
     expect(conv[conv.length - 1]).toMatchObject({ role: 'assistant', text: String(replies[0]) });
     expect(String(replies[0])).toContain("(พิมพ์ 'ออก'");
   });
@@ -383,14 +385,14 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
     expect(runTurn).not.toHaveBeenCalled();
     expect(replies.length).toBe(1);
     // rate-limit reply (not the out-of-mode hint) — and, since the customer entered via a topic
-    // button and never saw INTRO_TEXT, it must carry the exit instructions too
+    // button and never saw the intro (INTRO_TEXT_SHORT / Flex), it must carry the exit instructions too
     expect(String(replies[0])).toBe(`${RATE_LIMIT_TEXT}\n\n${SEEDED_EXIT_HINT}`);
   });
   it('seeded entry: engine failure reply also carries the exit hint', async () => {
     const { ai } = stubAi({ runTurn: async () => { throw new Error('calc 500'); }, modeActive: () => false });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
-    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    await handleInbound(text1on1('ขอราคา AI ปฏิทินแขวน'), deps as never);
     expect(replies.length).toBe(1);
     expect(String(replies[0])).toBe(`${ERROR_TEXT}\n\n${SEEDED_EXIT_HINT}`);
   });
@@ -472,7 +474,7 @@ describe('handleInbound — 1b-B mode lifecycle', () => {
   it('multiple price tables: every image precedes the text', async () => {
     const { ai } = stubAi({ runTurn: async () => ({ reply: 'ตารางปฏิทินด้านบนค่ะ', quotes: [], escalated: false, newHistory: [], priceTables: ['calendar_desk', 'calendar_hanging'] }) });
     const { replies, deps } = stubDeps({ aiEnabled: true, aiCustomer: ai });
-    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    await handleInbound(text1on1('ปฏิทินตั้งโต๊ะ'), deps as never);
     const sent = replies[0] as unknown[];
     expect(sent).toHaveLength(3);
     expect(sent[0]).toMatchObject({ originalContentUrl: expect.stringContaining('calendar_desk.jpg') });
@@ -848,5 +850,207 @@ describe('handleInbound — append-only conversation persist (M-quotelogs-flag-i
     expect(conv[0]).toMatchObject({ text: 'turn-0' });
     expect(conv[50]).toMatchObject({ role: 'user', text: 'กระดาษ Art 130 มีมั้ย' });
     expect(conv[51].text).toContain('ส่งต่อทีมงาน');
+  });
+});
+
+// ─── น้อง PP intro Flex + ปฏิทิน kind bubble ───
+type Sent = { message: unknown; quickReplies: unknown };
+
+/** stubDeps whose adapter also captures the 3rd arg (quick replies) of every reply. */
+function stubDepsQr(ai: CustomerAiDeps) {
+  const sent: Sent[] = [];
+  const { deps } = stubDeps({
+    aiEnabled: true,
+    aiCustomer: ai,
+    adapter: {
+      downloadImage: async () => new Blob(['x']),
+      push: async () => {},
+      reply: async (_m: unknown, message: unknown, quickReplies?: unknown) => { sent.push({ message, quickReplies }); },
+    },
+  });
+  return { sent, deps };
+}
+
+const messengerText = (text: string): InboundMessage => ({ channel: 'messenger', channelUserId: 'PSID1', kind: 'text', text });
+
+type FlexNode = { type: string; contents?: FlexNode[]; action?: { text: string }; [k: string]: unknown };
+const flexButtonTexts = (flex: unknown): string[] => {
+  const out: string[] = [];
+  const walk = (n: unknown) => {
+    if (!n || typeof n !== 'object') return;
+    const node = n as FlexNode;
+    if (node.type === 'button' && node.action) out.push(node.action.text);
+    for (const v of Object.values(node)) { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') walk(v); }
+  };
+  walk((flex as { contents?: unknown }).contents);
+  return out;
+};
+const flexBodyText = (flex: unknown): string => {
+  const body = ((flex as { contents: { body: FlexNode } }).contents.body.contents ?? []).find((n) => n.type === 'text');
+  return String(body?.text);
+};
+
+describe('handleInbound — intro (enter-ai) per channel', () => {
+  it('LINE: bare keyword → intro Flex message, no quick replies, no engine', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ขอราคา AI'), deps as never);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message).toMatchObject({ type: 'flex', altText: INTRO_TEXT_SHORT });
+    expect(flexButtonTexts(sent[0].message)).toHaveLength(6);
+    expect(sent[0].quickReplies).toBeUndefined();
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+  it('Messenger: ai_quote_start postback → short text + the 6 product chips', async () => {
+    const { ai, calls } = stubAi();
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound({ channel: 'messenger', channelUserId: 'PSID1', kind: 'postback', postbackData: 'ai_quote_start' }, deps as never);
+    expect(calls).toContain('enter');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message).toBe(INTRO_TEXT_SHORT);
+    expect(sent[0].quickReplies).toEqual(INTRO_QUICK_REPLIES);
+    expect(INTRO_QUICK_REPLIES).toHaveLength(6);
+  });
+  it('Messenger: bare keyword → same text + chips (not the Flex object)', async () => {
+    const { ai } = stubAi();
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(messengerText('ขอราคา AI'), deps as never);
+    expect(sent[0].message).toBe(INTRO_TEXT_SHORT);
+    expect(sent[0].quickReplies).toEqual(INTRO_QUICK_REPLIES);
+  });
+});
+
+describe('handleInbound — ปฏิทิน button fast path (no engine call)', () => {
+  it('LINE: in-mode "ปฏิทิน" → 3-button kind Flex, runTurn NOT called', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message).toMatchObject({ type: 'flex' });
+    expect(flexButtonTexts(sent[0].message)).toEqual(['ปฏิทินจีน', 'ปฏิทินตั้งโต๊ะ 6x8 นิ้ว', 'ปฏิทินแขวน']);
+    expect(flexBodyText(sent[0].message)).toBe(CALENDAR_KIND_ASK);
+    expect(sent[0].quickReplies).toBeUndefined();
+  });
+  it('"📅 ปฏิทิน" (button label text) takes the same fast path', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('📅 ปฏิทิน'), deps as never);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(sent[0].message).toMatchObject({ type: 'flex' });
+  });
+  it('persists the scripted turn BEFORE the reply: saveConversation once, last turn = CALENDAR_KIND_ASK, touch roundsNoQuote +1', async () => {
+    const order: string[] = [];
+    const saved: Array<Array<{ role: string; text: string }>> = [];
+    const touches: Array<{ sessionId?: number | null; roundsNoQuote?: number | null }> = [];
+    const { ai } = stubAi({
+      loadMode: async () => ({ ...ACTIVE_MODE, roundsNoQuote: 2 }),
+      saveConversation: async (_id: number, conv: Array<{ role: string; text: string }>) => { order.push('save'); saved.push(conv); },
+      touchMode: async (_uid: string, patch: { sessionId?: number | null; roundsNoQuote?: number | null }) => { order.push('touch'); touches.push(patch); },
+    });
+    const { deps } = stubDeps({
+      aiEnabled: true, aiCustomer: ai,
+      adapter: { downloadImage: async () => new Blob(['x']), push: async () => {}, reply: async () => { order.push('reply'); } },
+    });
+    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    expect(saved).toHaveLength(1);
+    expect(saved[0][saved[0].length - 2]).toMatchObject({ role: 'user', text: 'ปฏิทิน' });
+    expect(saved[0][saved[0].length - 1]).toMatchObject({ role: 'assistant', text: CALENDAR_KIND_ASK });
+    expect(touches).toEqual([{ sessionId: 7, roundsNoQuote: 3 }]);
+    expect(order.indexOf('save')).toBeLessThan(order.indexOf('reply'));
+    expect(order.indexOf('touch')).toBeLessThan(order.indexOf('reply'));
+  });
+  it('Messenger: "ปฏิทิน" → plain text + the 3 kind chips', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(messengerText('ปฏิทิน'), deps as never);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(sent[0].message).toBe(CALENDAR_KIND_ASK);
+    expect(sent[0].quickReplies).toEqual(CALENDAR_KIND_QUICK_REPLIES);
+    expect(CALENDAR_KIND_QUICK_REPLIES).toHaveLength(3);
+  });
+  it('seeded "ขอราคา AI ปฏิทิน" → fast path with the exit hint in BOTH the persisted text and the bubble body', async () => {
+    const runTurn = vi.fn();
+    const saved: Array<Array<{ role: string; text: string }>> = [];
+    const { ai, calls } = stubAi({
+      runTurn,
+      modeActive: () => false,   // seeded entry skips the active gate
+      saveConversation: async (_id: number, conv: Array<{ role: string; text: string }>) => { saved.push(conv); },
+    });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ขอราคา AI ปฏิทิน'), deps as never);
+    expect(calls).toContain('enter');
+    expect(runTurn).not.toHaveBeenCalled();
+    const expected = `${CALENDAR_KIND_ASK}\n\n${SEEDED_EXIT_HINT}`;
+    expect(saved[0][saved[0].length - 1]).toMatchObject({ role: 'assistant', text: expected });
+    expect(flexBodyText(sent[0].message)).toBe(expected);
+    expect(flexButtonTexts(sent[0].message)).toHaveLength(3);
+  });
+  it('rate limit still gates the fast path (checked first)', async () => {
+    const runTurn = vi.fn();
+    const { ai } = stubAi({ runTurn, checkRateLimit: async () => false });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ปฏิทิน'), deps as never);
+    expect(sent.map((s) => s.message)).toEqual([RATE_LIMIT_TEXT]);
+  });
+  it('a longer calendar sentence is NOT the button — it still goes to the engine', async () => {
+    const runTurn = vi.fn(async () => ({ reply: 'กี่ชุดดีคะ', quotes: [], escalated: false, newHistory: [], priceTables: [] }));
+    const { ai } = stubAi({ runTurn });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ปฏิทินแขวน'), deps as never);
+    expect(runTurn).toHaveBeenCalledWith(expect.anything(), 'ปฏิทินแขวน');
+    expect(sent[0].message).toBe('กี่ชุดดีคะ');
+  });
+});
+
+describe('handleInbound — calendar-kind decorator on the model reply', () => {
+  const askTurn = (reply: string, priceTables: string[] = []) => async () => ({
+    reply, quotes: [], escalated: false, newHistory: [], priceTables,
+  });
+  it('LINE: model replies the pinned popular-3 sentence → rendered as the 3-button Flex; persisted history stays text', async () => {
+    const saved: Array<Array<{ role: string; text: string }>> = [];
+    const { ai } = stubAi({
+      runTurn: askTurn(CALENDAR_KIND_ASK),
+      saveConversation: async (_id: number, conv: Array<{ role: string; text: string }>) => { saved.push(conv); },
+    });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('อยากทำปฏิทิน'), deps as never);
+    expect(sent[0].message).toMatchObject({ type: 'flex' });
+    expect(flexButtonTexts(sent[0].message)).toEqual(['ปฏิทินจีน', 'ปฏิทินตั้งโต๊ะ 6x8 นิ้ว', 'ปฏิทินแขวน']);
+    expect(flexBodyText(sent[0].message)).toBe(CALENDAR_KIND_ASK);
+    expect(saved[0][saved[0].length - 1]).toMatchObject({ role: 'assistant', text: CALENDAR_KIND_ASK });
+  });
+  it('Messenger: same reply → text + 3 chips', async () => {
+    const { ai } = stubAi({ runTurn: askTurn(CALENDAR_KIND_ASK) });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(messengerText('อยากทำปฏิทิน'), deps as never);
+    expect(sent[0].message).toBe(CALENDAR_KIND_ASK);
+    expect(sent[0].quickReplies).toEqual(CALENDAR_KIND_QUICK_REPLIES);
+  });
+  it('a normal price reply stays a plain string with no chips', async () => {
+    const { ai } = stubAi();
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('โบรชัวร์ 1000 ใบ'), deps as never);
+    expect(typeof sent[0].message).toBe('string');
+    expect(sent[0].quickReplies).toBeUndefined();
+  });
+  it('a reply that also sends price tables is NOT decorated (images + text stay as they were)', async () => {
+    const { ai } = stubAi({ runTurn: askTurn(CALENDAR_KIND_ASK, ['calendar_desk']) });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ปฏิทินตั้งโต๊ะ'), deps as never);
+    const msg = sent[0].message as unknown[];
+    expect(Array.isArray(msg)).toBe(true);
+    expect(msg[0]).toMatchObject({ type: 'image' });
+    expect(msg[1]).toBe(CALENDAR_KIND_ASK);
+  });
+  it('hand-off replies are untouched (③ rounds / ② model escalation stay plain text)', async () => {
+    const { ai } = stubAi({ runTurn: askTurn('ขนาดนี้ขอส่งต่อทีมงานประเมินให้นะคะ') });
+    const { sent, deps } = stubDepsQr(ai);
+    await handleInbound(text1on1('ปฏิทินแขวน A3'), deps as never);
+    expect(sent.at(-1)!.message).toBe('ขนาดนี้ขอส่งต่อทีมงานประเมินให้นะคะ');
   });
 });

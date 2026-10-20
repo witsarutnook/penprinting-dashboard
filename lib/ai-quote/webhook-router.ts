@@ -1,5 +1,5 @@
 // lib/ai-quote/webhook-router.ts
-import type { InboundMessage, ChannelAdapter, OutboundMessage } from './channels/types';
+import type { InboundMessage, ChannelAdapter, OutboundMessage, QuickReply } from './channels/types';
 import { extractOrderId } from './track-flex';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
 import type { ThunderVerifyResponse } from './slip';
@@ -11,10 +11,14 @@ import type { LineModeRow } from './line-mode';
 import type { EscalationFlexInput } from './escalation-flex';
 import {
   detectHumanRequest, detectOrderIntent, detectCustomerEscalation,
-  ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, INTRO_TEXT, EXIT_TEXT, HINT_TEXT,
+  ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, CALENDAR_KIND_ASK, EXIT_TEXT, HINT_TEXT,
   RATE_LIMIT_TEXT, ERROR_TEXT, SEEDED_EXIT_HINT, detectPriceTableTopic, hintQuickReply,
   type TriggerType,
 } from './customer-triggers';
+import {
+  buildIntroFlex, INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES,
+  buildCalendarKindFlex, CALENDAR_KIND_QUICK_REPLIES, isCalendarKindAsk, isCalendarButtonText,
+} from './intro-flex';
 
 /** Customer-AI turn reply: price-table images FIRST (so they sit above the text in
  *  the chat), the text LAST. No tables → the plain string, unchanged.
@@ -23,6 +27,16 @@ import {
 function withPriceTables(out: RunQuoteTurnOutput, text: string, channel: InboundMessage['channel']): OutboundMessage | OutboundMessage[] {
   if (out.priceTables.length === 0) return text;
   return [...out.priceTables.map((id) => priceTableImageMessage(id, channel)), text];
+}
+
+/** "Which calendar kind?" question as a tappable UI: LINE → small Flex bubble with the 3 kind
+ *  buttons · Messenger (no Flex) → the same text + 3 quick-reply chips. `text` may carry the
+ *  seeded exit hint — it is exactly what gets persisted. Returns the [message, quickReplies]
+ *  args for adapter.reply. */
+function calendarKindReply(text: string, channel: InboundMessage['channel']): [OutboundMessage, QuickReply[] | undefined] {
+  return channel === 'line'
+    ? [buildCalendarKindFlex(text), undefined]
+    : [text, CALENDAR_KIND_QUICK_REPLIES];
 }
 
 export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'ignore';
@@ -276,14 +290,16 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   const now = Date.now();
 
   // Only three things enter the mode: the bare keyword, `ขอราคา AI <product>` (seeded),
-  // and the ai_quote_start postback (routeInbound). Bare/postback → INTRO and stop;
+  // and the ai_quote_start postback (routeInbound). Bare/postback → the intro (LINE: Flex
+  // bubble with 6 product buttons · Messenger: short text + 6 chips) and stop;
   // seeded → fall through and run the first turn on the seed.
   let seed: string | null = null;
   if (route === 'enter-ai') {
     seed = m.kind === 'text' && m.text ? parseEnterAiSeed(m.text) : null;
     await ai.enterMode(uid);
     if (seed === null) {
-      await deps.adapter.reply(m, INTRO_TEXT);
+      if (m.channel === 'line') await deps.adapter.reply(m, buildIntroFlex());
+      else await deps.adapter.reply(m, INTRO_TEXT_SHORT, INTRO_QUICK_REPLIES);
       return;
     }
   }
@@ -318,7 +334,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
 
   if (!(await ai.checkRateLimit(uid))) {
     await ai.touchMode(uid, {});
-    // Seeded entry: the customer never saw INTRO_TEXT, so even a declined first turn
+    // Seeded entry: the customer never saw the intro, so even a declined first turn
     // must say how to leave the mode (same reason replyText appends it below).
     await deps.adapter.reply(m, seed !== null ? `${RATE_LIMIT_TEXT}\n\n${SEEDED_EXIT_HINT}` : RATE_LIMIT_TEXT);
     return;
@@ -342,6 +358,16 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
 
   const text = seed ?? m.text!;
   const sid = sessionId;
+
+  // Persist append-only: FULL stored conversation + this turn's pair — never
+  // out.newHistory, which is built from the engine-trimmed(40) replay input
+  // (M-quotelogs-flag-index-collision, audit 2026-07-21: persisting the
+  // trimmed view shifted turn indexes ~2/round past 40 turns, breaking the
+  // absolute turn_index that ai_quote_turn_flags and the /quote-logs UI key
+  // on). Trim lives ONLY at replay (sanitizeHistory inside runTurn).
+  const persistedConv = (assistantText: string): ConversationTurn[] =>
+    [...conversation, mkTurn('user', text), mkTurn('assistant', assistantText)];
+
   const escalate = async (trigger: TriggerType, conv: ConversationTurn[], replyText: string) => {
     // Parallel persists (perf M-webhook 2026-07-23): the three DB ops are
     // independent (different tables / read-only), so they run concurrently —
@@ -372,6 +398,22 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     await deps.adapter.reply(m, replyText);
   };
 
+  // 📅 ปุ่ม "ปฏิทิน" จาก intro — คำเดี่ยวๆ แค่ถามต่อว่าแบบไหน: ตอบสคริปต์ CALENDAR_KIND_ASK
+  // ทันทีโดยไม่เรียก engine (ไม่เผา token/latency กับคำตอบที่ตายตัว). อยู่หลัง rate limit +
+  // load/create session (กดปุ่ม = 1 เทิร์นที่นับ + เก็บ history) และก่อน trigger ①④ (คำนี้
+  // ไม่มีทางแตะ). Persist ก่อน reply เหมือนปลายทาง happy path; seeded → ต่อ exit hint
+  // (ลูกค้าไม่เคยเห็น intro) และสิ่งที่ persist = ข้อความที่ลูกค้าเห็น
+  if (isCalendarButtonText(text)) {
+    const askText = seed !== null ? `${CALENDAR_KIND_ASK}\n\n${SEEDED_EXIT_HINT}` : CALENDAR_KIND_ASK;
+    await Promise.all([
+      ai.saveConversation(sid, persistedConv(askText)),
+      ai.touchMode(uid, { sessionId: sid, roundsNoQuote: (mode?.roundsNoQuote ?? 0) + 1 }),
+    ]);
+    const [msg, quickReplies] = calendarKindReply(askText, m.channel);
+    await deps.adapter.reply(m, msg, quickReplies);
+    return;
+  }
+
   // ① ขอคุยกับคน — ไม่เรียก engine (ไม่เผา token กับข้อความที่ขอ hand-off)
   if (detectHumanRequest(text)) {
     await escalate('human',
@@ -401,15 +443,6 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
   // soft-state posture as roundsNoQuote; quotes are display-only history).
   for (const q of out.quotes) await ai.saveQuote(sid, q);
 
-  // Persist append-only: FULL stored conversation + this turn's pair — never
-  // out.newHistory, which is built from the engine-trimmed(40) replay input
-  // (M-quotelogs-flag-index-collision, audit 2026-07-21: persisting the
-  // trimmed view shifted turn indexes ~2/round past 40 turns, breaking the
-  // absolute turn_index that ai_quote_turn_flags and the /quote-logs UI key
-  // on). Trim lives ONLY at replay (sanitizeHistory inside runTurn).
-  const persistedConv = (assistantText: string): ConversationTurn[] =>
-    [...conversation, mkTurn('user', text), mkTurn('assistant', assistantText)];
-
   // ② model hand-off (นอกขอบเขต/กระดาษพิเศษ/ขอส่วนลด) — ใช้ข้อความ model เอง.
   // ใช้ detector วลี pin ของ customer flow ไม่ใช่ out.escalated (heuristic ฝั่ง
   // staff กว้างเกิน — disclaimer ลูกค้ามีคำ "ทีมงาน" ทุกใบราคา).
@@ -424,7 +457,7 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     return;
   }
 
-  // Seeded entry: the customer never saw INTRO_TEXT's exit instructions, so the
+  // Seeded entry: the customer never saw the intro's exit instructions, so the
   // first reply carries them. What we persist = what the customer sees.
   const replyText = seed !== null ? `${out.reply}\n\n${SEEDED_EXIT_HINT}` : out.reply;
 
@@ -436,7 +469,14 @@ export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promis
     ai.touchMode(uid, { sessionId: sid, roundsNoQuote: rounds }),
   ]);
   if (out.priceTables.length === 0) {
-    await deps.adapter.reply(m, replyText);
+    // The model asked "which calendar kind?" (the pinned popular-3 sentence) → show it as
+    // tappable buttons/chips. Display-only: replyText was persisted above as plain text.
+    if (isCalendarKindAsk(replyText)) {
+      const [msg, quickReplies] = calendarKindReply(replyText, m.channel);
+      await deps.adapter.reply(m, msg, quickReplies);
+    } else {
+      await deps.adapter.reply(m, replyText);
+    }
     return;
   }
   // Price-table images are a bonus, the text is the answer: Messenger sends array

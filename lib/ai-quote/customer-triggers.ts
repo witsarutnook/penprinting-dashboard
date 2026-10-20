@@ -50,12 +50,13 @@ export const TRIGGER_LABEL: Record<TriggerType, string> = {
 
 // ─── Mode lifecycle copy (spec §1-§2, §6) ───
 
-export const INTRO_TEXT =
-  'สวัสดีค่ะ 🤖 น้อง PP ผู้ช่วยประเมินราคาอัตโนมัติของ Penprinting ยินดีให้บริการค่ะ\n' +
-  'พิมพ์สเปกงานมาได้เลย เช่น "โบรชัวร์ A4 1,000 ใบ" หรือ "หนังสือ A5 100 หน้า 500 เล่ม"\n' +
-  '• ตีราคาได้: โบรชัวร์/ใบปลิว · หนังสือ · สมุด · นามบัตร · ปฏิทิน · บัตร PVC\n' +
-  '• พิมพ์ "ออก" เมื่อต้องการกลับไปคุยกับทีมงาน\n' +
-  'ราคาที่ได้เป็นการประเมินเบื้องต้น ทีมงานยืนยันอีกครั้งค่ะ';
+/** Scripted answer to "ปฏิทิน but which kind?" — the customer prompt interpolates this
+ *  verbatim (prompt-customer.ts) and the bubble/fast path in webhook-router reuse it,
+ *  so the model reply, the Flex body and the persisted history can't drift apart.
+ *  Must NOT contain a hand-off phrase (detectCustomerEscalation) — the customer stays in
+ *  the AI mode. intro-flex.ts isCalendarKindAsk keys on "แบบที่นิยมมี 3 แบบ". */
+export const CALENDAR_KIND_ASK =
+  'ทำได้ค่ะ 😊 แบบที่นิยมมี 3 แบบ: ปฏิทินจีน · ตั้งโต๊ะ 6x8 นิ้ว · แขวน รับแบบไหนดีคะ (ขนาดอื่นนอกจากนี้ ทีมงานคุยรายละเอียดให้ค่ะ)';
 
 export const EXIT_TEXT = 'ออกจากโหมดประเมินราคาแล้วค่ะ ✅ ทีมงานจะดูแลต่อจากตรงนี้นะคะ ขอบคุณค่ะ 🙏';
 
@@ -93,7 +94,7 @@ export function hintQuickReply(topic: PriceTableTopic | null): QuickReply {
 }
 
 /** Appended after a seeded-entry reply (customer entered AI mode via a topic
- *  button, so never saw INTRO_TEXT's exit instructions). */
+ *  button, so never saw the intro's exit instructions). */
 export const SEEDED_EXIT_HINT = "(พิมพ์ 'ออก' เมื่อต้องการกลับไปคุยกับทีมงานค่ะ)";
 
 export const RATE_LIMIT_TEXT =

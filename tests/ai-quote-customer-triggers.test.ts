@@ -2,9 +2,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   detectHumanRequest, detectOrderIntent, detectCustomerEscalation,
-  ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, TRIGGER_LABEL, INTRO_TEXT, HINT_TEXT, HINT_QUICK_REPLY,
+  ROUNDS_NO_QUOTE_LIMIT, CUSTOMER_REPLY, TRIGGER_LABEL, CALENDAR_KIND_ASK, HINT_TEXT, HINT_QUICK_REPLY,
   detectPriceTableTopic, hintQuickReply, SEEDED_EXIT_HINT,
 } from '@/lib/ai-quote/customer-triggers';
+import { INTRO_PRODUCTS, INTRO_TEXT_SHORT } from '@/lib/ai-quote/intro-flex';
 
 describe('detectHumanRequest (trigger ① — checked before the engine call)', () => {
   it.each(['ขอคุยกับพนักงานค่ะ', 'คุยกับคนได้มั้ย', 'ติดต่อทีมงานหน่อย', 'ขอสายแอดมิน'])('fires on %s', (t) => {
@@ -52,16 +53,21 @@ describe('canned copy', () => {
     expect(Object.keys(TRIGGER_LABEL).sort()).toEqual(['human', 'order_intent', 'out_of_scope', 'rounds']);
   });
   it('intro explains scope + how to exit', () => {
-    expect(INTRO_TEXT).toContain('โบรชัวร์');
-    expect(INTRO_TEXT).toContain('ออก');
+    expect(INTRO_PRODUCTS.map((p) => p.text)).toContain('ใบปลิว/โบรชัวร์');
+    expect(INTRO_TEXT_SHORT).toContain('ออก');
   });
   it('intro + hint scope lists include นามบัตร (added 2026-07-13)', () => {
-    expect(INTRO_TEXT).toContain('นามบัตร');
+    expect(INTRO_PRODUCTS.map((p) => p.text)).toContain('นามบัตร');
     expect(HINT_TEXT).toContain('นามบัตร');
   });
   it('intro + hint introduce the AI as น้อง PP (persona 2026-07-13)', () => {
-    expect(INTRO_TEXT).toContain('น้อง PP');
+    expect(INTRO_TEXT_SHORT).toContain('น้อง PP');
     expect(HINT_TEXT).toContain('น้อง PP');
+  });
+  it('CALENDAR_KIND_ASK is the pinned popular-3 question (prompt + bubble share it) and is not a hand-off', () => {
+    expect(CALENDAR_KIND_ASK).toContain('แบบที่นิยมมี 3 แบบ');
+    expect(CALENDAR_KIND_ASK).toBe('ทำได้ค่ะ 😊 แบบที่นิยมมี 3 แบบ: ปฏิทินจีน · ตั้งโต๊ะ 6x8 นิ้ว · แขวน รับแบบไหนดีคะ (ขนาดอื่นนอกจากนี้ ทีมงานคุยรายละเอียดให้ค่ะ)');
+    expect(detectCustomerEscalation(0, CALENDAR_KIND_ASK)).toBe(false);
   });
   it('hint quick-reply sends an enter keyword (bare — gate "/" reverted 2026-07-17)', () => {
     expect(HINT_QUICK_REPLY.text).toBe('ขอราคา AI');
@@ -82,10 +88,11 @@ describe('price-table topics (calendar / PVC)', () => {
     expect(hintQuickReply(null)).toEqual(HINT_QUICK_REPLY);
   });
   it('intro + hint list the two new products', () => {
-    for (const t of [INTRO_TEXT, HINT_TEXT]) {
-      expect(t).toContain('ปฏิทิน');
-      expect(t).toContain('บัตร PVC');
-    }
+    const intro = INTRO_PRODUCTS.map((p) => p.text);
+    expect(intro).toContain('ปฏิทิน');
+    expect(intro).toContain('บัตร PVC');
+    expect(HINT_TEXT).toContain('ปฏิทิน');
+    expect(HINT_TEXT).toContain('บัตร PVC');
   });
   it('SEEDED_EXIT_HINT tells the customer how to leave', () => {
     expect(SEEDED_EXIT_HINT).toBe("(พิมพ์ 'ออก' เมื่อต้องการกลับไปคุยกับทีมงานค่ะ)");
