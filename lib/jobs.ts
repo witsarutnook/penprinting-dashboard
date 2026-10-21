@@ -53,16 +53,20 @@ export function dmyToISOInput(input: string | null | undefined): string {
  *  The single date parser for every surface: staff screens, web `/track`, and
  *  the LINE `/track` Flex card (its `cleanDate_` delegates to displayDatePadded).
  *  Accepts:
- *    - YYYY-MM-DD — date-only, taken as-is with NO timezone shift. This is what
- *      the dashboard writes today (getBangkokToday() / the date input).
+ *    - YYYY-MM-DD, or an ISO timestamp with NO zone ("2026-05-07 23:30",
+ *      "2026-05-07T23:30:00") — the date portion as written, NO timezone shift
+ *      (an offset-less timestamp is Bangkok wall-clock, and must not depend on
+ *      the host TZ). Date-only is what the dashboard writes today
+ *      (getBangkokToday() / the date input).
  *    - DD/MM/YYYY, optionally followed by whitespace + anything ("21/4/2026
  *      10:00") — the date portion is used, the suffix is dropped (use
  *      displayDateTime when the time matters).
  *    - Anything else `new Date()` can parse, converted to the Asia/Bangkok
- *      calendar day: ISO with a time ("2026-05-07T17:00:00.000Z" → 8/5/2026, how
- *      Google Sheets serialised a Bangkok-midnight Date) and JS Date.toString()
- *      output ("Tue Apr 21 2026 00:00:00 GMT+0700 ...", what sheetToArray's
- *      String(value) yields when Sheets auto-converted a string cell to a Date).
+ *      calendar day: ISO with an explicit zone ("2026-05-07T17:00:00.000Z" →
+ *      8/5/2026, how Google Sheets serialised a Bangkok-midnight Date; or a
+ *      "+07:00"-style offset) and JS Date.toString() output ("Tue Apr 21 2026
+ *      00:00:00 GMT+0700 ...", what sheetToArray's String(value) yields when
+ *      Sheets auto-converted a string cell to a Date).
  *    - Any of the above wrapped in literal double quotes (legacy objectToRow
  *      double-stringify) — unwrapped first.
  *  Returns "—" for empty; unparseable input comes back unchanged. */
@@ -80,10 +84,14 @@ export function displayDate(input: string | null | undefined): string {
     s = s.slice(1, -1).trim();
   }
   let d: number, m: number, y: number;
-  // ISO is date-only on purpose ($-anchored): "YYYY-MM-DDTHH:MM…" carries a
-  // time and must go through the Bangkok-TZ Date fallback below, otherwise a
-  // 17:00Z Sheet timestamp would show the previous (UTC) calendar day.
-  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  // ISO date, optionally with a time but NO zone: "2026-05-07", "2026-05-07 23:30",
+  // "2026-05-07T23:30:00.123". An offset-less timestamp is Bangkok wall-clock, so
+  // the date portion as written is the answer — handing it to new Date() would
+  // read it as HOST-local time (8/5 on Vercel UTC, 7/5 in a Bangkok browser =
+  // hydration mismatch). The $ anchor is what keeps a trailing "Z" / "±HH:MM"
+  // from matching: those strings fall through to the Bangkok-TZ Date fallback,
+  // otherwise a 17:00Z Sheet timestamp would show the previous (UTC) day.
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/);
   // D/M/YYYY may be followed by whitespace + a time/anything ("21/4/2026 10:00").
   // new Date() reads D/M/Y as M/D/Y (invalid for day > 12), so take the parts here.
   const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s.*)?$/);

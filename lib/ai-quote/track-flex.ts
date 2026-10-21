@@ -1,7 +1,8 @@
 // lib/ai-quote/track-flex.ts
 // Port of buildOrderFlex_ + helpers from production-monitoring/google-apps-script-line-webhook.js
-// (lines 286–590). JS→TS: added types, removed Logger.log, replaced Apps Script-only
-// Utilities.formatDate with Intl.DateTimeFormat (TZ-safe, Bangkok timezone).
+// (lines 286–590). JS→TS: added types, removed Logger.log, and dates go through
+// displayDatePadded from '@/lib/jobs' (the shared Bangkok-TZ parser the web /track
+// uses) instead of the Apps Script-only Utilities.formatDate.
 
 import { deriveTrackStatus } from '@/lib/track-status';
 import { getBangkokToday } from '@/lib/calendar';
