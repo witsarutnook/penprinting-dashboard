@@ -50,8 +50,11 @@ export function dmyToISOInput(input: string | null | undefined): string {
 }
 
 /** Display-format date as D/M/YYYY (no leading zeros) — matches WP screenshot.
- *  The single date parser for every surface: staff screens, web `/track`, and
- *  the LINE `/track` Flex card (its `cleanDate_` delegates to displayDatePadded).
+ *  The single *display* parser for every surface: staff screens, web `/track`,
+ *  and the LINE `/track` Flex card (its `cleanDate_` delegates to
+ *  displayDatePadded). Parsing for computation and form prefill is separate —
+ *  `parseDateDMY` (daysLeft/urgency) and `dmyToISOInput` (edit-form prefill)
+ *  still read the same cells on their own.
  *  Accepts:
  *    - YYYY-MM-DD, or an ISO timestamp with NO zone ("2026-05-07 23:30",
  *      "2026-05-07T23:30:00") — the date portion as written, NO timezone shift
@@ -69,7 +72,8 @@ export function dmyToISOInput(input: string | null | undefined): string {
  *      Sheets auto-converted a string cell to a Date).
  *    - Any of the above wrapped in literal double quotes (legacy objectToRow
  *      double-stringify) — unwrapped first.
- *  Returns "—" for empty; unparseable input comes back unchanged. */
+ *  Returns "—" for empty (including a quotes-only cell); other unparseable
+ *  input comes back unchanged. */
 export function displayDate(input: string | null | undefined): string {
   if (!input) return '—';
   let s = String(input).trim();
@@ -83,6 +87,10 @@ export function displayDate(input: string | null | undefined): string {
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
     s = s.slice(1, -1).trim();
   }
+  // A cell that was only quotes ('""', '" "') is empty once unwrapped. Never
+  // return '' here: the LINE Flex card would get a text node with empty `text`,
+  // which LINE rejects, failing the whole /track reply.
+  if (!s) return '—';
   let d: number, m: number, y: number;
   // ISO date, optionally with a time but NO zone: "2026-05-07", "2026-05-07 23:30",
   // "2026-05-07T23:30:00.123". An offset-less timestamp is Bangkok wall-clock, so

@@ -58,6 +58,13 @@ describe('displayDate — legacy Sheet-era shapes (single parser for LINE card +
     expect(displayDate('2026-05-07T23:30:00-05:00')).toBe('8/5/2026');
     expect(displayDate('2026-05-08T00:00:00+07:00')).toBe('8/5/2026');
   });
+  it('a cell that is only quotes renders as — instead of an empty string', () => {
+    // An empty string would reach the LINE Flex card as a text node with empty
+    // `text`, which LINE rejects -> the whole /track reply fails silently.
+    expect(displayDate('""')).toBe('—');
+    expect(displayDate('" "')).toBe('—');
+    expect(displayDatePadded('""')).toBe('—');
+  });
   it('keeps the compact (unpadded) contract on the Date-parser fallback too', () => {
     // en-GB zero-pads even with day:'numeric'; displayDate must still return D/M/YYYY.
     expect(displayDate('Sat Sep 05 2026 00:00:00 GMT+0700')).toBe('5/9/2026');
