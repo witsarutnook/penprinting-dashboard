@@ -26,6 +26,12 @@ const FAILURE_NOTICE: Record<'unreadable' | 'error', string> = {
   error: 'ระบบตรวจสอบสลิปขัดข้องชั่วคราวค่ะ\nทีมงานจะตรวจสอบให้นะคะ 🙏',
 };
 
+/** Footer copy. A verdict state (success/duplicate/mismatch) was produced by the
+ *  automatic check; unreadable/error never got one, so the card must not claim it
+ *  was "checked automatically" — it says staff will check instead. */
+const FOOTER_VERDICT = '✓ ตรวจสอบอัตโนมัติ · Penprinting';
+const FOOTER_PENDING = 'รอทีมงานตรวจสอบ · Penprinting';
+
 const ACCENT = '#c8553d'; // Penprinting brand
 const TEXT = '#2c2c2a';
 const MUTED = '#888780';
@@ -156,7 +162,7 @@ export function buildSlipFlex(result: ThunderVerifyResponse): Record<string, unk
       body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: body },
       footer: {
         type: 'box', layout: 'horizontal', paddingAll: '10px',
-        contents: [{ type: 'text', text: '✓ ตรวจสอบอัตโนมัติ · Penprinting', size: 'xxs', color: ACCENT, align: 'center' }],
+        contents: [{ type: 'text', text: state === 'unreadable' || state === 'error' ? FOOTER_PENDING : FOOTER_VERDICT, size: 'xxs', color: ACCENT, align: 'center' }],
       },
     },
   };

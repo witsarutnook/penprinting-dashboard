@@ -54,12 +54,44 @@ describe('buildSlipFlex', () => {
     expect(s).toContain('09:30');      // transDate fallback
   });
 
+  // L3: the footer used to say "✓ ตรวจสอบอัตโนมัติ" on every state — including the two
+  // whose header says the automatic check FAILED. Verdict states keep the claim;
+  // no-verdict states hand off to staff instead.
+  const verdictCases: Array<[string, ThunderVerifyResponse]> = [
+    ['success', success],
+    ['duplicate', { success: true, data: { isDuplicate: true, rawSlip: { amount: { amount: 50 } } } }],
+    ['mismatch', { success: true, data: { isDuplicate: false, isAccountMatched: false, rawSlip: { amount: { amount: 50 } } } }],
+  ];
+  const noVerdictCases: Array<[string, ThunderVerifyResponse]> = [
+    ['unreadable', { success: false, error: { code: 'SLIP_NOT_FOUND', message: 'x' } }],
+    ['error', { success: false, error: { code: 'QUOTA_EXCEEDED', message: 'x' } }],
+  ];
+
+  it('verdict states (success/duplicate/mismatch) carry the "✓ ตรวจสอบอัตโนมัติ · Penprinting" footer', () => {
+    for (const [state, result] of verdictCases) {
+      expect(classifySlipState(result)).toBe(state);
+      expect(json(buildSlipFlex(result))).toContain('✓ ตรวจสอบอัตโนมัติ · Penprinting');
+    }
+  });
+
+  // Assert on the full footer string with the leading ✓ — the 'unreadable' body
+  // notice legitimately contains the bare words "ระบบตรวจสอบอัตโนมัติยืนยัน…".
+  it('non-verdict states (unreadable/error) carry the "รอทีมงานตรวจสอบ · Penprinting" footer and never "✓ ตรวจสอบอัตโนมัติ"', () => {
+    for (const [state, result] of noVerdictCases) {
+      expect(classifySlipState(result)).toBe(state);
+      const s = json(buildSlipFlex(result));
+      expect(s).toContain('รอทีมงานตรวจสอบ · Penprinting');
+      expect(s).not.toContain('✓ ตรวจสอบอัตโนมัติ');
+    }
+  });
+
   it('every state carries the Penprinting footer (not Thunder branding)', () => {
-    const s = json(buildSlipFlex(success));
-    expect(s).toContain('ตรวจสอบอัตโนมัติ');
-    expect(s).toContain('Penprinting');
-    expect(s).not.toContain('ธันเดอร์');
-    expect(s).not.toContain('Thunder');
+    for (const [, result] of [...verdictCases, ...noVerdictCases]) {
+      const s = json(buildSlipFlex(result));
+      expect(s).toContain('Penprinting');
+      expect(s).not.toContain('ธันเดอร์');
+      expect(s).not.toContain('Thunder');
+    }
   });
 
   it('duplicate: amber header + duplicate notice', () => {
