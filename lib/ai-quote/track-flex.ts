@@ -11,7 +11,7 @@ import { displayDatePadded } from '@/lib/jobs';
 export interface TrackState {
   order: { name?: string; customer?: string; dateIn?: string; dateDue?: string; [k: string]: unknown };
   job: { dept?: string; date?: string; [k: string]: unknown } | null;
-  shipped: Record<string, unknown> | null;
+  shipped: { shippedDate?: string; [k: string]: unknown } | null;
   cancelled: { reason?: string; [k: string]: unknown } | null;
 }
 
@@ -38,6 +38,8 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
   const customer  = maskCustomer_(state.order.customer || '');
   const dateIn    = cleanDate_(state.order.dateIn || '');
   const dateDue   = cleanDate_(state.order.dateDue || '');
+  // Postgres `shipped` row date (DD/MM/YYYY via formatThaiDate). '—' = not known.
+  const shippedDate = cleanDate_(state.shipped?.shippedDate);
 
   const st = deriveTrackStatus(
     state.job as Record<string, unknown> | null,
@@ -89,7 +91,7 @@ export function buildOrderFlex(orderId: string, state: TrackState | null): Recor
   }
 
   // ─── Steps (icon circle + Thai/English labels) ───
-  const stepBoxes = buildStepBoxes_(currentDept, isCancelled, isShipped, st.awaitingShipment);
+  const stepBoxes = buildStepBoxes_(currentDept, isCancelled, isShipped, st.awaitingShipment, shippedDate);
 
   // ─── Status header section (cream bg) ───
   const headerContents: Record<string, unknown>[] = [
@@ -227,6 +229,7 @@ function buildStepBoxes_(
   isCancelled: boolean,
   isShipped: boolean,
   awaitingShipment: boolean,
+  shippedDate: string,
 ): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
 
@@ -263,9 +266,14 @@ function buildStepBoxes_(
   else if (awaitingShipment) { readyCls = 'current'; readyIcon = '●'; }
   out.push(makeStep_(readyCls, readyIcon, 'สินค้าพร้อมรับ', 'Ready for pick up'));
 
-  // Step 6: จัดส่งเรียบร้อยแล้ว
+  // Step 6: จัดส่งเรียบร้อยแล้ว — with the shipped date when known, same as the
+  // web /track Steps component ("จัดส่งเรียบร้อยแล้ว (DD/MM/YYYY)"). '—' is the
+  // cleanDate_ sentinel for "no date", so the bare label stays when it's missing.
+  const shipThai = isShipped && shippedDate !== '—'
+    ? `จัดส่งเรียบร้อยแล้ว (${shippedDate})`
+    : 'จัดส่งเรียบร้อยแล้ว';
   out.push(makeStep_(isShipped ? 'done' : 'pending', isShipped ? '✓' : '○',
-    'จัดส่งเรียบร้อยแล้ว', 'Order complete'));
+    shipThai, 'Order complete'));
 
   return out;
 }

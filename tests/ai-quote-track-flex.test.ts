@@ -49,6 +49,29 @@ describe('buildOrderFlex', () => {
     });
     expect(JSON.stringify(flex)).toContain('จัดส่งเรียบร้อยแล้ว');
   });
+  it('shows the shipped date on the final step, matching the web /track', () => {
+    // L6: web /track prints "จัดส่งเรียบร้อยแล้ว (DD/MM/YYYY)" on step 6; the LINE
+    // card used to print the bare label even when shippedDate was known.
+    const flex = buildOrderFlex('202606112', {
+      order: { name: 'งานส่งแล้วมีวันที่', customer: 'ลูกค้า', dateIn: '01/06/2026', dateDue: '10/06/2026' },
+      job: { dept: 'post', date: '10/06/2026' },
+      shipped: { shippedDate: '15/6/2026' },
+      cancelled: null,
+    });
+    expect(JSON.stringify(flex)).toContain('จัดส่งเรียบร้อยแล้ว (15/06/2026)');
+  });
+  it('omits the date when the shipped row has none', () => {
+    const flex = buildOrderFlex('202606113', {
+      order: { name: 'งานส่งแล้วไม่มีวันที่', customer: 'ลูกค้า', dateIn: '01/06/2026', dateDue: '10/06/2026' },
+      job: { dept: 'post', date: '10/06/2026' },
+      shipped: {},
+      cancelled: null,
+    });
+    const s = JSON.stringify(flex);
+    expect(s).toContain('จัดส่งเรียบร้อยแล้ว');
+    // No "(—)" / "()" suffix when there is no date to show.
+    expect(s).not.toContain('จัดส่งเรียบร้อยแล้ว (');
+  });
   it('renders the shipping queue (dept=post, staff=ship) as "สินค้าพร้อมรับ"', () => {
     // Regression: the card used to stop at "ขั้นตอนหลังพิมพ์" while /track
     // already showed "สินค้าพร้อมรับ" for the same order (2026-09-17).
