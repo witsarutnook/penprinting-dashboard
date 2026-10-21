@@ -159,3 +159,38 @@ describe('buildTrackResult', () => {
     });
   });
 });
+
+// L12 (2026-10-21): a shipped row whose shipped_date cell is empty (Sheet-era
+// import only — v2 move-to-shipped always writes formatThaiDate()) must not
+// reach the web /track step 6 as the '—' sentinel: `isShipped && shippedDate`
+// treats '—' as truthy and printed "จัดส่งเรียบร้อยแล้ว (—)", while the LINE
+// card (2f1ee4b) prints the bare label. The seam drops the sentinel so every
+// consumer of TrackResult sees "no date" as undefined.
+describe('buildTrackResult — L12 shipped date sentinel', () => {
+  it.each(['', '   ', '""', '" "', undefined, null])(
+    'shipped row with shipped_date %j → shippedDate undefined (bare label, LINE parity)',
+    (cell) => {
+      const r = buildTrackResult(
+        mkOrder(),
+        null,
+        { shippedDate: cell } as unknown as Shipped,
+        null,
+        today,
+      );
+      expect(r.status).toBe('shipped');
+      expect(r.statusLabel).toBe('จัดส่งเรียบร้อยแล้ว');
+      expect(r.shippedDate).toBeUndefined();
+    },
+  );
+
+  it('keeps a real shipped date (padded) so the web step 6 still shows it', () => {
+    const r = buildTrackResult(
+      mkOrder(),
+      null,
+      { shippedDate: '5/7/2026' } as unknown as Shipped,
+      null,
+      today,
+    );
+    expect(r.shippedDate).toBe('05/07/2026');
+  });
+});

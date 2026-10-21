@@ -138,7 +138,20 @@ export function buildTrackResult(
     awaitingShipment: core.awaitingShipment,
     daysHint,
     urgencyKey,
-    shippedDate: shipped ? displayDatePadded(shipped.shippedDate) : undefined,
+    shippedDate: shippedDateOrUndefined(shipped),
     cancelReason: cancelled ? String(cancelled.reason || '') : undefined,
   };
+}
+
+/** The padded shipped date, or undefined when the shipped row has no usable
+ *  date cell (Sheet-era import only — v2 move-to-shipped always writes
+ *  formatThaiDate()). displayDatePadded returns the '—' sentinel for an empty
+ *  or quotes-only cell; the web step 6 reads `isShipped && shippedDate`, and
+ *  '—' is truthy, so it printed "จัดส่งเรียบร้อยแล้ว (—)" while the LINE card
+ *  (track-flex.ts, 2f1ee4b) prints the bare label. Dropping the sentinel here
+ *  keeps every TrackResult consumer on the LINE card's rule (L12, 2026-10-21). */
+function shippedDateOrUndefined(shipped: Shipped | null): string | undefined {
+  if (!shipped) return undefined;
+  const d = displayDatePadded(shipped.shippedDate);
+  return d === '—' ? undefined : d;
 }
