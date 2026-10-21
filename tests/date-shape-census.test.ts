@@ -9,7 +9,8 @@
 //  3. The drift report compares what the user SEES (displayDate) with what the
 //     compute path (parseDateDMY → daysLeft/urgency/analytics) and the edit-form
 //     prefill (dmyToISOInput) read from the same cell — on the host TZ the
-//     census runs under (Vercel = UTC), which is what decides L13.
+//     census runs under (Vercel = UTC). It found 455 drifting prod cells and
+//     decided L13; since L13 all three share parseDateParts, so it reads zero.
 //  4. loadDateShapeCensus is READ-ONLY (SELECT only, no apply mode), covers the
 //     pinned column list, reads both the TEXT column and the `raw` JSONB key the
 //     app actually renders from, and skips tombstoned jobs like the app does.
@@ -107,83 +108,39 @@ describe('summariseDrift — display vs compute (parseDateDMY) vs prefill (dmyTo
     else process.env.TZ = savedTz;
   });
 
-  it('quoted ISO: display shows the Bangkok day, compute gets null, prefill gets blank → both drift (any TZ)', () => {
-    for (const tz of ['UTC', 'Asia/Bangkok']) {
-      process.env.TZ = tz;
-      const d = summariseDrift([{ id: '1', value: '"2026-05-07T17:00:00.000Z"' }]);
-      expect(d.computeDrift.count, tz).toBe(1);
-      expect(d.computeDrift.samples[0]).toEqual({
-        id: '1',
-        value: '"2026-05-07T17:00:00.000Z"',
-        display: '8/5/2026',
-        compute: null,
-      });
-      expect(d.prefillDrift.count, tz).toBe(1);
-      expect(d.prefillDrift.samples[0]).toEqual({
-        id: '1',
-        value: '"2026-05-07T17:00:00.000Z"',
-        display: '8/5/2026',
-        prefill: '',
-      });
-    }
+  // Before L13 these shapes drifted: quoted ISO → compute null + prefill blank;
+  // '…Z' and Date.toString() → compute one day early on a UTC host; D/M/YYYY +
+  // suffix → prefill blank. All three readers now share parseDateParts, so the
+  // census must report zero drift for them on BOTH host TZs.
+  it.each(['UTC', 'Asia/Bangkok'])('[%s] legacy shapes: display, compute and prefill agree (L13 closed the drift)', (tz) => {
+    process.env.TZ = tz;
+    const d = summariseDrift([
+      { id: '1', value: '"2026-05-07T17:00:00.000Z"' },
+      { id: '2', value: '2026-05-07T17:00:00.000Z' },
+      { id: '3', value: 'Tue Apr 21 2026 00:00:00 GMT+0700 (Indochina Time)' },
+      { id: '4', value: '21/4/2026 10:00' },
+      { id: '5', value: '21/04/2026, 10:00' },
+      { id: '6', value: '2026-05-07 23:30' },
+    ]);
+    expect(d.displayUnparsed.count).toBe(0);
+    expect(d.computeDrift).toEqual({ count: 0, samples: [] });
+    expect(d.prefillDrift).toEqual({ count: 0, samples: [] });
   });
 
-  it('D/M/YYYY + whitespace suffix: display + compute agree, prefill is blank → prefill drift only', () => {
-    for (const tz of ['UTC', 'Asia/Bangkok']) {
-      process.env.TZ = tz;
-      const d = summariseDrift([{ id: '2', value: '21/4/2026 10:00' }]);
-      expect(d.displayUnparsed.count, tz).toBe(0);
-      expect(d.computeDrift.count, tz).toBe(0);
-      expect(d.prefillDrift.count, tz).toBe(1);
-      expect(d.prefillDrift.samples[0]).toEqual({
-        id: '2', value: '21/4/2026 10:00', display: '21/4/2026', prefill: '',
-      });
-    }
-  });
-
-  it('D/M/YYYY + comma (deferred Minor): displayDate cannot parse it at all → displayUnparsed, not drift', () => {
-    for (const tz of ['UTC', 'Asia/Bangkok']) {
-      process.env.TZ = tz;
-      const d = summariseDrift([
-        { id: '1', value: '21/04/2026, 10:00' },
+  it('cells displayDate cannot parse at all are listed as displayUnparsed, not drift', () => {
+    const d = summariseDrift([
+      { id: '3', value: 'ไม่ระบุ' },
+      { id: '4', value: 'N/A' },
+    ]);
+    expect(d.displayUnparsed).toEqual({
+      count: 2,
+      samples: [
         { id: '3', value: 'ไม่ระบุ' },
-      ]);
-      expect(d.displayUnparsed, tz).toEqual({
-        count: 2,
-        samples: [
-          { id: '1', value: '21/04/2026, 10:00' },
-          { id: '3', value: 'ไม่ระบุ' },
-        ],
-      });
-      expect(d.computeDrift.count, tz).toBe(0);
-      expect(d.prefillDrift.count, tz).toBe(0);
-    }
-  });
-
-  it('ISO with Z: compute drifts one day on a UTC host, agrees on a Bangkok host; prefill agrees on both', () => {
-    const rows = [{ id: '1', value: '2026-05-07T17:00:00.000Z' }];
-
-    process.env.TZ = 'UTC';
-    const utc = summariseDrift(rows);
-    expect(utc.computeDrift.count).toBe(1);
-    expect(utc.computeDrift.samples[0]).toMatchObject({ display: '8/5/2026', compute: '7/5/2026' });
-    expect(utc.prefillDrift.count).toBe(0);
-
-    process.env.TZ = 'Asia/Bangkok';
-    const bkk = summariseDrift(rows);
-    expect(bkk.computeDrift.count).toBe(0);
-    expect(bkk.prefillDrift.count).toBe(0);
-  });
-
-  it('Date.toString() with GMT+0700: display, compute and prefill agree on a Bangkok host; compute drifts on UTC', () => {
-    const rows = [{ id: '1', value: 'Tue Apr 21 2026 00:00:00 GMT+0700 (Indochina Time)' }];
-    process.env.TZ = 'Asia/Bangkok';
-    expect(summariseDrift(rows).computeDrift.count).toBe(0);
-    expect(summariseDrift(rows).prefillDrift.count).toBe(0);
-    process.env.TZ = 'UTC';
-    expect(summariseDrift(rows).computeDrift.count).toBe(1);
-    expect(summariseDrift(rows).computeDrift.samples[0]).toMatchObject({ display: '21/4/2026', compute: '20/4/2026' });
-    expect(summariseDrift(rows).prefillDrift.count).toBe(0);
+        { id: '4', value: 'N/A' },
+      ],
+    });
+    expect(d.computeDrift.count).toBe(0);
+    expect(d.prefillDrift.count).toBe(0);
   });
 
   it('empty and quotes-only cells never count as drift (display is — and nothing parses)', () => {
@@ -281,9 +238,10 @@ describe('loadDateShapeCensus', () => {
     expect(ordersIn.rawShapes).toMatchObject({ canonicalIso: 99, canonicalDmy: 10, nonCanonical: 3 });
     expect(ordersIn.rawShapes.classes.dmyWithComma?.samples).toEqual([{ id: '8', value: '21/04/2026, 10:00' }]);
     // Drift is measured on the raw key — that is what the app renders from.
-    expect(ordersIn.rawDrift.displayUnparsed.count).toBe(1);
-    expect(ordersIn.rawDrift.prefillDrift.count).toBe(1);
-    expect(ordersIn.rawDrift.prefillDrift.samples[0].id).toBe('9');
+    // (Zero here since L13: all three readers share parseDateParts.)
+    expect(ordersIn.rawDrift.displayUnparsed.count).toBe(0);
+    expect(ordersIn.rawDrift.computeDrift.count).toBe(0);
+    expect(ordersIn.rawDrift.prefillDrift.count).toBe(0);
 
     // The column queries bind the canonical regexes instead of interpolating them,
     // and the raw query targets the JSONB key.

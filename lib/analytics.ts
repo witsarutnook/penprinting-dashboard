@@ -1,5 +1,6 @@
 import type { Order, Job, Shipped, LoadAllResponse } from './types';
 import { photobookRowSummary } from './photobook';
+import { parseDateParts } from './jobs';
 
 /**
  * Pure analytics computation — port of renderAnalytics() in
@@ -9,20 +10,23 @@ import { photobookRowSummary } from './photobook';
  * so the page is mostly static HTML (no Chart.js bundle to ship yet).
  */
 
-// ─── Date parsing — sheet has DD/MM/YYYY (user-entered) + ISO-ish strings (Date.toString()) ───
+// ─── Date parsing ───
+// The sheet-era cells are DD/MM/YYYY (user-entered), YYYY-MM-DD (v2 writes) and
+// JS Date.toString() strings (Sheets auto-converted cells). Reading them goes
+// through the one seam in lib/jobs.ts (L13, 2026-10-21): the old `new Date(s)`
+// fallback here built a host-local Date, so the 455 'Mon May 18 2026 00:00:00
+// GMT+0700 (…)' cells the L14 census found landed on May 17 on Vercel (UTC) —
+// one day earlier than displayDate showed — and a 1st-of-month cell fell into
+// the previous month's bucket.
 
-const DMY_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/;
-
+/** Parse a stored date cell into a host-local MIDNIGHT Date of the calendar day
+ *  `displayDate` renders (Asia/Bangkok semantics). Consumers compare y/m/d or
+ *  whole-day differences against getBangkokToday() (also a local midnight), so
+ *  the result is TZ-independent. null for empty / unparseable. */
 export function parseDateDMY(input: string | null | undefined): Date | null {
-  if (!input) return null;
-  const s = String(input).trim();
-  if (!s) return null;
-  const m = s.match(DMY_RE);
-  if (m) {
-    const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  const d = new Date(s);
+  const p = parseDateParts(input);
+  if (!p) return null;
+  const d = new Date(p.y, p.m - 1, p.d);
   return isNaN(d.getTime()) ? null : d;
 }
 
