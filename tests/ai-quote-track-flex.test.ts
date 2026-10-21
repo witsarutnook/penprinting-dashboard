@@ -79,4 +79,30 @@ describe('buildOrderFlex', () => {
     });
     expect(JSON.stringify(flex)).toContain('เลยกำหนด');
   });
+  it('renders legacy Sheet-era dates through the shared displayDatePadded parser', () => {
+    // L4: the card used to print the quote-wrapped ISO string raw and could pick a
+    // different day from the web /track. Both now go through displayDatePadded.
+    const flex = buildOrderFlex('202605070', {
+      order: { name: 'งานเก่า', customer: 'ลูกค้า', dateIn: '"2026-05-07T17:00:00.000Z"', dateDue: '21/4/2026 10:00' },
+      job: { dept: 'print', date: '21/4/2026 10:00' },
+      shipped: null, cancelled: null,
+    });
+    const s = JSON.stringify(flex);
+    expect(s).toContain('08/05/2026');
+    expect(s).toContain('21/04/2026');
+    expect(s).not.toContain('"2026-05-07');
+    expect(s).not.toContain('2026-05-07T17');
+  });
+  it('empty dates render as — (same as web /track)', () => {
+    const flex = buildOrderFlex('202605071', {
+      order: { name: 'งานไม่มีวันที่', customer: 'ลูกค้า', dateIn: '', dateDue: undefined },
+      job: { dept: 'print' },
+      shipped: null, cancelled: null,
+    });
+    const s = JSON.stringify(flex);
+    // Assert on the two date value nodes (size "sm"), not a bare '—': altText
+    // already contains an em dash, which would make this pass vacuously.
+    expect(s.match(/"text":"—","size":"sm"/g) ?? []).toHaveLength(2);
+    expect(s).not.toContain('"text":"-","size":"sm"');
+  });
 });

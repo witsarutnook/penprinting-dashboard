@@ -21,3 +21,31 @@ describe('displayDatePadded', () => {
     expect(displayDate('05/09/2026')).toBe('5/9/2026');
   });
 });
+
+// L4 (2026-10-21): the LINE /track card and the web /track used to parse legacy
+// Sheet-era date cells with two different parsers and could show different days
+// for the same order. displayDate is now the single parser for both. Fixtures
+// carry an explicit Z / +07:00 offset so the tests never depend on the machine TZ.
+describe('displayDate — legacy Sheet-era shapes (single parser for LINE card + web)', () => {
+  it('converts ISO timestamps to the Asia/Bangkok calendar date', () => {
+    // Google Sheets serialised a Bangkok-midnight Date as 17:00Z the day before.
+    expect(displayDate('2026-05-07T17:00:00.000Z')).toBe('8/5/2026');
+    // Quote wrapper from the old objectToRow double-stringify bug is unwrapped first.
+    expect(displayDatePadded('"2026-05-07T17:00:00.000Z"')).toBe('08/05/2026');
+    // Already carries the Bangkok offset — same calendar day, no shift.
+    expect(displayDate('2026-05-08T00:00:00+07:00')).toBe('8/5/2026');
+  });
+  it('leaves date-only ISO untouched (no timezone shift)', () => {
+    expect(displayDate('2026-09-05')).toBe('5/9/2026');
+    expect(displayDate('2026-01-01')).toBe('1/1/2026');
+  });
+  it('takes the date portion of DD/MM/YYYY followed by a time', () => {
+    expect(displayDate('21/4/2026 10:00')).toBe('21/4/2026');
+    expect(displayDatePadded('21/4/2026 10:00')).toBe('21/04/2026');
+  });
+  it('keeps the compact (unpadded) contract on the Date-parser fallback too', () => {
+    // en-GB zero-pads even with day:'numeric'; displayDate must still return D/M/YYYY.
+    expect(displayDate('Sat Sep 05 2026 00:00:00 GMT+0700')).toBe('5/9/2026');
+    expect(displayDate('2026-01-31T18:30:00Z')).toBe('1/2/2026');
+  });
+});

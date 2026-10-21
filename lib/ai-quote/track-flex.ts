@@ -5,6 +5,7 @@
 
 import { deriveTrackStatus } from '@/lib/track-status';
 import { getBangkokToday } from '@/lib/calendar';
+import { displayDatePadded } from '@/lib/jobs';
 
 export interface TrackState {
   order: { name?: string; customer?: string; dateIn?: string; dateDue?: string; [k: string]: unknown };
@@ -321,31 +322,9 @@ function maskCustomer_(name: string): string {
   return chars.slice(0, 2).join('') + '•'.repeat(Math.max(1, chars.length - 2));
 }
 
+// Thin delegate: the LINE card and the web /track must show the same day for the
+// same order, so the one parser lives in lib/jobs.ts (Bangkok-TZ for ISO
+// timestamps, quote-unwrap, zero-pad). Empty/missing → '—', same as the web.
 function cleanDate_(d: unknown): string {
-  if (d === null || d === undefined || d === '') return '-';
-  const s = String(d).trim();
-  if (!s || s === '-') return '-';
-
-  // 1) ถ้า string มี DD/MM/YYYY อยู่แล้ว → ดึงออกมาตรงๆ (กัน suffix หลังวันที่ + กัน timezone shift)
-  const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) {
-    const dd = m[1].length === 1 ? '0' + m[1] : m[1];
-    const mm = m[2].length === 1 ? '0' + m[2] : m[2];
-    return dd + '/' + mm + '/' + m[3];
-  }
-
-  // 2) ISO/GMT/Date object → format ด้วย Bangkok timezone เสมอ (ไม่เพี้ยน)
-  // Note: ใน Apps Script ใช้ Utilities.formatDate — ใน Node.js ใช้ Intl.DateTimeFormat แทน (TZ-safe เหมือนกัน)
-  const ts = new Date(s);
-  if (!isNaN(ts.getTime())) {
-    const fmt = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Bangkok',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-    });
-    const result = fmt.format(ts); // usually dd/mm/yyyy, but ECMA-402 doesn't mandate the separator
-    return /^\d{2}\/\d{2}\/\d{4}$/.test(result) ? result : s;
-  }
-
-  // 3) Parse ไม่ได้ → คืนค่าเดิม
-  return s;
+  return displayDatePadded(d == null ? '' : String(d));
 }

@@ -50,14 +50,22 @@ export function dmyToISOInput(input: string | null | undefined): string {
 }
 
 /** Display-format date as D/M/YYYY (no leading zeros) — matches WP screenshot.
+ *  The single date parser for every surface: staff screens, web `/track`, and
+ *  the LINE `/track` Flex card (its `cleanDate_` delegates to displayDatePadded).
  *  Accepts:
- *    - YYYY-MM-DD (Apps Script string storage)
- *    - DD/MM/YYYY (legacy display)
- *    - JS Date.toString() output ("Tue Apr 21 2026 00:00:00 GMT+0700 ...")
- *      — happens when Sheets auto-converts string cells to Date objects;
- *        sheetToArray then calls String(value) which yields this format.
- *    - Date with HH:MM time → adds time after if was originally there
- *  Returns "—" for empty/invalid. */
+ *    - YYYY-MM-DD — date-only, taken as-is with NO timezone shift. This is what
+ *      the dashboard writes today (getBangkokToday() / the date input).
+ *    - DD/MM/YYYY, optionally followed by whitespace + anything ("21/4/2026
+ *      10:00") — the date portion is used, the suffix is dropped (use
+ *      displayDateTime when the time matters).
+ *    - Anything else `new Date()` can parse, converted to the Asia/Bangkok
+ *      calendar day: ISO with a time ("2026-05-07T17:00:00.000Z" → 8/5/2026, how
+ *      Google Sheets serialised a Bangkok-midnight Date) and JS Date.toString()
+ *      output ("Tue Apr 21 2026 00:00:00 GMT+0700 ...", what sheetToArray's
+ *      String(value) yields when Sheets auto-converted a string cell to a Date).
+ *    - Any of the above wrapped in literal double quotes (legacy objectToRow
+ *      double-stringify) — unwrapped first.
+ *  Returns "—" for empty; unparseable input comes back unchanged. */
 export function displayDate(input: string | null | undefined): string {
   if (!input) return '—';
   let s = String(input).trim();
@@ -72,35 +80,47 @@ export function displayDate(input: string | null | undefined): string {
     s = s.slice(1, -1).trim();
   }
   let d: number, m: number, y: number;
-  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  // ISO is date-only on purpose ($-anchored): "YYYY-MM-DDTHH:MM…" carries a
+  // time and must go through the Bangkok-TZ Date fallback below, otherwise a
+  // 17:00Z Sheet timestamp would show the previous (UTC) calendar day.
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  // D/M/YYYY may be followed by whitespace + a time/anything ("21/4/2026 10:00").
+  // new Date() reads D/M/Y as M/D/Y (invalid for day > 12), so take the parts here.
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s.*)?$/);
   if (iso) {
     y = +iso[1]; m = +iso[2]; d = +iso[3];
   } else if (dmy) {
     d = +dmy[1]; m = +dmy[2]; y = +dmy[3];
   } else {
     // Fallback: try Date parser. Use Asia/Bangkok TZ for extraction so
-    // "Tue Apr 21 2026 00:00:00 GMT+0700" → 21/4/2026 (not 20/4 in UTC).
+    // "Tue Apr 21 2026 00:00:00 GMT+0700" → 21/4/2026 (not 20/4 in UTC) and
+    // "2026-05-07T17:00:00.000Z" → 8/5/2026.
     const dt = new Date(s);
     if (isNaN(dt.getTime())) return s;
-    const fmt = new Intl.DateTimeFormat('en-GB', {
+    // Read the parts and rebuild D/M/YYYY below instead of using fmt.format():
+    // en-GB zero-pads even with day:'numeric' ("08/05/2026"), which would break
+    // this function's no-leading-zeros contract (displayDatePadded pads itself).
+    const parts = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Asia/Bangkok',
       day: 'numeric',
       month: 'numeric',
       year: 'numeric',
-    });
-    return fmt.format(dt);
+    }).formatToParts(dt);
+    const part = (t: string) => +(parts.find((p) => p.type === t)?.value ?? 0);
+    d = part('day'); m = part('month'); y = part('year');
   }
   if (!d || !m || !y) return s;
   return `${d}/${m}/${y}`;
 }
 
 /** Customer-facing date display — same parsing as `displayDate`, but zero
- *  padded to DD/MM/YYYY. The LINE Flex cards have always padded (`cleanDate_`
- *  in lib/ai-quote/track-flex.ts), so an unpadded web `/track` showed the same
- *  order as "5/9/2026" on the web and "05/09/2026" in LINE. Customer surfaces
- *  (/track, /track/c/[token], both Flex cards) use this; internal staff screens
- *  (board, orders, archive, shipped) keep the compact `displayDate`.
+ *  padded to DD/MM/YYYY. The LINE Flex cards have always padded, so an unpadded
+ *  web `/track` showed the same order as "5/9/2026" on the web and "05/09/2026"
+ *  in LINE. Customer surfaces (/track, /track/c/[token], both Flex cards — the
+ *  card's `cleanDate_` in lib/ai-quote/track-flex.ts is a thin delegate to this)
+ *  use this, so the same order can no longer show different days per channel;
+ *  internal staff screens (board, orders, archive, shipped) keep the compact
+ *  `displayDate`.
  *  Non-date input falls through unchanged, exactly like `displayDate`. */
 export function displayDatePadded(input: string | null | undefined): string {
   const out = displayDate(input);
