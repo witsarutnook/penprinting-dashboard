@@ -183,3 +183,50 @@ describe('customer prompt — calendar + PVC card + price tables (2026-10-19)', 
     expect(p).toContain('🪪 นามบัตร\n📅 ปฏิทิน\n💳 บัตร PVC');
   });
 });
+
+// Namecard asks no quantity (คุณนุ๊ก 2026-10-24, LINE 8:27 case): the per-box
+// price is flat (calc defaults.ts namecard.pricePerBox — 1 side 150/250,
+// 2 sides 300/500, never a function of box count), so "กี่ใบ" was a wasted
+// turn. The customer sees both side prices at once; sides is the only ask;
+// lamination is a note, never a question.
+describe('customer prompt — namecard asks no quantity (2026-10-24)', () => {
+  const section = p.split('## นามบัตร — กฎเฉพาะ')[1]?.split('\n## ')[0] ?? '';
+
+  it('the generic "always ask qty" rule carves namecard out', () => {
+    expect(p).toMatch(/จำนวน \(qty\) ทุกชนิดงาน[^\n]*ยกเว้นนามบัตร/);
+    expect(section).toContain('ไม่ต้องถามจำนวน');
+  });
+  it('completeness: knowing it is a namecard is enough — no qty needed', () => {
+    expect(p).toMatch(/\*\*นามบัตร\*\*: รู้ว่าเป็นนามบัตร = ครบแล้ว/);
+    expect(p).not.toMatch(/\*\*นามบัตร\*\*: รู้ว่าเป็นนามบัตร \+ มี \*\*จำนวน\*\*/);
+  });
+  it('unknown qty → compute_quote with qty = 100 (one box), reply as a per-box price', () => {
+    expect(section).toMatch(/ยังไม่บอกจำนวน[^\n]*qty = 100/);
+    expect(section).toContain('กล่องละ X บาท (100 ใบ)');
+  });
+  it('unknown sides → two compute_quote calls in one turn, both prices shown, sides is the only question', () => {
+    expect(section).toMatch(/ยังไม่บอก(หน้าเดียว\/หน้าหลัง|หน้า)[^\n]*compute_quote[^\n]*2 ครั้ง[^\n]*sides = 1[^\n]*sides = 2/);
+    expect(section).toContain('แจ้งราคาทั้ง 2 แบบ');
+    expect(section).toMatch(/ถามแค่ว่ารับแบบไหน/);
+  });
+  it('lamination is never asked: plain price + a note, no lamination number', () => {
+    expect(section).toMatch(/เคลือบ[^\n]*ไม่ต้องถาม/);
+    expect(section).toContain('ถ้าเคลือบเงา/ด้านบอกได้เลยค่ะ');
+    expect(detectCustomerEscalation(0, 'ราคาแบบไม่เคลือบนะคะ ถ้าเคลือบเงา/ด้านบอกได้เลยค่ะ')).toBe(false);
+  });
+  it('defaults: plain stays the default, sides has none (both are shown)', () => {
+    expect(p).not.toContain('นามบัตร: พิมพ์ 1 หน้า · ไม่เคลือบ');
+    expect(p).toMatch(/- นามบัตร: ไม่เคลือบ/);
+  });
+  // Prices live in calc (defaults.ts) and reach the customer only through
+  // compute_quote — a number in the prompt would drift silently on the next
+  // price change (SPOT UV lesson 2026-10-02).
+  it('namecard section carries no price number (only the 100-per-box fact)', () => {
+    expect(section.length).toBeGreaterThan(0);
+    expect(section).not.toMatch(/\d{2,} ?บาท/);
+  });
+  it('answer format: per-box line for both the no-qty and the with-qty case', () => {
+    expect(p).toMatch(/นามบัตร[^\n]*ยังไม่บอกจำนวน[^\n]*กล่องละ X บาท/);
+    expect(p).toMatch(/นามบัตร[^\n]*บอกจำนวน[^\n]*ราคาต่อกล่อง × จำนวนกล่อง = ราคารวม/);
+  });
+});
