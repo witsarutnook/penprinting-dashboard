@@ -1,0 +1,94 @@
+{
+  "flow": "pp-customer",
+  "description": "น้อง PP customer quoting turn — real prod conversation prefixes, one assistant turn graded",
+  "metrics": [
+    {
+      "id": "pass",
+      "label": "กฎครบ",
+      "kind": "binary"
+    },
+    {
+      "id": "outcome",
+      "label": "ผลลัพธ์ถูก",
+      "kind": "binary"
+    },
+    {
+      "id": "tool_spec",
+      "label": "สเปก tool",
+      "kind": "binary"
+    },
+    {
+      "id": "prices",
+      "label": "ราคาจาก tool",
+      "kind": "binary"
+    },
+    {
+      "id": "format",
+      "label": "รูปแบบ",
+      "kind": "binary"
+    },
+    {
+      "id": "asks",
+      "label": "ถามถูกเรื่อง",
+      "kind": "binary"
+    },
+    {
+      "id": "judge_missing",
+      "label": "ถามแค่ที่ขาด",
+      "kind": "binary"
+    },
+    {
+      "id": "judge_concise",
+      "label": "กระชับ",
+      "kind": "binary"
+    },
+    {
+      "id": "judge_register",
+      "label": "ภาษา/สุภาพ",
+      "kind": "binary"
+    },
+    {
+      "id": "refused",
+      "label": "refusal",
+      "kind": "binary",
+      "better": "lower"
+    }
+  ],
+  "perf_fields": [
+    {
+      "id": "cost_usd",
+      "label": "cost",
+      "unit": "$"
+    },
+    {
+      "id": "latency_s",
+      "label": "latency",
+      "unit": "s"
+    },
+    {
+      "id": "tool_calls",
+      "label": "tool calls"
+    },
+    {
+      "id": "rounds",
+      "label": "rounds"
+    },
+    {
+      "id": "out_chars",
+      "label": "chars"
+    },
+    {
+      "id": "out_lines",
+      "label": "lines"
+    }
+  ],
+  "harness_paths": [
+    "eval/pp-customer/impl.mjs",
+    "eval/pp-customer/cases.json",
+    "lib/ai-quote/prompt-customer.ts",
+    "lib/ai-quote/run.ts",
+    "lib/ai-quote/tools.ts",
+    "lib/ai-quote/customer-deps.ts"
+  ],
+  "harness_sha": "36c6a91f36a3cf036c87b9cb3a2dc35dd7dfb78342d23191675ce187e609751a"
+}

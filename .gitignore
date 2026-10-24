@@ -38,3 +38,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 app/fonts/
+
+# eval runs (eval/pp-customer) — derived/bulk output stays out; _state.json + change.md are kept
+.claude/hillclimb/**/traces/
+.claude/hillclimb/**/report.html
+.claude/hillclimb/**/state.json
+.claude/hillclimb/**/trajectory/
+.claude/hillclimb/**/progress.txt
+.claude/hillclimb/**/ref/
