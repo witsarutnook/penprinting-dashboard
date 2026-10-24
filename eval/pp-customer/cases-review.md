@@ -54,7 +54,7 @@
 | s27-t0 | first, messenger, prod | **ask** | — | อยากสั่งหนังสือธรรมะ 300เล่ม |
 | s27-t2 | follow-up, messenger, prod | **quote** | book {"size":"A5","qty":300,"innerA":{"paperName":"Art 120","color":"1","pages":60}} | 60 หน้า art 120 หน้าปกสี ข้างในขาวดำ ขนาด a5 |
 | s27-t4 | follow-up, messenger, prod, discount | **escalate** | — | ลดหน่อยได้มั้ย |
-| s36-t2 | follow-up, line, prod | **quote** | book {"qty":200,"innerA":{"paperName":"Bond 80"}} | รองปก art 120 เนื้อหา bond 80 |
+| s36-t2 | follow-up, line, prod | **quote** | book {"size":"A5","qty":200} | รองปก art 120 เนื้อหา bond 80 |
 | s41-t2 | follow-up, line, prod, size-unsupported | **ask** | — | สีเนื้อใน 4 สี กระดาษ Bond 80  |
 | s46-t2 | follow-up, line, prod, paper-alias | **quote** | book {"size":"A5","qty":100,"innerA":{"paperName":"Green Read 75","color":"1","pages":240}} | เนื้อในพิมพ์สีขาวดำ Green Read 75 แกรม  |
 | s65-t2 | follow-up, line, prod, paper-nearest | **ask** | — | พิมพ์ขาวดำ กระดาษgreen read 65 |
@@ -885,9 +885,9 @@ art 120
 เนื้อหา bond 80
 ````
 
-**expected:** outcome = **quote** · calls = book {"qty":200,"innerA":{"paperName":"Bond 80"}}
+**expected:** outcome = **quote** · calls = book {"size":"A5","qty":200}
 
-📝 รองปก Art 120 4 แผ่นสี = innerB (8 หน้า 4 สี) ได้; pin แค่เนื้อหลัก Bond 80
+📝 รองปก Art 120 (4 แผ่น = 8 หน้า สี) + เนื้อหา Bond 80 36 หน้า ขาวดำ — จัดเป็น innerA/innerB ลำดับไหนก็ได้ (label เดิม pin innerA=Bond 80 ผิด: โมเดลจัดรองปกเป็น innerA ซึ่งถูกต้อง — แก้ 2026-10-24 หลัง baseline)
 
 <details><summary>คำตอบเดิมของบอทตอนนั้น (อ้างอิง)</summary>
 
@@ -1504,7 +1504,9 @@ art 120
 บัตร PVC
 ````
 
-**expected:** outcome = **table** · ตาราง = pvc_card · ต้องมี /กี่ใบ|จำนวน/ · ห้ามถาม /กี่หน้า/, /หน้าเดียว[^\n]{0,10}(หรือ|ไหม)/
+**expected:** outcome = **table** · ตาราง = pvc_card · ต้องมี /กี่ใบ|จำนวน/ · ห้ามถาม /กี่หน้าคะ/, /หน้าเดียวหรือสองหน้า(ดี)?คะ/, /ต้องการพิมพ์กี่หน้า/
+
+📝 regex ห้ามถามหน้าแก้ 2026-10-24: ของเดิมไปจับบรรทัด 📋 "พิมพ์หน้าเดียวหรือสองหน้าราคาเดียวกัน" ที่ prompt บังคับให้มี
 
 <details><summary>คำตอบเดิมของบอทตอนนั้น (อ้างอิง)</summary>
 
@@ -1561,9 +1563,9 @@ art 120
 บัตร PVC 20 ใบ
 ````
 
-**expected:** outcome = **quote** · calls = pvccard {"qty":20} · ตาราง = pvc_card · ห้ามถาม /กี่หน้า/, /หน้าเดียว[^\n]{0,10}(หรือ|ไหม)/
+**expected:** outcome = **quote** · calls = pvccard {"qty":20} · ตาราง = pvc_card · ห้ามถาม /กี่หน้าคะ/, /หน้าเดียวหรือสองหน้า(ดี)?คะ/, /ต้องการพิมพ์กี่หน้า/
 
-📝 ต่ำกว่า 30 ใบ → ค่าออกแบบ 300 รวมใน totalPrice แล้ว ห้ามบวกซ้ำ
+📝 ต่ำกว่า 30 ใบ → ค่าออกแบบ 300 รวมใน totalPrice แล้ว ห้ามบวกซ้ำ · regex ห้ามถามหน้าแก้ 2026-10-24: ของเดิมไปจับบรรทัด 📋 "พิมพ์หน้าเดียวหรือสองหน้าราคาเดียวกัน" ที่ prompt บังคับให้มี
 
 ---
 

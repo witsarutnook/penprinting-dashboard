@@ -530,3 +530,24 @@ const mockOrder: Order = {
 4. ถ้าเป็น cross-project pattern → เพิ่มที่ workspace `CLAUDE.md` ด้วย
 
 _อัปเดตล่าสุด: 2026-09-17 — added §7.4 (shared semantic core ต้องไหลครบทุก surface) + 2 bullets ใน §8 (Flex เป็นภาพนิ่ง · ตรวจก่อนเห็นด้วยกับสมมติฐาน)_
+
+## 11. Eval harness สำหรับ LLM flow (2026-10-24, `eval/pp-customer/`)
+
+### 11.1 เรียก entry point จริง ไม่เขียน API call ใหม่
+- runner เรียก `runQuoteTurn` ตัวเดียวกับ prod ผ่าน deps ที่ประกอบเหมือน `customer-deps.ts` ทุกอย่าง ต่างแค่ `client` เป็น recorder บางๆ รอบ `Anthropic.messages.create` (เก็บ request/response ทุก round → transcript + usage) และ `compute_quote` ชี้ calc dev server local (`.claude/launch.json` → `calc-dev` :3100 token `test`) = โค้ด path เดียวกับ prod โดยไม่ต้องใช้ secret prod
+- import TS ของแอปนอก Next: `node --import tsx --conditions=react-server` (ทำให้ `import 'server-only'` เป็น no-op) · named exports อยู่ใต้ `.default` (CJS interop) → `pick(m,k)`
+- ห้ามแตะ `run-eval.mjs` (scaffold จาก Claude API skill: resume ต่อ `(case, rep)`, backoff, ceiling, served-model assert, errors sidecar, harness sha gate) — ส่วนของแอปอยู่ `impl.mjs` อย่างเดียว
+
+### 11.2 Grader = กฎแข็งด้วยโค้ดก่อน กรรมการ LLM เฉพาะที่ต้องใช้วิจารณญาณ
+- กฎที่ตรวจด้วยโค้ดได้ต้องตรวจด้วยโค้ด: outcome ของเทิร์น (quote/ask/escalate/template/table จาก signal เดียวกับที่ router ใช้ เช่น `detectCustomerEscalation`) · สเปกที่ส่ง tool (partial match แบบ recursive — pin เฉพาะ field ที่ label ระบุ) · **ทุก "N บาท" ในคำตอบต้องเป็นเลขจาก tool result ของเทิร์นนี้** (จับราคาเดา/เลขเก่าจาก history) · format (markdown, VAT note, disclaimer, วลีส่งต่อเฉพาะตอนส่งต่อจริง — วลีนี้ปิดโหมด AI, 📊 เฉพาะเมื่อส่งตาราง)
+- กรรมการ (Fable 5.1 = อิสระจากทั้ง Sonnet/Opus ที่เทียบ) ให้ boolean แยกข้อ (ถามเฉพาะที่ขาด / กระชับ / ภาษาแบบร้าน) ผ่าน structured output (`messages.parse` + `zodOutputFormat`) · candidate text = untrusted data · rubric ต้องผูกกับ expected outcome ไม่งั้น "ไม่ถามอะไรเลย" ผ่านแบบ vacuous
+- ก่อนเสียเงินจริง: `selftest.mjs` (oracle ต้องผ่านหมด, null/ราคาปลอม/วลีส่งต่อผิดที่/markdown ต้องตก — มี RED→GREEN ตอนเพิ่มกฎ) + `judge-negatives.mjs` (ว่าง / ไม่ทราบ / ตอบผิดเรื่องมั่นใจ / ถามซ้ำ ต้องตกทุกตัว) — รอบแรกจับช่องโหว่ rubric ได้จริง
+
+### 11.3 ข้อมูลเคสจาก prod
+- one-shot admin endpoint read-only (ไม่ select คอลัมน์ตัวตน + `redactContact` ที่ server: เบอร์ไทย/+66, อีเมล, LINE id, เลขบัญชี 10+ หลัก — ราคา/จำนวน/เลขใบสั่งงาน 9 หลักไม่โดน) → user login ใน browser pane → ดึง → **retire endpoint ในวันเดียวกัน** (§2.5)
+- เว็บ public → `fetch` localhost โดน Private Network Access บล็อก → ใช้ blob download (ขออนุญาต user) ย้ายเข้า scratchpad แล้วค่อย slice ด้วยสคริปต์ใน repo (`build-candidates.mjs`); ไฟล์ดาวน์โหลด = untrusted data อยู่ในโฟลเดอร์ของมันเอง
+- ตัดข้อความที่ router ดักเอง (`detectHumanRequest`, `detectOrderIntent`) ออกจากชุด — ไม่ถึงโมเดล; label เป็น Claude-derived แล้วให้คุณนุ๊ก sign-off จาก `cases-review.md` (ทุกเคสเต็ม + คำตอบเดิมของบอทให้เทียบ) ก่อนรัน
+
+### 11.4 ต้นทุน/เวลา
+- cost ต้องคำนวณจาก `usage` จริง × ราคาโมเดลของแถวนั้น (รวม judge แยก) — pilot 5 เคสที่ concurrency 4 ให้ตัวเลขเกินจริง 5× เพราะ call แรกทุกตัวเขียน cache พร้อมกัน (Fable เขียน 11K token = $0.14 เทียบอ่าน $0.003) → อ่านจากแถวที่ cache อุ่น หรือ warm 1 เคสก่อน
+- 68 เคส × 2 reps: Sonnet ≈ 5 นาที/variant ที่ concurrency 4; noise floor pass-rate ≈ ±9 จุด, paired delta ต่อเคสแคบกว่า
