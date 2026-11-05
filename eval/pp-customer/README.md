@@ -44,3 +44,8 @@ node eval/pp-customer/build-report-lite.mjs .claude/hillclimb/pp-customer/
 กรรมการ (Claude Fable 5.1 — อิสระจากทั้ง Sonnet/Opus ที่เทียบ): `judge_missing` ถามเฉพาะที่ขาดจริง · `judge_concise` กระชับ · `judge_register` ภาษาสุภาพแบบร้าน ไม่มีศัพท์ภายใน
 
 Perf: `latency_s` (ทั้งเทิร์นรวม tool) · `tool_calls` · `rounds` · `out_chars` · `out_lines` · usage → cost คำนวณตอนสรุป
+
+## Round 2 (2026-11-04/05) — prompt v2 → v3
+
+ปิดช่องว่าง prompt จากรอบ 1 (ขนาด A6/B5 · เข้าเล่ม · เวลาผลิต/ค่าส่ง · รูปแบบคำตอบ): relabel เคสเดิม + เพิ่ม synthetic 9 เคส (ขนาด · เข้าเล่ม · เวลาผลิต) → **77 เคส** (154 แถว/variant, Sonnet 5.5 × 2 reps). ลำดับ: แก้ grader (ค่าคงที่ context-bound + line-bound, format ห้าม "ระบบ"/ขีดต้นบรรทัด) → `regrade.mjs` baseline+v1 → baseline 9 เคสใหม่ด้วย prompt เดิม (approve #1) → v2 (pilot approve #2) → v3 (pilot approve #3) → full run. ผล: baseline (regraded) **125/154 (81.2%)** → v2 151/154 (gate ตก: paired regression s75-t0, กฎอาร์ตมันของใบปลิวรั่วเข้าหนังสือ) → **v3 153/154 (99.4%)** paired +18.2 จุด CI [9.7, 26.7] · prices/format/asks 154/154 · hard regressions = [] → ship v3. Cost v3 ≈ $4.54/รอบ (baseline $5.20). `.claude/hillclimb/pp-customer/v3/change.md` มีตัวเลขกรรมการ. ⚠️ หลังแก้ grader ใน `0942c0c` sha harness ใน `_state.json` stale — รอบหน้าต้องให้คนรัน `--approve-harness` พร้อม flag เต็ม (`--variant … --model claude-sonnet-5-5 --reps 2`; มันรัน eval ต่อด้วย). ที่ defer: เคสโปสการ์ด A6 / ปฏิทินสันห่วง / synonym สันกาว-เย็บแม็กกลาง / "ตกใบละเท่าไหร่" (ดู NEXT-SESSION 2026-11-04 Pending ข้อ 4).
+

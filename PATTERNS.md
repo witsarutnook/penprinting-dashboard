@@ -551,3 +551,14 @@ _อัปเดตล่าสุด: 2026-09-17 — added §7.4 (shared semant
 ### 11.4 ต้นทุน/เวลา
 - cost ต้องคำนวณจาก `usage` จริง × ราคาโมเดลของแถวนั้น (รวม judge แยก) — pilot 5 เคสที่ concurrency 4 ให้ตัวเลขเกินจริง 5× เพราะ call แรกทุกตัวเขียน cache พร้อมกัน (Fable เขียน 11K token = $0.14 เทียบอ่าน $0.003) → อ่านจากแถวที่ cache อุ่น หรือ warm 1 เคสก่อน
 - 68 เคส × 2 reps: Sonnet ≈ 5 นาที/variant ที่ concurrency 4; noise floor pass-rate ≈ ±9 จุด, paired delta ต่อเคสแคบกว่า
+
+### 11.5 รอบ 2: ปิดช่องว่าง prompt ด้วย paired eval (2026-11-05, v1→v3)
+- **`--approve-harness` ไม่ใช่แค่บันทึก sha — มัน record sha แล้ว*รัน eval ต่อ*ด้วย flag ในคำสั่งนั้น** → ให้คุณนุ๊กคำสั่งเต็ม (`PP_EVAL_ONLY=… --variant vN --model claude-sonnet-5-5 --reps 2 --approve-harness`) ไม่ใช่ `--approve-harness` เปล่า ๆ และเช็ค calc-dev ก่อนทันที (`curl :3100` → 401 = ขึ้นอยู่)
+- **`regrade.mjs` ไม่มี sha gate** — แก้ grader/label แล้วต้อง regrade ผลเก่าก่อนรันโมเดลใหม่ทุกครั้ง ไม่งั้นเทียบ paired บนไม้บรรทัดคนละอัน (รอบนี้ baseline 126→119/136 หลังแก้ label)
+- **baseline เคสใหม่ด้วย prompt เก่าก่อน apply prompt ใหม่** — ไม่งั้นไม่มีคู่ให้เทียบ (9 synthetic: baseline ผ่านแค่ 6/18 แล้วค่อย apply v2)
+- **ค่าคงที่ใน grader ต้องผูกทั้งบริบทและบรรทัด** — whitelist ทั้งคำตอบปล่อย "เล่มละ 15 บาท" ผ่านในที่ที่ไม่ใช่บรรทัดสันห่วง (I1) → match 300 ค่าออกแบบ / 15 สันห่วง ในบรรทัดที่ถูกบริบท + `\s*บาท`
+- **เกณฑ์ ship = เป้าหมาย 2/2 + ไม่มี paired hard regression ไม่ใช่ point estimate** — v2 ดู +16.9 จุดแต่มี regression เดียว (s75-t0) → ไม่ ship, แก้เป็น v3
+- **กฎ prompt รั่วข้ามชนิดสินค้า** — scope ทุก default ตามสินค้า: "อาร์ตมัน = Art 120" ใช้กับใบปลิวแผ่นเดียวเท่านั้น ไม่งั้นหนังสือเลิกถามแกรมเนื้อใน
+- **รีวิวทั้ง branch (final whole-branch review) ก่อน push production** — รอบเดียว deploy เดียว; รอบนี้จับ I1 grader ที่ผ่าน task review รายตัวมาหมด
+- **metric กรรมการ (judge_*) เป็นข้อมูลประกอบ** — ไม่ใช่ gate (within noise ±); gate ใช้กฎแข็งด้วยโค้ดเท่านั้น
+
