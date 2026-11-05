@@ -90,5 +90,5 @@
     "lib/ai-quote/tools.ts",
     "lib/ai-quote/customer-deps.ts"
   ],
-  "harness_sha": "dc0cf14f4c3ffb1916aedf0e760d30d5939708f09bebadf539e37d497f64f796"
+  "harness_sha": "2cd484df66e5133769b3d33c0a56ce7b5784a576ae749adc272c42a89b224196"
 }
