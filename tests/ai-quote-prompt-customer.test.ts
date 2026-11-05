@@ -332,3 +332,9 @@ describe('customer prompt — round-2 v3 fixes (2026-11-05)', () => {
     expect(p.split('\n').length).toBeLessThanOrEqual(185);
   });
 });
+
+describe('customer prompt — final-review pins (2026-11-05)', () => {
+  it('binding hand-off exception list keeps ขอบกาว', () => {
+    expect(p).toMatch(/นอกจาก[^\n]*ขอบกาว/);
+  });
+});

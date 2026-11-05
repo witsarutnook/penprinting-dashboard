@@ -92,3 +92,26 @@ console.log('grader self-test: all passed');
   if (bad3) { console.error(`${bad3} round-3 self-check(s) failed`); process.exit(1); }
   console.log('grader self-test round 3: all passed');
 }
+
+// --- round 4 (2026-11-05, final review I1/M2): PROMPT_CONSTANTS bound to their pinned sentence ---
+{
+  const askAny = { history: [], message: 'มีขั้นต่ำไหม', expected: { outcome: ['ask', 'template'] } };
+  const nbCall = { productType: 'notebook', spec: { size: 'A5', qty: 200, innerA: { paperName: 'Bond 80', color: '1', pages: 100 } } };
+  const nbCase = { history: [], message: 'x', expected: { outcome: 'quote', calls: [nbCall] } };
+  const nbQ = [{ ...nbCall, result: { unitPrice: 45.5, totalPrice: 9100 } }];
+  const PIN = '📋 เข้าเล่มสันห่วงเพิ่มเล่มละ 15 บาท (ยังไม่รวมในราคาด้านบน)';
+  const more4 = [
+    ['A: pinned สันห่วง line + separate "เล่มละ 15 บาท" price line (not tool-backed) → prices 0', gradeHard(nbCase, mk({ reply: `💰 สมุด A5 200 เล่ม → เล่มละ 15 บาท · รวม 9,100 บาท\n${PIN}\nราคาประเมินเบื้องต้นนะคะ`, quotes: nbQ, computeCalls: [nbCall], toolCalls: 1 })).grade, { prices: 0, pass: 0 }],
+    ['C: ค่าออกแบบ 300 บาท line + ค่าส่ง 300 บาท line → prices 0', gradeHard(askAny, mk({ reply: 'ค่าออกแบบ 300 บาท\nค่าส่ง 300 บาท\nงานประเภทไหนคะ' })).grade, { prices: 0, pass: 0 }],
+    ['pinned sentence alone + tool-backed prices → prices 1', gradeHard(nbCase, mk({ reply: `💰 สมุด A5 200 เล่ม → เล่มละ 45.50 บาท · รวม 9,100 บาท (ยังไม่รวม VAT 7%)\n${PIN}\nราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ 🙏`, quotes: nbQ, computeCalls: [nbCall], toolCalls: 1 })).grade, { prices: 1, pass: 1 }],
+    ['E: ค่าออกแบบ 300บาท (no space) → prices 1', gradeHard(askAny, mk({ reply: 'ขั้นต่ำขึ้นอยู่กับชนิดงานค่ะ\n💳 บัตร PVC ต่ำกว่า 30 ใบ มีค่าออกแบบ 300บาท\nงานประเภทไหนคะ' })).grade, { prices: 1, pass: 1 }],
+  ];
+  let bad4 = 0;
+  for (const [name, got, want] of more4) {
+    const miss = Object.entries(want).filter(([k, v]) => got[k] !== v);
+    console.log(miss.length ? `✗ ${name} — ${miss.map(([k, v]) => `${k}: got ${got[k]} want ${v}`).join(', ')}` : `✓ ${name}`);
+    if (miss.length) bad4++;
+  }
+  if (bad4) { console.error(`${bad4} round-4 self-check(s) failed`); process.exit(1); }
+  console.log('grader self-test round 4: all passed');
+}

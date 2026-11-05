@@ -159,8 +159,8 @@ const PRICE_RE = /(\d[\d,]*(?:\.\d+)?)\s*บาท/g;
 // Fixed numbers the prompt itself states; accepted only inside the sentence shape
 // the prompt pins, so a hallucinated unit price that happens to equal them still fails.
 const PROMPT_CONSTANTS = [
-  { n: 300, re: /ค่าออกแบบ[^\n]*300 บาท/ },        // PVC design fee under 30 cards
-  { n: 15,  re: /สันห่วง[^\n]*เพิ่มเล่มละ 15 บาท/ }, // ring-binding surcharge (spec 2026-11-04 §4.2)
+  { n: 300, re: /ค่าออกแบบ[^\n]*300\s*บาท/ },        // PVC design fee under 30 cards
+  { n: 15,  re: /สันห่วง[^\n]*เพิ่มเล่มละ 15\s*บาท/ }, // ring-binding surcharge (spec 2026-11-04 §4.2)
 ];
 const HANDOFF_RE = /ส่งต่อทีมงาน|ให้ทีมงานประเมิน/;
 const TEMPLATE_LINE = 'น้อง PP รบกวนขอรายละเอียดงานหน่อยนะคะ';
@@ -210,9 +210,12 @@ export function gradeHard(input, run) {
 
   // Every "N บาท" in the reply must be a number the tool returned this turn
   // (or a PROMPT_CONSTANTS number inside its pinned sentence shape).
+  // Constants are line-bound (final review I1): the pinned sentence span is stripped before
+  // scanning, so the same number anywhere else in the reply must still be tool-backed.
   const allowed = new Set(); for (const q of run.quotes) numbersIn(q.result, allowed);
-  for (const c of PROMPT_CONSTANTS) if (c.re.test(reply)) allowed.add(c.n);
-  const quoted = [...reply.matchAll(PRICE_RE)].map((m) => Number(m[1].replace(/,/g, '')));
+  let scan = reply;
+  for (const c of PROMPT_CONSTANTS) scan = scan.replace(new RegExp(c.re.source, 'g'), '');
+  const quoted = [...scan.matchAll(PRICE_RE)].map((m) => Number(m[1].replace(/,/g, '')));
   const prices = quoted.every((n) => [...allowed].some((a) => Math.abs(a - n) < 0.005)) ? 1 : 0;
 
   // Format: no markdown, no internal word "ระบบ", no dash bullets, quote disclaimers, hand-off/📊 rules.
