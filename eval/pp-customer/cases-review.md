@@ -1642,3 +1642,154 @@ art 120
 งานถุงกระดาษขอส่งต่อทีมงานประเมินราคาให้นะคะ เดี๋ยวทีมงานติดต่อกลับค่ะ 🙏
 
 </details>
+
+# Round 2 (2026-11-04) — นโยบายคุณนุ๊ก A6/B5 · เข้าเล่ม · เวลาผลิต
+
+| id | tags | expected เดิม → ใหม่ | สเปก | ข้อความลูกค้า |
+|---|---|---|---|---|
+| s57-t2 | brochure, follow-up, line, prod, size-unsupported | **ask** → **quote** | brochure {"size":"A5","qty":50} | ใบปลิว A6 100 ใบ |
+| s41-t2 | book, follow-up, line, prod, size-unsupported | **ask** → **quote** | book {"size":"A5","qty":8,"innerA":{"paperName":"Bond 80","color":"4","pages":100}} | สีเนื้อใน 4 สี กระดาษ Bond 80  |
+| s107-t0 | book, first, line, prod, size-unsupported | **ask** → **ask** | — | -ขนาด B5 -ปกกระดาษมัน -เนื้อในใช้กระดาษ 75 gram -เนื้อในพิมพ์ ขาวดำ 244 หน้า -เข้าเล่มขอบกาว -พิมพ์ 5 เล่ม |
+| s100-t6 | namecard, follow-up, line, prod | **quote** → **quote** | namecard {"sides":2,"laminated":true} | เคลือบ |
+| synth-a6-brochure-first | brochure, first, line, synth, size-unsupported | — → **quote** | brochure {"size":"A5","qty":500} | ใบปลิว A6 1,000 ใบ |
+| synth-a6-book-odd | book, first, line, synth, size-unsupported | — → **quote** | book {"size":"A5","qty":8,"innerA":{"paperName":"Bond 80","color":"1","pages":100}} | หนังสือ A6 100 หน้า เนื้อใน Bond 80 ขาวดำ 15 เล่ม |
+| synth-b5-book-full | book, first, line, synth, size-unsupported | — → **quote** | book {"size":"A4","qty":100,"innerA":{"paperName":"Bond 80","color":"1","pages":200}} | หนังสือ B5 200 หน้า เนื้อใน Bond 80 ขาวดำ 100 เล่ม |
+| synth-a7-brochure | brochure, first, line, synth, size-unsupported | — → **escalate** | — | ใบปลิว A7 1,000 ใบ |
+| synth-hardcover | book, first, line, synth, special-finish | — → **escalate** | — | หนังสือ A5 200 หน้า เนื้อใน Bond 80 ขาวดำ ปกแข็ง 100 เล่ม |
+| synth-ring-binding | notebook, first, line, synth, special-finish | — → **quote** | notebook {"size":"A5","qty":200,"innerA":{"paperName":"Bond 80","color":"1","pages":100}} | สมุด A5 100 หน้า เนื้อใน Bond 80 ขาวดำ 200 เล่ม เข้าเล่มสันห่วง |
+| synth-saddle-stitch | book, first, line, synth, special-finish | — → **quote** | book {"size":"A5","qty":300,"innerA":{"paperName":"Bond 80","color":"4","pages":32}} | หนังสือ A5 32 หน้า มุงหลังคา เนื้อใน Bond 80 4 สี 300 เล่ม |
+| synth-leadtime-followup | brochure, follow-up, line, synth, generic | — → **ask** | — | ใช้เวลาผลิตกี่วันคะ |
+| synth-shipping-with-spec | brochure, first, line, synth, generic | — → **quote** | brochure {"size":"A4","qty":500} | ใบปลิว A4 500 ใบ ค่าส่งเท่าไหร่คะ |
+
+## synth-a6-brochure-first · brochure · first · line · synth · size-unsupported
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+ใบปลิว A6 1,000 ใบ
+````
+
+**expected:** outcome = **quote** · calls = brochure {"size":"A5","qty":500} · ต้องมี /500 ใบ/ · ห้ามมี /ใบละ/
+
+📝 A6 = ครึ่ง A5 → A5 500 ใบ · บอกราคารวม + 📋 'A6 คิดจาก A5 500 ใบ' ไม่มีราคาต่อใบ
+
+---
+
+## synth-a6-book-odd · book · first · line · synth · size-unsupported
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+หนังสือ A6 100 หน้า เนื้อใน Bond 80 ขาวดำ 15 เล่ม
+````
+
+**expected:** outcome = **quote** · calls = book {"size":"A5","qty":8,"innerA":{"paperName":"Bond 80","color":"1","pages":100}} · ต้องมี /8 เล่ม/ · ห้ามมี /เล่มละ/
+
+📝 หนังสือ A6 หาร 2 ปัดขึ้น 15 → 8 · ราคารวมอย่างเดียว
+
+---
+
+## synth-b5-book-full · book · first · line · synth · size-unsupported
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+หนังสือ B5 200 หน้า เนื้อใน Bond 80 ขาวดำ 100 เล่ม
+````
+
+**expected:** outcome = **quote** · calls = book {"size":"A4","qty":100,"innerA":{"paperName":"Bond 80","color":"1","pages":200}} · ต้องมี /A4/
+
+📝 B5 → A4 จำนวนเท่าเดิม · แสดงเล่มละ/รวมได้ปกติ + 📋 'B5 คิดราคาเท่า A4'
+
+---
+
+## synth-a7-brochure · brochure · first · line · synth · size-unsupported
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+ใบปลิว A7 1,000 ใบ
+````
+
+**expected:** outcome = **escalate**
+
+📝 ขนาดอื่นนอกจาก A6/B5 ยังส่งต่อเหมือนเดิม (ขอบเขต §4.1)
+
+---
+
+## synth-hardcover · book · first · line · synth · special-finish
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+หนังสือ A5 200 หน้า เนื้อใน Bond 80 ขาวดำ ปกแข็ง 100 เล่ม
+````
+
+**expected:** outcome = **escalate** · ต้องมี /ปกแข็ง/
+
+📝 ปกแข็ง → ส่งต่อ แม้สเปกอื่นครบ (ส่งต่อชนะกฎถาม/ตีราคา)
+
+---
+
+## synth-ring-binding · notebook · first · line · synth · special-finish
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+สมุด A5 100 หน้า เนื้อใน Bond 80 ขาวดำ 200 เล่ม เข้าเล่มสันห่วง
+````
+
+**expected:** outcome = **quote** · calls = notebook {"size":"A5","qty":200,"innerA":{"paperName":"Bond 80","color":"1","pages":100}} · ต้องมี /สันห่วง[^\n]*เพิ่มเล่มละ 15 บาท/
+
+📝 สันห่วง = ตีราคาปกติ + บรรทัดคงที่ +15/เล่ม ไม่บวกรวมเอง
+
+---
+
+## synth-saddle-stitch · book · first · line · synth · special-finish
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+หนังสือ A5 32 หน้า มุงหลังคา เนื้อใน Bond 80 4 สี 300 เล่ม
+````
+
+**expected:** outcome = **quote** · calls = book {"size":"A5","qty":300,"innerA":{"paperName":"Bond 80","color":"4","pages":32}} · ห้ามมี /เข้าเล่ม[^\n]*(ไหม|แบบไหน)/
+
+📝 มุงหลังคา = เข้าเล่มมาตรฐาน ไม่ถาม ไม่พูดถึง
+
+---
+
+## synth-leadtime-followup · brochure · follow-up · line · synth · generic
+
+**ประวัติสนทนา:**
+
+- user: ใบปลิว A5 100 ใบ
+- assistant: 💰 ใบปลิว A5 100 ใบ → ใบละ 15 บาท · รวม 1,500 บาท (ยังไม่รวม VAT 7%) 📋 ประเมินจาก: 4 สี / 2 หน้า / Art 120 — สเปกต่างจากนี้บอกได้เลยค่ะ ราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ 🙏
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+ใช้เวลาผลิตกี่วันคะ
+````
+
+**expected:** outcome = **ask** · ต้องมี /ขึ้น(อยู่)?กับงาน|แล้วแต่งาน/ · ห้ามมี /\d+\s*วัน/, /ส่งต่อทีมงาน/, /ให้ทีมงานประเมิน/
+
+📝 เวลาผลิต = แล้วแต่งาน → ตอบกลาง ๆ ไม่มีตัวเลข ไม่ปิดโหมด AI (นโยบาย 2026-11-04 §4.3)
+
+---
+
+## synth-shipping-with-spec · brochure · first · line · synth · generic
+
+**ข้อความลูกค้า (เทิร์นที่วัด):**
+
+````
+ใบปลิว A4 500 ใบ ค่าส่งเท่าไหร่คะ
+````
+
+**expected:** outcome = **quote** · calls = brochure {"size":"A4","qty":500} · ต้องมี /ค่าส่ง/ · ห้ามมี /ค่าส่ง[^\n]*\d+\s*บาท/, /ส่งต่อทีมงาน/
+
+📝 สเปกครบ → ตีราคาปกติ แล้วตอบค่าส่งแบบไม่มีตัวเลขต่อท้าย
+
+---
+
+**หมายเหตุ Round 2:** label ของ 4 เคสเดิม (s57-t2, s41-t2, s107-t0, s100-t6) เปลี่ยนเพราะนโยบายใน spec §4 (2026-11-04): A6 = ครึ่ง A5 และหนังสือ A6 หาร 2 ปัดขึ้น, B5 คิดเป็น A4 เงียบ ๆ, กระดาษบอกแค่แกรมให้เสนอตัวเลือกแทนการส่งต่อ, และการ soft-ask จำนวนกล่องนามบัตรนับเป็นถามจำนวน. ส่วน 9 เคสใหม่ครอบคลุมขนาด A6/B5/A7, การเข้าเล่มพิเศษ (ปกแข็ง/สันห่วง/มุงหลังคา), เวลาผลิต และค่าส่ง. baseline และ v1 ที่เก็บไว้ถูก regrade ใหม่ด้วย label และ grader ใหม่ (hard metrics เท่านั้น ไม่เรียก API).

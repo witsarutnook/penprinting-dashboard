@@ -181,9 +181,10 @@
    ],
    "mustNotAsk": [
     "กี่ใบ",
-    "กี่กล่อง"
+    "กี่กล่อง",
+    "จำนวนกล่อง"
    ],
-   "note": "ประวัติ: 2 หน้า + 2 แบบ, บอทเก่าถามจำนวนซ้ำ 3 รอบจนลูกค้าหลุด (router ส่งต่อ) — ตอนนี้ต้องตีราคาเคลือบ 2 หน้า กล่องละ 500"
+   "note": "ประวัติ: 2 หน้า + 2 แบบ, บอทเก่าถามจำนวนซ้ำ 3 รอบจนลูกค้าหลุด (router ส่งต่อ) — ตอนนี้ต้องตีราคาเคลือบ 2 หน้า กล่องละ 500 · 2026-11-04 เพิ่ม \"จำนวนกล่อง\" — soft-ask \"บอกจำนวนกล่องได้เลยค่ะ\" นับเป็นถามจำนวน"
   },
   "meta": {
    "source": "prod",
@@ -808,11 +809,23 @@
   ],
   "message": "ใบปลิว A6 100 ใบ",
   "expected": {
-   "outcome": "ask",
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "brochure",
+     "spec": {
+      "size": "A5",
+      "qty": 50
+     }
+    }
+   ],
    "mustAsk": [
     "A5"
    ],
-   "note": "A6 ไม่อยู่ในขนาดที่รองรับ → บอกขนาดที่มี ถามใหม่ ไม่ส่งต่อ"
+   "mustNotAsk": [
+    "ใบละ"
+   ],
+   "note": "นโยบาย 2026-11-04: A6 = ครึ่ง A5 → เรียก A5 50 ใบ แสดงราคารวม + 📋 ที่มา ไม่แสดงราคาต่อใบ (label เดิม 10/24: ask ให้เสนอ A5)"
   },
   "meta": {
    "source": "prod",
@@ -1334,11 +1347,25 @@
   ],
   "message": "สีเนื้อใน 4 สี กระดาษ Bond 80 ",
   "expected": {
-   "outcome": "ask",
-   "mustAsk": [
-    "A5"
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "book",
+     "spec": {
+      "size": "A5",
+      "qty": 8,
+      "innerA": {
+       "paperName": "Bond 80",
+       "color": "4",
+       "pages": 100
+      }
+     }
+    }
    ],
-   "note": "A6 ไม่รองรับ → เสนอ A4/A5"
+   "mustNotAsk": [
+    "เล่มละ"
+   ],
+   "note": "นโยบาย 2026-11-04: หนังสือ A6 หาร 2 เหมือนกัน 15 เล่ม → A5 8 เล่ม (ปัดขึ้น) แสดงราคารวมอย่างเดียว (label เดิม: ask ให้เสนอ A4/A5)"
   },
   "meta": {
    "source": "prod",
@@ -1688,9 +1715,14 @@
   "expected": {
    "outcome": "ask",
    "mustAsk": [
-    "A4|A5"
+    "Green Read 75|Bond 70|Bond 80"
    ],
-   "note": "B5 ไม่รองรับ + กระดาษ '75 gram' ไม่รู้ชนิด → ถามทั้งสองในข้อความเดียว"
+   "mustNotAsk": [
+    "ขนาดไหน",
+    "A4 และ A5",
+    "ส่งต่อทีมงาน"
+   ],
+   "note": "นโยบาย 2026-11-04: B5 → A4 เงียบ ๆ ไม่ถามขนาด · กระดาษบอกแค่แกรม 75 → เสนอ Bond 70 / Bond 80 / Green Read 75 ไม่ส่งต่อ (label เดิม: ถามทั้งขนาดและกระดาษ)"
   },
   "meta": {
    "source": "prod",
@@ -2806,6 +2838,299 @@
    "channel": "line",
    "at": "2026-10-01T07:55:14.227Z",
    "oldReply": "กระดาษสีครีมที่ทางร้านมีคือ กระดาษถนอมสายตา (กรีนรีด) น้ำหนัก 75 แกรม ค่ะ 📄\nสะดวกใช้ตัวนี้เลยไหมคะ?\n\nถ้าโอเค น้อง PP จะคำนวณราคาให้เลยนะคะ (เนื้อใน ขาวดำ 336 หน้า / ปกใช้มาตรฐาน Art 230 4 สี)"
+  }
+ },
+ {
+  "id": "synth-a6-brochure-first",
+  "tags": [
+   "brochure",
+   "first",
+   "line",
+   "synth",
+   "size-unsupported"
+  ],
+  "history": [],
+  "message": "ใบปลิว A6 1,000 ใบ",
+  "expected": {
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "brochure",
+     "spec": {
+      "size": "A5",
+      "qty": 500
+     }
+    }
+   ],
+   "mustAsk": [
+    "500 ใบ"
+   ],
+   "mustNotAsk": [
+    "ใบละ"
+   ],
+   "note": "A6 = ครึ่ง A5 → A5 500 ใบ · บอกราคารวม + 📋 'A6 คิดจาก A5 500 ใบ' ไม่มีราคาต่อใบ"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-a6-book-odd",
+  "tags": [
+   "book",
+   "first",
+   "line",
+   "synth",
+   "size-unsupported"
+  ],
+  "history": [],
+  "message": "หนังสือ A6 100 หน้า เนื้อใน Bond 80 ขาวดำ 15 เล่ม",
+  "expected": {
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "book",
+     "spec": {
+      "size": "A5",
+      "qty": 8,
+      "innerA": {
+       "paperName": "Bond 80",
+       "color": "1",
+       "pages": 100
+      }
+     }
+    }
+   ],
+   "mustAsk": [
+    "8 เล่ม"
+   ],
+   "mustNotAsk": [
+    "เล่มละ"
+   ],
+   "note": "หนังสือ A6 หาร 2 ปัดขึ้น 15 → 8 · ราคารวมอย่างเดียว"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-b5-book-full",
+  "tags": [
+   "book",
+   "first",
+   "line",
+   "synth",
+   "size-unsupported"
+  ],
+  "history": [],
+  "message": "หนังสือ B5 200 หน้า เนื้อใน Bond 80 ขาวดำ 100 เล่ม",
+  "expected": {
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "book",
+     "spec": {
+      "size": "A4",
+      "qty": 100,
+      "innerA": {
+       "paperName": "Bond 80",
+       "color": "1",
+       "pages": 200
+      }
+     }
+    }
+   ],
+   "mustAsk": [
+    "A4"
+   ],
+   "note": "B5 → A4 จำนวนเท่าเดิม · แสดงเล่มละ/รวมได้ปกติ + 📋 'B5 คิดราคาเท่า A4'"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-a7-brochure",
+  "tags": [
+   "brochure",
+   "first",
+   "line",
+   "synth",
+   "size-unsupported"
+  ],
+  "history": [],
+  "message": "ใบปลิว A7 1,000 ใบ",
+  "expected": {
+   "outcome": "escalate",
+   "note": "ขนาดอื่นนอกจาก A6/B5 ยังส่งต่อเหมือนเดิม (ขอบเขต §4.1)"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-hardcover",
+  "tags": [
+   "book",
+   "first",
+   "line",
+   "synth",
+   "special-finish"
+  ],
+  "history": [],
+  "message": "หนังสือ A5 200 หน้า เนื้อใน Bond 80 ขาวดำ ปกแข็ง 100 เล่ม",
+  "expected": {
+   "outcome": "escalate",
+   "mustAsk": [
+    "ปกแข็ง"
+   ],
+   "note": "ปกแข็ง → ส่งต่อ แม้สเปกอื่นครบ (ส่งต่อชนะกฎถาม/ตีราคา)"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-ring-binding",
+  "tags": [
+   "notebook",
+   "first",
+   "line",
+   "synth",
+   "special-finish"
+  ],
+  "history": [],
+  "message": "สมุด A5 100 หน้า เนื้อใน Bond 80 ขาวดำ 200 เล่ม เข้าเล่มสันห่วง",
+  "expected": {
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "notebook",
+     "spec": {
+      "size": "A5",
+      "qty": 200,
+      "innerA": {
+       "paperName": "Bond 80",
+       "color": "1",
+       "pages": 100
+      }
+     }
+    }
+   ],
+   "mustAsk": [
+    "สันห่วง[^\\n]*เพิ่มเล่มละ 15 บาท"
+   ],
+   "note": "สันห่วง = ตีราคาปกติ + บรรทัดคงที่ +15/เล่ม ไม่บวกรวมเอง"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-saddle-stitch",
+  "tags": [
+   "book",
+   "first",
+   "line",
+   "synth",
+   "special-finish"
+  ],
+  "history": [],
+  "message": "หนังสือ A5 32 หน้า มุงหลังคา เนื้อใน Bond 80 4 สี 300 เล่ม",
+  "expected": {
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "book",
+     "spec": {
+      "size": "A5",
+      "qty": 300,
+      "innerA": {
+       "paperName": "Bond 80",
+       "color": "4",
+       "pages": 32
+      }
+     }
+    }
+   ],
+   "mustNotAsk": [
+    "เข้าเล่ม[^\\n]*(ไหม|แบบไหน)"
+   ],
+   "note": "มุงหลังคา = เข้าเล่มมาตรฐาน ไม่ถาม ไม่พูดถึง"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-leadtime-followup",
+  "tags": [
+   "brochure",
+   "follow-up",
+   "line",
+   "synth",
+   "generic"
+  ],
+  "history": [
+   {
+    "role": "user",
+    "text": "ใบปลิว A5 100 ใบ"
+   },
+   {
+    "role": "assistant",
+    "text": "💰 ใบปลิว A5 100 ใบ → ใบละ 15 บาท · รวม 1,500 บาท (ยังไม่รวม VAT 7%)\n\n📋 ประเมินจาก: 4 สี / 2 หน้า / Art 120 — สเปกต่างจากนี้บอกได้เลยค่ะ\n\nราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ 🙏"
+   }
+  ],
+  "message": "ใช้เวลาผลิตกี่วันคะ",
+  "expected": {
+   "outcome": "ask",
+   "mustAsk": [
+    "ขึ้น(อยู่)?กับงาน|แล้วแต่งาน"
+   ],
+   "mustNotAsk": [
+    "\\d+\\s*วัน",
+    "ส่งต่อทีมงาน",
+    "ให้ทีมงานประเมิน"
+   ],
+   "note": "เวลาผลิต = แล้วแต่งาน → ตอบกลาง ๆ ไม่มีตัวเลข ไม่ปิดโหมด AI (นโยบาย 2026-11-04 §4.3)"
+  },
+  "meta": {
+   "source": "synthetic"
+  }
+ },
+ {
+  "id": "synth-shipping-with-spec",
+  "tags": [
+   "brochure",
+   "first",
+   "line",
+   "synth",
+   "generic"
+  ],
+  "history": [],
+  "message": "ใบปลิว A4 500 ใบ ค่าส่งเท่าไหร่คะ",
+  "expected": {
+   "outcome": "quote",
+   "calls": [
+    {
+     "productType": "brochure",
+     "spec": {
+      "size": "A4",
+      "qty": 500
+     }
+    }
+   ],
+   "mustAsk": [
+    "ค่าส่ง"
+   ],
+   "mustNotAsk": [
+    "ค่าส่ง[^\\n]*\\d+\\s*บาท",
+    "ส่งต่อทีมงาน"
+   ],
+   "note": "สเปกครบ → ตีราคาปกติ แล้วตอบค่าส่งแบบไม่มีตัวเลขต่อท้าย"
+  },
+  "meta": {
+   "source": "synthetic"
   }
  }
 ]
