@@ -28,3 +28,21 @@ s106-t4 rep1: format 1→0
 s50-t0 rep1: pass 0→1, prices 0→1
 v1: 8 row(s) changed · pass 117/136 → 115/136
 wrote .claude/hillclimb/pp-customer/v1/results.jsonl
+
+## Task 3 — baseline (prompt 7f1825a, claude-sonnet-5-5, reps 2) สำหรับ 9 synth cases Round 2 — 2026-11-05
+harness sha approved: dc0cf14f4c3f (คุณนุ๊ก --approve-harness; calc-dev ล่มตอนนั้น → รันซ้ำโดยไม่ใช้ flag หลังเปิด calc-dev ใหม่)
+18/18 ok · errors.jsonl ไม่มี · pass 6/18
+
+| case | rep0 | rep1 | หมายเหตุ (prompt เดิม) |
+|---|---|---|---|
+| synth-a6-brochure-first | 0 | 0 | rep0 ส่งต่อทีมงาน (ปิดโหมด AI) · rep1 ถาม + คำว่า "ระบบ" |
+| synth-a6-book-odd | 0 | 0 | ไม่ quote |
+| synth-b5-book-full | 0 | 0 | ไม่ quote |
+| synth-a7-brochure | 0 | 1 | rep0 ส่งต่อถูก แต่มีคำว่า "ระบบ" ("ไม่อยู่ในขนาดที่ระบบรองรับ") |
+| synth-hardcover | 1 | 0 | rep1 ส่งต่อถูก แต่มีคำว่า "ระบบ" |
+| synth-ring-binding | 0 | 0 | quote ถูก (67.5/13,500) แต่ไม่มีบรรทัด "สันห่วงเพิ่มเล่มละ 15 บาท" |
+| synth-saddle-stitch | 1 | 1 | ผ่านอยู่แล้ว |
+| synth-leadtime-followup | 0 | 0 | ตอบเรื่องเวลาผลิตแต่ไม่มีวลี "ขึ้นกับงาน/แล้วแต่งาน" |
+| synth-shipping-with-spec | 1 | 1 | ผ่านอยู่แล้ว |
+
+→ Task 4 ต้องแก้: A6/B5 mapping · 📋 สันห่วง · วลีเวลาผลิต/ค่าส่ง · ห้ามคำว่า "ระบบ" ในข้อความส่งต่อ
