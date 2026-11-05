@@ -66,3 +66,29 @@ console.log('grader self-test: all passed');
   if (bad2) { console.error(`${bad2} round-2 self-check(s) failed`); process.exit(1); }
   console.log('grader self-test round 2: all passed');
 }
+
+// --- round 3 (2026-11-04): prompt constants bound to context · internal word · dash bullet ---
+{
+  const askAny = { history: [], message: 'มีขั้นต่ำไหม', expected: { outcome: ['ask', 'template'] } };
+  const nbCall = { productType: 'notebook', spec: { size: 'A5', qty: 200, innerA: { paperName: 'Bond 80', color: '1', pages: 100 } } };
+  const nbQuote = mk({ reply: '💰 สมุด A5 200 เล่ม → เล่มละ 45.50 บาท · รวม 9,100 บาท (ยังไม่รวม VAT 7%)\n📋 เข้าเล่มสันห่วงเพิ่มเล่มละ 15 บาท (ยังไม่รวมในราคาด้านบน)\nราคาประเมินเบื้องต้นนะคะ ทีมงานยืนยันราคาอีกครั้งค่ะ 🙏',
+    quotes: [{ ...nbCall, result: { unitPrice: 45.5, totalPrice: 9100 } }], computeCalls: [nbCall], toolCalls: 1 });
+  const nbCase = { history: [], message: 'x', expected: { outcome: 'quote', calls: [nbCall] } };
+  const more3 = [
+    ['ค่าออกแบบ 300 บาท with no tool call → prices 1', gradeHard(askAny, mk({ reply: 'ขั้นต่ำขึ้นอยู่กับชนิดงานค่ะ\n💳 บัตร PVC ต่ำกว่า 30 ใบ มีค่าออกแบบ 300 บาท\nงานประเภทไหนคะ' })).grade, { prices: 1, pass: 1 }],
+    ['300 บาท without ค่าออกแบบ keyword → prices 0', gradeHard(askAny, mk({ reply: 'ค่าส่ง 300 บาทค่ะ งานประเภทไหนคะ' })).grade, { prices: 0, pass: 0 }],
+    ['สันห่วง surcharge line next to a tool quote → prices 1', gradeHard(nbCase, nbQuote).grade, { prices: 1, pass: 1 }],
+    ['bare 15 บาท on a สันห่วง line (price position, no tool) → prices 0', gradeHard(nbCase, mk({ reply: '💰 สมุด A5 สันห่วง 200 เล่ม → เล่มละ 15 บาท (ยังไม่รวม VAT 7%)\nราคาประเมินเบื้องต้นนะคะ' })).grade, { prices: 0, pass: 0 }],
+    ['internal word ระบบ → format 0', gradeHard(nbCase, { ...nbQuote, reply: nbQuote.reply + '\nระบบประเมินให้เป็นปกมาตรฐานค่ะ' }).grade, { format: 0, pass: 0 }],
+    ['dash bullet at line start → format 0', gradeHard(nbCase, { ...nbQuote, reply: nbQuote.reply + '\n- Bond 70\n- Bond 80' }).grade, { format: 0, pass: 0 }],
+    ['oracle namecard unchanged → pass 1', gradeHard(ncCase, oracle).grade, { pass: 1, format: 1, prices: 1 }],
+  ];
+  let bad3 = 0;
+  for (const [name, got, want] of more3) {
+    const miss = Object.entries(want).filter(([k, v]) => got[k] !== v);
+    console.log(miss.length ? `✗ ${name} — ${miss.map(([k, v]) => `${k}: got ${got[k]} want ${v}`).join(', ')}` : `✓ ${name}`);
+    if (miss.length) bad3++;
+  }
+  if (bad3) { console.error(`${bad3} round-3 self-check(s) failed`); process.exit(1); }
+  console.log('grader self-test round 3: all passed');
+}

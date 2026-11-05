@@ -156,6 +156,12 @@ export function perfFrom(run) {
 // --- grade: hard rules (code) ---------------------------------------------------
 
 const PRICE_RE = /(\d[\d,]*(?:\.\d+)?)\s*บาท/g;
+// Fixed numbers the prompt itself states; accepted only inside the sentence shape
+// the prompt pins, so a hallucinated unit price that happens to equal them still fails.
+const PROMPT_CONSTANTS = [
+  { n: 300, re: /ค่าออกแบบ[^\n]*300 บาท/ },        // PVC design fee under 30 cards
+  { n: 15,  re: /สันห่วง[^\n]*เพิ่มเล่มละ 15 บาท/ }, // ring-binding surcharge (spec 2026-11-04 §4.2)
+];
 const HANDOFF_RE = /ส่งต่อทีมงาน|ให้ทีมงานประเมิน/;
 const TEMPLATE_LINE = 'น้อง PP รบกวนขอรายละเอียดงานหน่อยนะคะ';
 
@@ -202,13 +208,18 @@ export function gradeHard(input, run) {
   if (exp.priceTable && !run.priceTables.includes(exp.priceTable)) { tool_spec = 0; toolNotes.push(`price table ${exp.priceTable} not sent`); }
   if (exp.noTable && run.priceTables.length) { tool_spec = 0; toolNotes.push(`price table sent too early: ${run.priceTables.join(',')}`); }
 
-  // Every "N บาท" in the reply must be a number the tool returned this turn.
+  // Every "N บาท" in the reply must be a number the tool returned this turn
+  // (or a PROMPT_CONSTANTS number inside its pinned sentence shape).
   const allowed = new Set(); for (const q of run.quotes) numbersIn(q.result, allowed);
+  for (const c of PROMPT_CONSTANTS) if (c.re.test(reply)) allowed.add(c.n);
   const quoted = [...reply.matchAll(PRICE_RE)].map((m) => Number(m[1].replace(/,/g, '')));
   const prices = quoted.every((n) => [...allowed].some((a) => Math.abs(a - n) < 0.005)) ? 1 : 0;
 
+  // Format: no markdown, no internal word "ระบบ", no dash bullets, quote disclaimers, hand-off/📊 rules.
   const problems = [];
   if (/\*\*|^#+\s/m.test(reply)) problems.push('markdown');
+  if (/ระบบ/.test(reply)) problems.push('internal word "ระบบ"');
+  if (/^- /m.test(reply)) problems.push('dash bullet');
   if (got === 'quote') {
     if (!reply.includes('ยังไม่รวม VAT 7%')) problems.push('no VAT note');
     if (!reply.includes('ราคาประเมินเบื้องต้นนะคะ')) problems.push('no disclaimer');
