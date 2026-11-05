@@ -230,3 +230,77 @@ describe('customer prompt — namecard asks no quantity (2026-10-24)', () => {
     expect(p).toMatch(/นามบัตร[^\n]*บอกจำนวน[^\n]*ราคาต่อกล่อง × จำนวนกล่อง = ราคารวม/);
   });
 });
+
+describe('customer prompt — round-2 policy: sizes, binding, lead-time, format (2026-11-04)', () => {
+  const sizes = p.split('## ขนาดนอกรายการ')[1]?.split('\n## ')[0] ?? '';
+  const binding = p.split('## การเข้าเล่ม')[1]?.split('\n## ')[0] ?? '';
+  const handoff = p.split('## เมื่องานเกินขอบเขต')[1]?.split('\n## ')[0] ?? '';
+  const namecard = p.split('## นามบัตร — กฎเฉพาะ')[1]?.split('\n## ')[0] ?? '';
+  const LEAD = 'ระยะเวลาผลิตและค่าส่งขึ้นกับงานค่ะ ทีมงานแจ้งให้ตอนยืนยันราคานะคะ';
+
+  it('A6 maps to A5 with the quantity halved, total only, source disclosed', () => {
+    expect(sizes).toMatch(/A6[^\n]*A5[^\n]*(÷ 2|หาร 2)/);
+    expect(sizes).toContain('A6 คิดจาก A5');
+    expect(sizes).toMatch(/ราคารวม[^\n]*(ไม่แสดง|ห้ามแสดง)[^\n]*(ต่อใบ|ต่อเล่ม)/);
+    expect(sizes).toMatch(/ไม่ถาม[^\n]*ไม่ส่งต่อ|ไม่ส่งต่อ[^\n]*ไม่ถาม/);
+  });
+  it('A6 rule rounds odd quantities up and covers books/notebooks too', () => {
+    expect(sizes).toContain('ปัดขึ้น');
+    expect(sizes).toMatch(/15 เล่ม[^\n]*8 เล่ม/);
+  });
+  it('B5 maps to A4 at the same quantity; per-unit price allowed', () => {
+    expect(sizes).toMatch(/B5[^\n]*A4[^\n]*จำนวนเท่าเดิม/);
+    expect(sizes).toContain('B5 คิดราคาเท่า A4');
+  });
+  it('size aliases (a6 / เอ6 / บี5) map the same way; other sizes still hand off', () => {
+    expect(sizes).toMatch(/เอ6|เอ 6/);
+    expect(sizes).toMatch(/บี5|บี 5/);
+    expect(sizes).toMatch(/A7[^\n]*ส่งต่อทีมงาน/);
+  });
+  it('halving the quantity is tool-parameter prep, not price arithmetic', () => {
+    expect(sizes).toMatch(/จำนวน[^\n]*ไม่ใช่[^\n]*ราคา|เตรียม[^\n]*เครื่องมือ/);
+  });
+  it('binding: glue/saddle are standard and never asked; ring adds a fixed line the model must not sum', () => {
+    expect(binding).toMatch(/ไสกาว[^\n]*มุงหลังคา[^\n]*ไม่ต้องถาม/);
+    expect(binding).toContain('ขอบกาว');
+    expect(binding).toContain('เข้าเล่มสันห่วงเพิ่มเล่มละ 15 บาท (ยังไม่รวมในราคาด้านบน)');
+    expect(binding).toMatch(/สันห่วง[^\n]*ห้ามบวก/);
+  });
+  it('hard cover and thread sewing are named in the hand-off list and win over the nearest-paper rule', () => {
+    expect(handoff).toContain('ปกแข็ง');
+    expect(handoff).toContain('เย็บกี่');
+    expect(p).toMatch(/ปกแข็ง[^\n]*ส่งต่อก่อน[^\n]*ไม่ถามกระดาษ/);
+  });
+  it('gram-only paper (e.g. 75 gram) offers the in-list neighbours instead of handing off', () => {
+    expect(p).toMatch(/บอกแค่แกรม[^\n]*Bond 70[^\n]*Bond 80[^\n]*Green Read 75/);
+  });
+  it('lead-time / shipping: fixed no-number sentence that does not close AI mode', () => {
+    expect(p).toContain(LEAD);
+    expect(p).toMatch(/เวลาผลิต[^\n]*ค่าส่ง[^\n]*ไม่มีตัวเลข|ไม่มีตัวเลข[^\n]*เวลาผลิต/);
+    expect(detectCustomerEscalation(0, LEAD)).toBe(false);
+    expect(detectCustomerEscalation(0, `💰 ใบปลิว A4 500 ใบ → ใบละ 1.20 บาท (ยังไม่รวม VAT 7%)\n${LEAD}`)).toBe(false);
+  });
+  it('no thinking aloud, no preamble, no spec echo', () => {
+    expect(p).toMatch(/ห้าม[^\n]*ย่อหน้าวิเคราะห์/);
+    expect(p).toContain('ตอนนี้ลูกค้าไม่ได้บอกว่า');   // the ❌ example from s33-t0
+    expect(p).toMatch(/ห้ามเกริ่น[^\n]*รับทราบค่ะ/);
+  });
+  it('namecard: both prices stay on one 💰 line even with a quantity; box-count soft-ask is an ask', () => {
+    expect(p).toContain('กล่องละ X × 2 = Y บาท');
+    expect(p).toContain('ห้ามแยกบรรทัดต่อแบบ');
+    expect(namecard).toContain('บอกจำนวนกล่องได้เลย');
+    expect(namecard).toMatch(/ถือเป็นการถามจำนวน/);
+    expect(namecard).not.toMatch(/\d{2,} ?บาท/);
+  });
+  it('brochure with type + qty known never asks gram/colour/sides (worked example from s69)', () => {
+    expect(p).toContain('อาร์ตมัน');
+    expect(p).toMatch(/อาร์ตมัน[^\n]*Art 120/);
+  });
+  it('"ระบบ" joins the internal-vocabulary ban; dash bullets are markdown', () => {
+    expect(p).toContain('คำว่า "ระบบ"');
+    expect(p).toContain('ขีด "-" ต้นบรรทัด');
+  });
+  it('prompt grew by at most ~30 lines', () => {
+    expect(p.split('\n').length).toBeLessThanOrEqual(185);
+  });
+});
