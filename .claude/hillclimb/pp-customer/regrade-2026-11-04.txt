@@ -1,0 +1,30 @@
+regrade 2026-11-04 (hard metrics, new grader 1290dc4 + Task2 labels)
+
+--- baseline (dry-run == --write) ---
+s100-t6 rep0: pass 1→0, asks 1→0
+s100-t6 rep1: pass 1→0, asks 1→0
+s57-t2 rep0: tool_spec 1→0
+s57-t2 rep1: tool_spec 1→0
+s27-t4 rep1: pass 1→0, format 1→0
+s27-t4 rep0: pass 1→0, format 1→0
+s41-t2 rep0: asks 0→1
+s41-t2 rep1: outcome 0→1, asks 0→1
+s65-t6 rep0: pass 1→0, format 1→0
+s83-t2 rep0: pass 1→0, format 1→0
+s107-t0 rep0: pass 1→0, format 1→0, asks 1→0
+s42-t0 rep0: pass 1→0, format 1→0
+s106-t4 rep0: format 1→0
+s50-t0 rep0: pass 0→1, prices 0→1
+baseline: 14 row(s) changed · pass 126/136 → 119/136
+wrote .claude/hillclimb/pp-customer/baseline/results.jsonl
+--- v1 ---
+s32-t2 rep0: pass 1→0, format 1→0
+s57-t2 rep0: pass 1→0, outcome 1→0, tool_spec 1→0
+s57-t2 rep1: tool_spec 1→0
+s41-t2 rep1: asks 0→1
+s41-t2 rep0: asks 0→1
+s95-t6 rep1: pass 1→0, format 1→0
+s106-t4 rep1: format 1→0
+s50-t0 rep1: pass 0→1, prices 0→1
+v1: 8 row(s) changed · pass 117/136 → 115/136
+wrote .claude/hillclimb/pp-customer/v1/results.jsonl
