@@ -304,3 +304,31 @@ describe('customer prompt — round-2 policy: sizes, binding, lead-time, format 
     expect(p.split('\n').length).toBeLessThanOrEqual(185);
   });
 });
+
+describe('customer prompt — round-2 v3 fixes (2026-11-05)', () => {
+  const ready = p.split('## ⭐ เกณฑ์ "ครบพอตีราคา"')[1]?.split('\n## ')[0] ?? '';
+  const lead = p.split('## ลูกค้าถามเวลาผลิต / ค่าส่ง')[1]?.split('\n## ')[0] ?? '';
+  const namecard = p.split('## นามบัตร — กฎเฉพาะ')[1]?.split('\n## ')[0] ?? '';
+
+  it('art-paper-without-gram default is scoped to single-sheet brochures only', () => {
+    expect(ready).toMatch(/ใบปลิว[^\n]*อาร์ตมัน[^\n]*Art 120|อาร์ตมัน[^\n]*Art 120[^\n]*ใบปลิว/);
+    expect(ready).toMatch(/Art 120[^\n]*(ไม่ใช้กับ|ยกเว้น)[^\n]*(งานเล่ม|หนังสือ)/);
+  });
+  it('a bound job described as "แบบเล่ม … เคลือบมัน" still asks the inner gram (worked example from s75-t0)', () => {
+    expect(ready).toMatch(/แบบเล่ม[^\n]*เคลือบมัน[^\n]*ถาม[^\n]*แกรม/);
+    expect(ready).toContain('โบรชัวร์แบบเล่ม');
+    expect(ready).toMatch(/แบบเล่ม[^\n]*(= |คือ)?หนังสือ/);
+  });
+  it('lead-time sentence is used only when the customer asks', () => {
+    expect(lead).toMatch(/เฉพาะเมื่อลูกค้าถาม/);
+    expect(lead).toMatch(/ไม่ได้ถาม[^\n]*ห้ามใส่/);
+  });
+  it('namecard replies never mention box counts, even as an explanation', () => {
+    expect(namecard).toMatch(/ห้ามพูดถึง[^\n]*จำนวนกล่อง/);
+    expect(namecard).toContain('คิดตามจำนวนกล่องของแต่ละแบบ');
+    expect(namecard).not.toMatch(/\d{2,} ?บาท/);
+  });
+  it('prompt stays within the cap', () => {
+    expect(p.split('\n').length).toBeLessThanOrEqual(185);
+  });
+});
