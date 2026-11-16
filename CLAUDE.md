@@ -59,7 +59,7 @@
 - Phase 3.3 ✅ — Calendar port
 - Phase 3.4 ✅ — Archive port
 - Phase 3.5.1-3.5.8 ✅ + 3.5.5b/3.5.7b deferred — Kanban + write actions
-- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — ✅ merged เข้า `main` 2026-11-16 (PR #29, merge commit `a716b31`) หลัง flag · **ยังไม่ตั้ง env / ยังไม่ migrate / ยังไม่เปิด flag = `/order` ยังปิด** (ลำดับเปิดใช้: NEXT-SESSION 2026-11-16) — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
+- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — ✅ merged เข้า `main` 2026-11-16 (PR #29, merge commit `a716b31`) หลัง flag · **key ตั้งแล้ว + migrate แล้ว + เชื่อม Peak แล้ว (2026-11-16) · ยังไม่ตั้ง group id / ยังไม่เปิด flag = `/order` ยังปิด** (ลำดับเปิดใช้: NEXT-SESSION 2026-11-16) — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
 - Phase 2.3 — WP UI parity (sidebar + KPI bar + dept icon-headers + filter chips + inline bulk-mode) — Stage A+B+C ✅, Stage D in progress
 - §13 Archive port ✅ (2026-09-05) — /archive อ่าน Postgres, Apps Script client ถอดแล้ว; §15 = คุณนุ๊กถอด env + archive deployment → ลบโปรเจกต์หลัง soak 7 วัน
 
