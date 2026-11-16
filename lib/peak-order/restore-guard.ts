@@ -1,4 +1,5 @@
 import 'server-only';
+import { randomBytes } from 'node:crypto';
 import { sql } from '@/lib/postgres';
 import { peakOrderDb, type PeakOrderDb } from '@/lib/peak-order/db';
 
@@ -38,7 +39,7 @@ export interface PeakMarker {
   lineKeys: string[];
 }
 
-/** The order's Peak line(s) belong to another live work order, or to an `/order` claim in flight (`otherOrderId` null). */
+/** The order's Peak line(s) belong to another live work order, or to a claim in flight — `/order` or another restore (`otherOrderId` null). */
 export class PeakLineTakenError extends Error {
   constructor(
     readonly qoCode: string,
@@ -95,7 +96,12 @@ export async function claimPeakLinesForRestore(
   const marker = await deps.readMarker(orderId);
   if (!marker) return null;
 
-  const claimId = `restore:${jobId}`; // draft ids are base64url — no ':' — so this never collides with one
+  // Unique per request. claimLines releases the CALLER's rows when it fails,
+  // so two restores of the same job (double click, two tabs) sharing one id
+  // would let the loser delete the winner's claim and open the line to
+  // /order before the winner's write lands. Draft ids are base64url without
+  // ':', so a restore id never collides with one.
+  const claimId = `restore:${jobId}:${randomBytes(6).toString('base64url')}`;
   const claimed = await deps.db.claimLines(marker.code, marker.lineKeys, claimId, by);
   if (!claimed) {
     const holder = (await deps.db.liveLinks(marker.code)).filter((l) => marker.lineKeys.includes(l.lineKey));
@@ -106,9 +112,18 @@ export async function claimPeakLinesForRestore(
   // Same rule as every /order takeover: a live order may carry the line in
   // its marker without a link row. The order being restored is still dead
   // here (its cancelled row is not deleted yet), so a hit is another order.
-  const live = await deps.db.findOrderByPeakMarker(marker.code, marker.lineKeys);
+  // From here on the claim is ours: never leave it behind on the way out
+  // (best effort — a release that fails lapses by itself after 2 minutes).
+  const release = () => deps.db.releaseClaim(marker.code, claimId).catch(() => {});
+  let live: { id: number; status: string } | null;
+  try {
+    live = await deps.db.findOrderByPeakMarker(marker.code, marker.lineKeys);
+  } catch (err) {
+    await release();
+    throw err;
+  }
   if (live && live.id !== orderId) {
-    await deps.db.releaseClaim(marker.code, claimId);
+    await release();
     throw new PeakLineTakenError(marker.code, live.id);
   }
 
@@ -128,7 +143,8 @@ export async function settlePeakRestore(
 /** The 409 text for the /cancelled page. */
 export function peakLineTakenMessage(err: PeakLineTakenError): string {
   if (err.otherOrderId === null) {
-    return `กู้คืนไม่ได้ตอนนี้ — มีคนกำลังเปิดงานจากใบเสนอราคา ${err.qoCode} ในกลุ่ม LINE อยู่ · รอ 2 นาทีแล้วลองใหม่`;
+    // The holder is a claim in flight: an /order tap in the LINE group, or another restore.
+    return `กู้คืนไม่ได้ตอนนี้ — มีคนกำลังเปิดงานหรือกู้คืนงานจากใบเสนอราคา ${err.qoCode} อยู่ · รอ 2 นาทีแล้วลองใหม่`;
   }
   return (
     `กู้คืนไม่ได้ — รายการนี้ของใบเสนอราคา ${err.qoCode} ถูกเปิดเป็นใบสั่งงานใหม่ #${err.otherOrderId} แล้ว · ` +

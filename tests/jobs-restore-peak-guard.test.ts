@@ -161,7 +161,9 @@ describe('POST /api/jobs/restore — Peak quotation line guard', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, id: JOB });
-    expect(heldDuringWrite).toEqual([expect.objectContaining({ lineKey: 'L1', orderId: null, draftId: `restore:${JOB}` })]);
+    expect(heldDuringWrite).toEqual([
+      expect.objectContaining({ lineKey: 'L1', orderId: null, draftId: expect.stringMatching(/^restore:9001:[\w-]{8,}$/) }),
+    ]);
     expect(h.db.links).toEqual([expect.objectContaining({ lineKey: 'L1', orderId: OLD })]);
     expect(auditMock).toHaveBeenCalledTimes(1);
   });
@@ -190,14 +192,27 @@ describe('POST /api/jobs/restore — Peak quotation line guard', () => {
     expect(JSON.stringify(errSpy.mock.calls)).not.toContain('connection terminated');
   });
 
-  it('an order that did not come from Peak is restored exactly as before — no link is touched', async () => {
-    seed({ orders: { [OLD]: { name: 'งานทั่วไป', status: 'sent', jobCancelled: true } }, links: [] });
+  it('an order that did not come from Peak is restored exactly as before — the link tables are never touched', async () => {
+    // peak_order_* may not exist yet (migration not run): every call on them throws here.
+    const orders = new Map([[OLD, { name: 'งานทั่วไป', status: 'sent', jobCancelled: true }]]);
+    h.db = new Proxy(
+      { orders },
+      {
+        get: (t, key) =>
+          key === 'orders'
+            ? t.orders
+            : () => {
+                throw new Error(`peak_order_* touched: ${String(key)}`);
+              },
+      },
+    ) as unknown as typeof h.db;
+    restoreMock.mockResolvedValue({ ok: true });
 
     const res = await POST(mkReq({ id: JOB }));
 
     expect(res.status).toBe(200);
     expect(restoreMock).toHaveBeenCalledWith(expect.objectContaining({ id: JOB, orderId: OLD, name: 'ไวนิล 1x2 เมตร' }));
-    expect(h.db.links).toEqual([]);
+    expect(h.markerReads).toBe(1);
   });
 
   it('a job without a parent order never asks about a quotation', async () => {

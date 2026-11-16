@@ -279,7 +279,10 @@ function RestoreButton({
       // The row only has room for "ผิดพลาด" (reason in a hover tooltip). Show
       // the reason in a dialog as well so it can be read on touch screens —
       // e.g. the Peak guard's "ยกเลิกใบ #… ก่อน" tells the admin what to do next.
-      void confirmDlg.confirm({ title: 'กู้คืนไม่ได้', message: msg, okLabel: 'รับทราบ', cancelLabel: 'ปิด', variant: 'warn' });
+      // Closing the dialog brings the button back: several reasons ask for a retry.
+      void confirmDlg
+        .confirm({ title: 'กู้คืนไม่ได้', message: msg, okLabel: 'รับทราบ', cancelLabel: 'ปิด', variant: 'warn' })
+        .then(() => setError(null));
       return;
     }
     // broadcastWrite triggers a delta poll on this hook's BroadcastChannel

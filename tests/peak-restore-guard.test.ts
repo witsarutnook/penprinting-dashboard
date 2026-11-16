@@ -31,6 +31,7 @@ const QO = 'QO-20261100012';
 const OLD = 501; // the order whose job is being restored
 const NEW = 502; // the order /order opened after the cancel
 const JOB = 9001;
+const CLAIM_ID = /^restore:9001:[\w-]{8,}$/; // unique per request
 
 let nowMs = 1_800_000_000_000;
 
@@ -76,18 +77,26 @@ beforeEach(() => {
 });
 
 describe('claimPeakLinesForRestore', () => {
-  it('an order that did not come from a Peak quotation needs no claim', async () => {
-    const { db, deps } = setup({ orders: { [OLD]: { name: 'งานทั่วไป', status: 'sent', jobCancelled: true } } });
+  it('an order that did not come from a Peak quotation needs no claim — the link tables are never touched', async () => {
+    const { deps } = setup({ orders: { [OLD]: { name: 'งานทั่วไป', status: 'sent', jobCancelled: true } } });
+    // The peak_order_* tables may not exist yet: any call on them must not happen.
+    const untouchable = new Proxy(
+      {},
+      {
+        get: (_t, key) => () => {
+          throw new Error(`peak_order_* touched: ${String(key)}`);
+        },
+      },
+    ) as RestoreGuardDeps['db'];
 
-    expect(await claimPeakLinesForRestore(OLD, JOB, 'นุ๊ก', deps)).toBeNull();
-    expect(db.links).toEqual([]);
+    expect(await claimPeakLinesForRestore(OLD, JOB, 'นุ๊ก', { ...deps, db: untouchable })).toBeNull();
   });
 
   it('takes its own line back, and after the restore the line belongs to the order again', async () => {
     const { db, deps } = setup({ orders: { [OLD]: oldOrder() }, links: [link('L1', OLD, 'dOld')] });
 
     const claim = await claimPeakLinesForRestore(OLD, JOB, 'นุ๊ก', deps);
-    expect(claim).toEqual({ qoCode: QO, claimId: `restore:${JOB}`, orderId: OLD });
+    expect(claim).toEqual({ qoCode: QO, claimId: expect.stringMatching(CLAIM_ID), orderId: OLD });
 
     db.orders.get(OLD)!.jobCancelled = false; // restoreJobInPostgres deleted the cancelled row
     await settlePeakRestore(claim!, true, deps);
@@ -103,6 +112,45 @@ describe('claimPeakLinesForRestore', () => {
 
     // OLD is still dead here (its cancelled row is not deleted yet).
     expect(await db.claimLines(QO, ['L1'], 'dNew', 'กิ๊ฟ')).toBe(false);
+  });
+
+  it("a second restore of the same job cannot knock out the first one's claim", async () => {
+    // Two admins / two tabs press กู้คืน on the same row. The loser's failed
+    // claim releases ITS OWN rows — with a shared claim id that would delete
+    // the winner's claim and let /order in before the winner's write lands.
+    const { db, deps } = setup({ orders: { [OLD]: oldOrder() }, links: [link('L1', OLD, 'dOld')] });
+
+    const first = await claimPeakLinesForRestore(OLD, JOB, 'นุ๊ก', deps);
+    const err = await expectTaken(claimPeakLinesForRestore(OLD, JOB, 'กิ๊ฟ', deps));
+
+    expect(err.otherOrderId).toBeNull();
+    expect(db.links).toEqual([expect.objectContaining({ lineKey: 'L1', orderId: null, draftId: first!.claimId })]);
+    expect(await db.claimLines(QO, ['L1'], 'dNew', 'กิ๊ฟ')).toBe(false); // /order is still kept out
+  });
+
+  it('gives the line back when the marker lookup itself fails', async () => {
+    const { db, deps } = setup({ orders: { [OLD]: oldOrder() }, links: [link('L1', OLD, 'dOld')] });
+    db.findOrderByPeakMarker = async () => {
+      throw new Error('connection terminated');
+    };
+
+    await expect(claimPeakLinesForRestore(OLD, JOB, 'นุ๊ก', deps)).rejects.toThrow('connection terminated');
+
+    expect(restoreRows(db)).toEqual([]);
+  });
+
+  it('still names the other order when releasing its own claim fails', async () => {
+    const { db, deps } = setup({
+      orders: { [OLD]: oldOrder(), [NEW]: { name: 'ไวนิล (ใบใหม่)', status: 'sent', peak: { code: QO, lineKeys: ['L1'] } } },
+      links: [],
+    });
+    db.releaseClaim = async () => {
+      throw new Error('connection terminated');
+    };
+
+    const err = await expectTaken(claimPeakLinesForRestore(OLD, JOB, 'นุ๊ก', deps));
+
+    expect(err.otherOrderId).toBe(NEW);
   });
 
   it('refuses when the line was reopened as another live work order', async () => {
@@ -206,6 +254,7 @@ describe('peakLineTakenMessage', () => {
 
     expect(msg).toContain(QO);
     expect(msg).toContain('2 นาที');
+    expect(msg).toContain('หรือกู้คืน'); // the holder may be another restore, not only /order
     expect(msg).not.toContain('#');
   });
 });
