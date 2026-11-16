@@ -18,10 +18,7 @@ import {
 } from '@/lib/icons';
 import type { OrderSummary } from '@/lib/board';
 import type { Template } from '@/lib/types';
-
-/** Order-form "ผู้สั่งงาน" dropdown options — mirrors WP `ORDERERS` const
- *  in production-monitoring.js:1390. Keep in sync with WP. */
-const ORDERERS = ['นุ๊ก', 'กิ๊ฟ', 'เจี๊ยบ'];
+import { ORDERERS, QTY_UNITS } from '@/lib/order-constants';
 
 interface OrderFormProps {
   open: boolean;
@@ -106,7 +103,6 @@ interface DuplicateInfo {
 type TabKey = 'main' | 'post' | 'assign';
 
 const SIZE_UNITS = ['ซม.', 'นิ้ว', 'มม.'];
-const QTY_UNITS = ['แผ่น', 'ชุด', 'เล่ม', 'กล่อง', 'ถุง', 'ห่อ', 'ชิ้น', 'ซอง', 'แฟ้ม'];
 const PLATE_SIZES = ['ตัด 5', 'ตัด 4', 'ตัด 3'];
 const COVER_COLORS = ['1สี', '2สี', '3สี', '4สี'];
 

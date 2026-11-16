@@ -1,0 +1,8 @@
+{ "PeakQuotations": { "quotations": [ { "resCode": "200", "code": "QO-20260900101", "issuedDate": "20260920", "dueDate": "20261020",
+  "contactCode": "C01890", "status": "Draft", "preTaxAmount": 1500.5, "vatAmount": 105.04, "netAmount": 1605.54,
+  "products": [
+    { "id": "aaaaaaaa-0000-4000-8000-000000000001", "productCode": null, "description": "สติกเกอร์ PVC ขนาด A4\nไดคัท", "quantity": 0.125, "price": 800, "vatType": 3 },
+    { "id": "aaaaaaaa-0000-4000-8000-000000000002", "productCode": "P-100", "description": "นามบัตร 500 ใบ", "quantity": 12.5, "price": 40, "vatType": 3 },
+    { "id": "", "productCode": null, "description": "ค่าออกแบบ", "quantity": 1, "price": 500, "vatType": 3 }
+  ] } ],
+  "resCode": "200" }, "eventType": "Retrieve", "apiType": "ApiQuotation" }

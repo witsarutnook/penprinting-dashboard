@@ -72,4 +72,47 @@ describe('parseLineEvents', () => {
     expect(parseLineEvents(null)).toEqual([]);
     expect(parseLineEvents({})).toEqual([]);
   });
+  describe('peak-order group postbacks', () => {
+    const pb = (source: object, data: string, params?: object) => ({ events: [{
+      type: 'postback', replyToken: 'rtp', source, postback: params ? { data, params } : { data },
+    }] });
+    it('emits a prefixed group postback', () => {
+      expect(parseLineEvents(pb({ type: 'group', groupId: 'G1', userId: 'U1' }, 'po1|x|abc'))).toEqual([{
+        channel: 'line', channelUserId: 'U1', kind: 'postback', postbackData: 'po1|x|abc',
+        postbackParams: { date: undefined }, replyToken: 'rtp', sourceType: 'group', groupId: 'G1',
+      }]);
+    });
+    it('carries params.date from the datetimepicker', () => {
+      const out = parseLineEvents(pb({ type: 'group', groupId: 'G1', userId: 'U1' }, 'po1|x|abc', { date: '2026-11-20' }));
+      expect(out).toHaveLength(1);
+      expect(out[0].kind).toBe('postback');
+      expect(out[0].sourceType).toBe('group');
+      expect(out[0].groupId).toBe('G1');
+      expect(out[0].postbackParams?.date).toBe('2026-11-20');
+    });
+    it('group postback without userId -> channelUserId empty string', () => {
+      const out = parseLineEvents(pb({ type: 'group', groupId: 'G1' }, 'po1|x|abc'));
+      expect(out[0].channelUserId).toBe('');
+    });
+    it('non-string params.date is not forwarded', () => {
+      const out = parseLineEvents(pb({ type: 'group', groupId: 'G1', userId: 'U1' }, 'po1|x|abc', { date: 123 }));
+      expect(out[0].postbackParams?.date).toBeUndefined();
+    });
+    it('drops a non-peak group postback (ai_quote_start)', () => {
+      expect(parseLineEvents(pb({ type: 'group', groupId: 'G1', userId: 'U1' }, 'ai_quote_start'))).toEqual([]);
+    });
+    it('drops a prefixed room postback', () => {
+      expect(parseLineEvents(pb({ type: 'room', roomId: 'R1', userId: 'U1' }, 'po1|x|abc'))).toEqual([]);
+    });
+    it('group image is still dropped', () => {
+      expect(parseLineEvents({ events: [{
+        type: 'message', replyToken: 'rt', source: { type: 'group', groupId: 'G1', userId: 'U1' },
+        message: { type: 'image', id: 'IMG1' },
+      }] })).toEqual([]);
+    });
+    it('1-on-1 postback with params carries postbackParams', () => {
+      const out = parseLineEvents(pb({ type: 'user', userId: 'U5' }, 'po1|x|abc', { date: '2026-11-20' }));
+      expect(out[0].postbackParams).toEqual({ date: '2026-11-20' });
+    });
+  });
 });

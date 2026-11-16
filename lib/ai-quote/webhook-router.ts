@@ -2,6 +2,8 @@
 import type { InboundMessage, ChannelAdapter, OutboundMessage, QuickReply } from './channels/types';
 import { extractOrderId } from './track-flex';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
+import { isOrderCommand } from '@/lib/peak-order/command';
+import { PEAK_ORDER_POSTBACK_PREFIX } from '@/lib/peak-order/postback';
 import type { ThunderVerifyResponse } from './slip';
 import type { ConversationTurn } from './types';
 import type { RunQuoteTurnOutput, ProducedQuote } from './run';
@@ -58,7 +60,7 @@ async function replyCalendarKind(deps: HandleDeps, m: InboundMessage, text: stri
   else await deps.adapter.reply(m, text, CALENDAR_KIND_QUICK_REPLIES);
 }
 
-export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'ignore';
+export type Route = 'slip' | 'track' | 'track-customer' | 'groupid' | 'ai' | 'enter-ai' | 'exit-ai' | 'staff-echo' | 'peak-order' | 'peak-order-postback' | 'ignore';
 
 /** Match the group-id command — e.g. `/groupid`, `/group-id`, `/id` (leading slash
  *  required, case-insensitive). Echoes the LINE group/room id so staff can register
@@ -117,10 +119,16 @@ export function isExitAiKeyword(text: string): boolean {
  *  arms are exercised once Phase 1b-B turns aiEnabled on (kept here so the table is total).
  *  trackEnabled (default true = LINE) gates the command arms — Messenger (1c D1)
  *  passes false: track/groupid text falls through as ordinary text (ai arm / ignore). */
-export function routeInbound(m: InboundMessage, opts: { aiEnabled: boolean; trackEnabled?: boolean }): Route {
+export function routeInbound(
+  m: InboundMessage, opts: { aiEnabled: boolean; trackEnabled?: boolean; peakOrderGroupIds?: string[] },
+): Route {
   // Staff echo (Messenger message_echoes — HINT-1): pure signal, classified
   // before every other arm; independent of aiEnabled/trackEnabled.
   if (m.kind === 'staff-echo') return 'staff-echo';
+  // Peak-order arm: ONLY allow-listed LINE groups (never rooms / 1-on-1 / other groups).
+  const inPeakGroup = m.sourceType === 'group' && !!m.groupId && (opts.peakOrderGroupIds ?? []).includes(m.groupId);
+  if (inPeakGroup && m.kind === 'text' && m.text && isOrderCommand(m.text)) return 'peak-order';
+  if (inPeakGroup && m.kind === 'postback' && m.postbackData?.startsWith(PEAK_ORDER_POSTBACK_PREFIX)) return 'peak-order-postback';
   const trackEnabled = opts.trackEnabled ?? true;
   // Explicit commands work anywhere (1-on-1 and groups/rooms):
   //   /groupid → echo the group id · /track <id> → status card (customers can track in their own group)
@@ -164,6 +172,14 @@ export interface HandleDeps {
   recordSlipCheck?: (ev: { channel: string; looksLikeSlip: boolean; prefilterAnswer: string | null; result: ThunderVerifyResponse | null }) => Promise<void>;
   // 1b-B customer AI arms — absent = flag off / env missing (1b-A behaviour).
   aiCustomer?: CustomerAiDeps;
+  // Peak-order arm (LINE allow-listed groups only) — absent = feature off.
+  peakOrder?: PeakOrderArm;
+}
+
+export interface PeakOrderArm {
+  groupIds: string[];
+  handleText(m: InboundMessage): Promise<void>;
+  handlePostback(m: InboundMessage): Promise<void>;
 }
 
 /** AI-mode lifecycle + hint/suppression gates (table ai_quote_line_modes). */
@@ -221,7 +237,16 @@ export interface CustomerAiDeps extends CustomerModeDeps, CustomerSessionDeps, C
 /** Orchestrate one inbound message → side-effecting reply. Phase 1b-A handles
  *  slip + track; 1b-B wires the customer AI arms via deps.aiCustomer (absent = 1b-A behaviour). */
 export async function handleInbound(m: InboundMessage, deps: HandleDeps): Promise<void> {
-  const route = routeInbound(m, { aiEnabled: deps.aiEnabled, trackEnabled: deps.trackEnabled });
+  const route = routeInbound(m, {
+    aiEnabled: deps.aiEnabled, trackEnabled: deps.trackEnabled, peakOrderGroupIds: deps.peakOrder?.groupIds,
+  });
+  if (route === 'peak-order' || route === 'peak-order-postback') {
+    // Only reachable when deps.peakOrder supplied the group ids; guard anyway.
+    if (!deps.peakOrder) return;
+    if (route === 'peak-order') await deps.peakOrder.handleText(m);
+    else await deps.peakOrder.handlePostback(m);
+    return;
+  }
   if (route === 'staff-echo') {
     // Silent by design: record the takeover, never reply, never touch the engine.
     // Errors are swallowed locally (e.g. webhook fires before the column

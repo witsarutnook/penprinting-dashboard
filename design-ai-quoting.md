@@ -57,6 +57,8 @@ tags: [dashboard, ai, quoting, design-doc]
 
 ## 2. การตัดสินใจเรื่อง PEAK + การแบ่งเฟส
 
+> _อัปเดต 2026-11-14: ต้นทุน/ช่องทาง PEAK เปลี่ยนแล้ว — ระบบเครดิตตั้งแต่ 1 ส.ค. 2026 + เชื่อมผ่าน Peak MCP แทน Open API (ดู §10)_
+
 PEAK Account API มีค่าใช้จ่ายรายปีสูงพอควร (Setup 5,000 + แพ็กเกจ 12,000–30,000/ปี + ต้องอยู่ Pro Plus — รายละเอียด §10). **ข้อสรุปจากการวิเคราะห์: PEAK API ไม่ใช่หัวใจของฟีเจอร์** — มันคือชั้นที่ 3 จาก 3 และเป็นชั้นเดียวที่เสียเงิน. ค่าของ AI 90% อยู่ที่ชั้น 1 (เข้าใจลูกค้า) + ชั้น 2 (คิดราคา) ซึ่งไม่แตะ PEAK
 
 → **ออกแบบให้ decoupled**: Phase 1 ใช้งานได้เต็มโดยไม่จ่ายค่า PEAK API เลย. Phase 2 ค่อยต่อ PEAK ถ้า volume คุ้ม (เกณฑ์ตัดสินใน §10)
@@ -202,8 +204,15 @@ calc.ts อยู่ใน repo `print-calculator-next` แต่ฟีเจอ
 #### 🆔 คำสั่งในกลุ่ม LINE — `/track` + `/groupid`
 - **`/track <เลขใบสั่งงาน>` ใช้ได้ในกลุ่มแล้ว** → ลูกค้าพิมพ์ในกลุ่มของตัวเองเพื่อเช็คสถานะงานได้เลย บอทตอบการ์ดสถานะในกลุ่มนั้น (ไม่ต้องผูก group id ล่วงหน้า) — ใช้ flex/handler เดียวกับแชต 1-1
 - **`/groupid`** (หรือ `/group-id`, `/id`) **ในกลุ่ม** → บอทตอบ group id กลับมา (เผื่ออยากผูกกลุ่มกับระบบ push แจ้งเตือนในอนาคต); พิมพ์ในแชต 1-1 → ตอบ "ใช้ได้เฉพาะในกลุ่ม" ([`webhook-router.ts` `isGroupIdCommand`](lib/ai-quote/webhook-router.ts))
-- `parseLineEvents` เดิม**ทิ้ง** event จาก group/room ทั้งหมด (1-on-1 เท่านั้น) — ตอนนี้ปล่อย **text จาก group/room ผ่าน** (พ่วง `groupId`/`roomId` + `sourceType`); ในกลุ่ม router รับเฉพาะ **คำสั่ง `/track` + `/groupid`** เท่านั้น (รูป/AI ในกลุ่ม → ignore กันสแปม) ([`channels/line.ts`](lib/ai-quote/channels/line.ts))
+- `parseLineEvents` เดิม**ทิ้ง** event จาก group/room ทั้งหมด (1-on-1 เท่านั้น) — ตอนนี้ปล่อย **text จาก group/room ผ่าน** (พ่วง `groupId`/`roomId` + `sourceType`); ในกลุ่ม router รับเฉพาะ **คำสั่ง `/track` + `/groupid`** เท่านั้น (รูป/AI ในกลุ่ม → ignore กันสแปม) — **ยกเว้น `/order` จากกลุ่มพนักงานที่ allow-list ไว้** (หัวข้อถัดไป) ([`channels/line.ts`](lib/ai-quote/channels/line.ts))
 - ⚙️ **ต้องตั้งใน LINE Developers console**: เปิด "Allow bot to join group chats" + เชิญบอทเข้ากลุ่ม → webhook ถึงจะส่ง group event มา
+
+#### 🧾 คำสั่ง `/order` — เปิดใบสั่งงานจากใบเสนอราคา Peak (กลุ่มพนักงานเท่านั้น · 2026-11-14)
+> ⚠️ **สถานะ: สร้างบน branch `feat/peak-order-line` (draft PR [#29](https://github.com/witsarutnook/penprinting-dashboard/pull/29)) หลัง flag — ยังไม่ merge, ยังไม่ deploy, ยังไม่เปิดใช้** (flag `PEAK_ORDER_ENABLED` ปิด). การ merge / migration / ตั้ง env / เปิด flag เป็นของคุณนุ๊ก
+- **ใครใช้ได้**: เฉพาะ **กลุ่ม LINE พนักงานที่ allow-list ไว้** ใน env `PEAK_ORDER_GROUP_IDS` (คั่น comma) และเมื่อ `PEAK_ORDER_ENABLED=true` + ตั้ง `PEAK_TOKEN_ENC_KEY` ครบ — กลุ่มลูกค้า (`/track`), กลุ่มอื่น, room, แชต 1-1 และตอน flag ปิด = พฤติกรรมเดิมทุกประการ (กลุ่ม → `ignore`) ([`routeInbound` ใน `webhook-router.ts`](lib/ai-quote/webhook-router.ts))
+- **ไม่มี LLM**: เป็นบอทคำสั่งล้วน — parser + ค้น Peak MCP (ทูลอ่านอย่างเดียว `get_quotation` / `list_quotation` / `search_contacts`, scope `mcp:read`, 0 เครดิต) + Flex ปุ่ม postback ทีละขั้น (หน่วย → กราฟฟิก → ส่งต่อพิมพ์ → วันส่ง → สรุป) → สร้างใบสั่งงานผ่าน `createOrderFromForm` เดียวกับฟอร์ม
+- รูปแบบ: `/order` (5 ใบล่าสุด) · `/order <เลขใบ | เลขบางส่วน | ชื่อลูกค้า [+คำในชื่องาน]>` · กันซ้ำ **ต่อบรรทัดของใบเสนอราคา**: 1 บรรทัด ↔ ใบสั่งงานที่ยังไม่ถูกยกเลิกได้ใบเดียว (ตาราง `peak_order_links`; "ยกเลิก" ตามนิยามแดชบอร์ด = `status = 'cancelled'` หรือมีแถวใน `cancelled`) · ใบที่เคยเปิดงานแล้ว `/order` ซ้ำได้การ์ดสถานะ (ไม่เริ่มร่างใหม่) · Peak ไม่ตอบ / ค้นนานเกิน 25 วินาที → "Peak ไม่ตอบ" · error อื่นที่ไม่คาดคิด → ตอบว่าระบบขัดข้องชั่วคราว (ไม่เงียบ)
+- รายละเอียด: spec [`docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`](docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md) · code `lib/peak-order/*` + `lib/peak/*` · dashboard-v2 §10 (2026-11-14)
 
 #### 🔒 Acceptance criterion — session ownership / IDOR (audit **M5**, gate ของ 1b)
 ใน Phase 1a ทุก caller = staff ภายใน (admin/sales) → `loadSession` แบบ shared inbox **เป็น design ที่ตั้งใจ ไม่ใช่ช่องโหว่**. IDOR จริงเกิด**เมื่อเปิด LINE** เพราะลูกค้าแต่ละคนถือ `sessionId` ของตัวเอง → ถ้าไม่ผูก owner ลูกค้า A อ่านบทสนทนา/ราคาของลูกค้า B ได้. **ต้องทำตอนสร้าง LINE identity ใน 1b** (ผูกก่อน ไม่ได้ — ยังไม่มี identity model):
@@ -261,26 +270,22 @@ ai_quotes
 - ใช้ Haiku + prompt caching → ต่อ quote **< ~1-2 บาท** แม้ 1,000 quote/เดือน ก็ระดับ "หลักร้อยบาท/เดือน"
 - → **ต้นทุน AI แทบไม่มีนัยสำคัญ**
 
-### PEAK API (ต้นทุนจริง — ยืนยันจากใบเสนอราคา PEAK 2026-04-16)
+### PEAK — ต้นทุนปัจจุบัน: ระบบเครดิต + Peak MCP (อัปเดต 2026-11-14)
 
-**โครงสร้างราคา PEAK API:**
-| รายการ | ราคา | หมายเหตุ |
+> ⚠️ **ฉบับนี้แทนที่การวิเคราะห์ PEAK Open API ของเดือน เม.ย. 2026** (ด้านล่าง) — ตั้งแต่ **1 ส.ค. 2026** PEAK ใช้ระบบเครดิต และเรามีทางเชื่อมต่อผ่าน **Peak MCP** แล้ว (ผลทดสอบจริง 2026-11-14 — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md` §3, §6.0)
+
+| รายการ | ต้นทุน | หมายเหตุ |
 |---|---|---|
-| เงื่อนไขขั้นต่ำ | PEAK **Pro Plus** 12,000 บาท/ปี | ต้องอยู่แพ็กเกจนี้ขึ้นไปก่อน |
-| Initial Setup | **5,000 บาท** | จ่ายครั้งเดียว |
-| API package — Starter | **12,000 บาท/ปี** | 500 รายการ/เดือน (เกิน 2 บาท/รายการ) |
-| API package — Essential | 24,000 บาท/ปี | 1,000 รายการ/เดือน (เกิน 1 บาท) |
-| API package — Pro | 30,000 บาท/ปี | 2,500 รายการ/เดือน (เกิน 0.5 บาท) |
+| **อ่าน / ค้น** (เช่น `get_quotation`, `list_quotation`, `search_contacts`) | **ฟรี** | เฟสแรกของ `/order` ใช้แค่นี้ = **0 เครดิต** |
+| **สร้างเอกสาร** | **1 เครดิต/ใบ** | ยังไม่ใช้ — อยู่ในเฟส 2 ของ spec (สร้างใบเสนอราคาใน Peak ต้องเชื่อมต่อใหม่ด้วย scope `mcp:write` + ยืนยันก่อนสร้างทุกครั้ง) |
+| **แพ็กเกจ PRO Plus** (ที่บริษัทใช้อยู่) | รวม **100 เครดิตฟรี/เดือน** | |
 
-**กฎการนับ transaction (สำคัญมาก):**
-- ✅ **นับ** (1 transaction): POST สร้างเอกสาร, Edit, Approve, Void
-- ❎ **ฟรี ไม่จำกัด**: **GET ทุกอย่าง**, แนบไฟล์, E-Tax, ดึงผังบัญชี
-- → `peak-contacts-proxy` ที่มีอยู่ (GET Contacts) = **ฟรี ไม่กิน quota** — แต่ยังต้องซื้อ package ถึงจะเปิด API ได้
-- รองรับ **Batch** ส่งรวมรายการ ประหยัด quota
+- **ช่องทางเชื่อมต่อ**: ใช้ **Peak MCP** (`mcp.peakaccount.com/mcp`, OAuth 2.1 + PKCE, ขอ scope **`mcp:read`** อย่างเดียว) **แทนแผน Open API (REST + HMAC)** — แผน Open API ถูกตัดทิ้งเพราะต้องทำสัญญา + UAT กับ PEAK ขณะที่ MCP ใช้ได้ทันทีและครอบคลุมพอ (spec §6.0)
+- → ค่าใช้จ่าย PEAK ของ `/order` เฟสนี้ = **0 เครดิต / ไม่มีค่าแพ็กเกจเพิ่ม** ตามที่ spec ระบุ; ตัวเลขเงินสำหรับเฟส 2 ยังไม่ได้วิเคราะห์ในเอกสารนี้
 
-**ต้นทุนรวมปีแรกถ้าทำ Phase 2:** Setup 5,000 + Starter 12,000 + (ถ้ายังไม่ได้อยู่ Pro Plus) 12,000 = **~17,000–29,000 บาทปีแรก**, จากนั้น ~12,000–24,000/ปี
+~~**(superseded 2026-11-14)** การวิเคราะห์เดิม 2026-04-16 จากใบเสนอราคา PEAK Open API: ต้อง PRO Plus 12,000 บาท/ปี + Initial Setup 5,000 บาท + API package Starter/Essential/Pro 12,000/24,000/30,000 บาท/ปี นับ transaction เฉพาะ POST/Edit/Approve/Void (GET ฟรี) — ตัวเลขชุดนี้ใช้กับแผน Open API ที่ตัดทิ้งแล้ว ไม่ใช่ระบบเครดิต~~
 
-### ⚖️ ข้อสรุปต้นทุน-คุ้มทุน
+### ⚖️ ข้อสรุปต้นทุน-คุ้มทุน _(ข้อสรุปเดิม เม.ย. 2026 — อิงแผน Open API ที่ถูกแทนที่แล้ว ดูหมายเหตุด้านบน)_
 
 **สำหรับ AI quoting อย่างเดียว — PEAK API ไม่คุ้ม:**
 - POST ใบเสนอราคา 1 ใบ = 1 transaction. สมมติ ~90 ใบ/เดือน → Starter (500/เดือน) เหลือเฟือ

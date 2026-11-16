@@ -1148,3 +1148,83 @@ describe('handleInbound — Flex send failure falls back to the text equivalent'
     expect(calls).toHaveLength(1);
   });
 });
+
+describe('peak-order routing + dispatch', () => {
+  const grp = (text: string): InboundMessage => ({ ...base, kind: 'text', text, sourceType: 'group', groupId: 'G1' });
+  const room = (text: string): InboundMessage => ({ ...base, kind: 'text', text, sourceType: 'room', roomId: 'R1' });
+  const pbm = (data: string, groupId = 'G1'): InboundMessage =>
+    ({ ...base, kind: 'postback', postbackData: data, sourceType: 'group', groupId });
+
+  it('/order in an allow-listed group -> peak-order', () => {
+    expect(routeInbound(grp('/order QO-1'), { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('peak-order');
+    expect(routeInbound(grp('/order'), { aiEnabled: true, peakOrderGroupIds: ['G1'] })).toBe('peak-order');
+  });
+  it('/order elsewhere behaves exactly as today', () => {
+    expect(routeInbound(grp('/order QO-1'), { aiEnabled: false, peakOrderGroupIds: ['G2'] })).toBe('ignore');
+    expect(routeInbound(grp('/order QO-1'), { aiEnabled: false })).toBe('ignore');
+    expect(routeInbound(grp('/order QO-1'), { aiEnabled: false, peakOrderGroupIds: [] })).toBe('ignore');
+    expect(routeInbound(room('/order QO-1'), { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('ignore');
+    expect(routeInbound(room('/order QO-1'), { aiEnabled: false, peakOrderGroupIds: ['R1'] })).toBe('ignore');
+    expect(routeInbound({ ...base, kind: 'text', text: '/order QO-1' }, { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('ignore');
+    expect(routeInbound({ ...base, kind: 'text', text: '/order QO-1' }, { aiEnabled: true, peakOrderGroupIds: ['G1'] })).toBe('ai');
+  });
+  it('ordinary chatter / look-alikes in an allowed group stay ignored', () => {
+    for (const t of ['สวัสดีครับ', 'order QO-1', '/orders', '/ordering x', 'ขอราคา']) {
+      expect(routeInbound(grp(t), { aiEnabled: true, peakOrderGroupIds: ['G1'] })).toBe('ignore');
+    }
+  });
+  it('prefixed postback: allowed group -> peak-order-postback; otherwise ignore', () => {
+    expect(routeInbound(pbm('po1|x|abc'), { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('peak-order-postback');
+    expect(routeInbound(pbm('po1|x|abc'), { aiEnabled: false, peakOrderGroupIds: ['G2'] })).toBe('ignore');
+    expect(routeInbound(pbm('po1|x|abc'), { aiEnabled: false })).toBe('ignore');
+    expect(routeInbound(pbm('ai_quote_start'), { aiEnabled: true, peakOrderGroupIds: ['G1'] })).toBe('ignore');
+  });
+  it('/track and /groupid in an allowed group are unchanged', () => {
+    expect(routeInbound(grp('/track 202606110'), { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('track');
+    expect(routeInbound(grp('/groupid'), { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('groupid');
+    expect(routeInbound(grp('/track'), { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('track-customer');
+  });
+  it('1-on-1 prefixed postback is not a peak-order route', () => {
+    expect(routeInbound({ ...base, kind: 'postback', postbackData: 'po1|x|abc' }, { aiEnabled: false, peakOrderGroupIds: ['G1'] })).toBe('ignore');
+  });
+
+  function peakDeps() {
+    const handleText = vi.fn(async () => {});
+    const handlePostback = vi.fn(async () => {});
+    const reply = vi.fn(async () => {});
+    const push = vi.fn(async () => {});
+    const deps = {
+      adapter: { reply, push, downloadImage: vi.fn() },
+      aiEnabled: false,
+      peakOrder: { groupIds: ['G1'], handleText, handlePostback },
+    };
+    return { deps, handleText, handlePostback, reply, push };
+  }
+  it('handleInbound -> handleText exactly once, no reply of its own', async () => {
+    const { deps, handleText, handlePostback, reply, push } = peakDeps();
+    const m = grp('/order QO-1');
+    await handleInbound(m, deps as never);
+    expect(handleText).toHaveBeenCalledTimes(1);
+    expect(handleText).toHaveBeenCalledWith(m);
+    expect(handlePostback).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+  it('handleInbound -> handlePostback exactly once, no reply of its own', async () => {
+    const { deps, handleText, handlePostback, reply, push } = peakDeps();
+    const m = pbm('po1|x|abc');
+    await handleInbound(m, deps as never);
+    expect(handlePostback).toHaveBeenCalledTimes(1);
+    expect(handlePostback).toHaveBeenCalledWith(m);
+    expect(handleText).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+  it('handleInbound without deps.peakOrder: /order in a group is ignored, nothing thrown', async () => {
+    const { deps, reply } = peakDeps();
+    const noPeak = { adapter: deps.adapter, aiEnabled: false };
+    await expect(handleInbound(grp('/order QO-1'), noPeak as never)).resolves.toBeUndefined();
+    await expect(handleInbound(pbm('po1|x|abc'), noPeak as never)).resolves.toBeUndefined();
+    expect(reply).not.toHaveBeenCalled();
+  });
+});

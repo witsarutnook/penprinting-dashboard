@@ -1,13 +1,14 @@
 // lib/ai-quote/channels/line.ts
 import 'server-only';
 import crypto from 'node:crypto';
+import { PEAK_ORDER_POSTBACK_PREFIX } from '@/lib/peak-order/postback';
 import type { ChannelAdapter, InboundMessage, OutboundMessage, QuickReply } from './types';
 
 interface LineSource { type?: string; userId?: string; groupId?: string; roomId?: string }
 interface LineMessage { type?: string; text?: string; id?: string }
 interface LineEvent {
   type?: string; replyToken?: string;
-  source?: LineSource; message?: LineMessage; postback?: { data?: string };
+  source?: LineSource; message?: LineMessage; postback?: { data?: string; params?: { date?: string } };
 }
 
 /** Verify LINE webhook signature: base64(HMAC-SHA256(rawBody, secret)) === header.
@@ -47,8 +48,18 @@ export function parseLineEvents(body: unknown): InboundMessage[] {
           text: raw.message!.text!, replyToken: raw.replyToken,
           sourceType: 'group', groupId: src.groupId,
         });
+      } else if (raw.type === 'postback' && typeof raw.postback?.data === 'string'
+        && raw.postback.data.startsWith(PEAK_ORDER_POSTBACK_PREFIX)) {
+        // peak-order flow postbacks only; every other group postback stays dropped
+        const date = raw.postback.params?.date;
+        out.push({
+          channel: 'line', channelUserId: src.userId ?? '', kind: 'postback',
+          postbackData: raw.postback.data,
+          postbackParams: { date: typeof date === 'string' ? date : undefined },
+          replyToken: raw.replyToken, sourceType: 'group', groupId: src.groupId,
+        });
       }
-      continue;   // group → text only (for /groupid)
+      continue;   // group → text (for /groupid, /order) + peak-order postbacks only
     }
     if (src.type === 'room' && src.roomId) {
       if (isText) {
@@ -68,7 +79,11 @@ export function parseLineEvents(body: unknown): InboundMessage[] {
     } else if (raw.type === 'message' && raw.message?.type === 'image' && raw.message.id) {
       out.push({ ...base, kind: 'image', imageMessageId: raw.message.id });
     } else if (raw.type === 'postback' && raw.postback?.data) {
-      out.push({ ...base, kind: 'postback', postbackData: raw.postback.data });
+      const date = raw.postback.params?.date;
+      out.push({
+        ...base, kind: 'postback', postbackData: raw.postback.data,
+        ...(typeof date === 'string' ? { postbackParams: { date } } : {}),
+      });
     }
     // อื่นๆ (sticker/location/follow/...) → ทิ้ง
   }

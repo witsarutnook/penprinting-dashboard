@@ -4,6 +4,13 @@ import { requireSession } from '@/lib/route-helpers';
 import { toISODate } from '@/lib/jobs';
 import { sql } from '@/lib/postgres';
 import { restoreJobInPostgres, appendAuditToPostgres, PostgresWriteError } from '@/lib/postgres-write';
+import {
+  PeakLineTakenError,
+  claimPeakLinesForRestore,
+  peakLineTakenMessage,
+  settlePeakRestore,
+  type PeakRestoreClaim,
+} from '@/lib/peak-order/restore-guard';
 
 export const maxDuration = 30;
 
@@ -20,6 +27,12 @@ interface SrcCancelled {
  * Reads the cancelled row from Postgres (ground truth), reattaches to parent
  * order if any (for due/in dates), then atomically deletes from `cancelled`
  * and inserts into `jobs` via restoreJobInPostgres.
+ *
+ * Peak guard: when the parent order was opened from a Peak quotation
+ * (`/order`), its quotation line may have been reopened as a NEW work order
+ * while this job sat in `cancelled`. The restore first takes the line back
+ * (lib/peak-order/restore-guard.ts) and answers 409 if it cannot — one Peak
+ * line never has two live work orders.
  *
  * Request body: { id, srcCancelled?: { name, dept, staff, orderId } }
  * srcCancelled is used for the client-snapshot sanity check; ground truth
@@ -104,11 +117,43 @@ export async function POST(req: Request) {
     dateIn: toISODate(orderDateIn),
   };
 
+  // Peak guard — before the write. No-op (null) for orders without a Peak marker.
+  let peakClaim: PeakRestoreClaim | null = null;
+  if (cjOrderId) {
+    try {
+      peakClaim = await claimPeakLinesForRestore(cjOrderId, id, session.user);
+    } catch (err) {
+      if (err instanceof PeakLineTakenError) {
+        return NextResponse.json({ error: peakLineTakenMessage(err) }, { status: 409 });
+      }
+      // The check could not run — do not restore on a guess.
+      console.error('[jobs/restore] peak guard failed:', err instanceof Error ? err.name : 'unknown');
+      return NextResponse.json(
+        { error: 'ตรวจสอบใบเสนอราคา Peak ของงานนี้ไม่ได้ — ยังไม่ได้กู้คืน กรุณาลองใหม่อีกครั้ง' },
+        { status: 502 },
+      );
+    }
+  }
+
   try {
     await restoreJobInPostgres(restored);
   } catch (err) {
+    if (peakClaim) {
+      // Give the line back; if this fails too the claim lapses by itself after 2 minutes.
+      await settlePeakRestore(peakClaim, false).catch(() => {});
+    }
     const msg = err instanceof PostgresWriteError ? err.message : err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  if (peakClaim) {
+    try {
+      await settlePeakRestore(peakClaim, true);
+    } catch (err) {
+      // The job IS restored. The claim lapses after 2 minutes and the next
+      // /order on this line adopts the restored order through its marker.
+      console.error('[jobs/restore] peak link finalize failed:', err instanceof Error ? err.name : 'unknown');
+    }
   }
 
   await appendAuditToPostgres({

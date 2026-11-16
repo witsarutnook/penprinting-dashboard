@@ -33,6 +33,7 @@
 | `/analytics` | any role | KPIs + 4 charts (recharts), 60s ISR |
 | `/calendar` | admin | Month grid + Bangkok TZ + mobile vertical list |
 | `/archive` | admin | ค้นใบสั่งงานทุกปีจาก Postgres (ไม่จำกัด 12 เดือน) — §13 2026-09-05 |
+| `/peak` | admin | เชื่อมต่อ Peak MCP + สถานะ + mapping ผู้สั่งงาน LINE — **branch `feat/peak-order-line` ยังไม่ merge** |
 
 ## API routes
 | Route | Method | Auth | Purpose |
@@ -48,6 +49,9 @@
 | `/api/jobs/reassign` | POST | any | Same-dept staff swap |
 | `/api/jobs/cowork` | POST | any | Set co-work list |
 | `/api/orders/add` | POST | admin+sales | Create order + initial job + PIN |
+| `/api/admin/peak/{connect,callback}` | GET | admin | OAuth กับ Peak MCP (PKCE, scope `mcp:read`) — branch, ยังไม่ merge |
+| `/api/admin/peak/{test,staff}` | POST | admin | ทดสอบอ่าน Peak / ลบ mapping LINE user → ผู้สั่งงาน — branch |
+| `/api/cron/peak-keepalive` | GET | `CRON_SECRET` | Cron `30 0 * * *` UTC: refresh token + health + แจ้งกลุ่ม ≤ 1/วัน — branch |
 
 ## Roadmap (current)
 - Phase 3.1 ✅ — scaffold
@@ -55,6 +59,7 @@
 - Phase 3.3 ✅ — Calendar port
 - Phase 3.4 ✅ — Archive port
 - Phase 3.5.1-3.5.8 ✅ + 3.5.5b/3.5.7b deferred — Kanban + write actions
+- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — สร้างบน branch `feat/peak-order-line` (draft PR #29) หลัง flag, **ยังไม่ merge/ไม่ migrate/ไม่เปิด flag** — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
 - Phase 2.3 — WP UI parity (sidebar + KPI bar + dept icon-headers + filter chips + inline bulk-mode) — Stage A+B+C ✅, Stage D in progress
 - §13 Archive port ✅ (2026-09-05) — /archive อ่าน Postgres, Apps Script client ถอดแล้ว; §15 = คุณนุ๊กถอด env + archive deployment → ลบโปรเจกต์หลัง soak 7 วัน
 
@@ -71,6 +76,9 @@ npm run build            # before push
 - `DASHBOARD_AUTH_SECRET` — random ≥32 chars (cookie HMAC)
 - `DASHBOARD_AUTH_USERS` — JSON map password → {role, user}
 - `NEXT_PUBLIC_SENTRY_DSN` (optional) — error tracking
+- `PEAK_ORDER_ENABLED` — `true` เปิด `/order` ในกลุ่ม LINE (ยังไม่ตั้ง = ปิด) — ต้องครบทั้ง 3 ค่า (`PEAK_ORDER_ENABLED=true` + `PEAK_ORDER_GROUP_IDS` + `PEAK_TOKEN_ENC_KEY`) `/order` จึงเปิด; ตัวเดียวไม่พอ
+- `PEAK_ORDER_GROUP_IDS` — LINE group id ที่อนุญาต คั่น comma
+- `PEAK_TOKEN_ENC_KEY` — base64 ของ 32 random bytes (**Sensitive**) เข้ารหัส token Peak
 
 ## Source-of-truth files
 | File | Owns |
@@ -84,6 +92,10 @@ npm run build            # before push
 | [lib/board-delta.ts](lib/board-delta.ts) | `loadBoardDelta` server loader (lists / fullLists modes) |
 | [lib/archive-search.ts](lib/archive-search.ts) | `/archive` all-years search (normalize / escape / `searchArchiveOrders` / `archiveRowState`) |
 | [lib/order-lock.ts](lib/order-lock.ts) | Edit-lock shipped/cancelled (`orderLockReason` / `orderLockMessage`) — ใช้ร่วมโดย `/orders/[id]/edit` + `/api/orders/update` (2026-09-05) |
+| [lib/orders-create.ts](lib/orders-create.ts) | `createOrderFromForm` — ตรรกะสร้างออเดอร์ (ใช้ร่วมโดย `/api/orders/add` + `/order` LINE) |
+| [lib/peak/token-store.ts](lib/peak/token-store.ts) | token Peak เข้ารหัส + single-flight refresh (PATTERNS §12.1) |
+| [lib/peak/mcp-client.ts](lib/peak/mcp-client.ts) · [read.ts](lib/peak/read.ts) | Peak MCP client + ทูลอ่าน 3 ตัว (`get_quotation`/`list_quotation`/`search_contacts`) |
+| [lib/peak-order/db.ts](lib/peak-order/db.ts) · [handler.ts](lib/peak-order/handler.ts) | gate/claim ร่าง `/order` + state machine (PATTERNS §12.2) |
 | [components/nav-config.ts](components/nav-config.ts) | Sidebar + bottom-nav source of truth |
 | [components/dashboard-shell.tsx](components/dashboard-shell.tsx) | Layout wrapper |
 

@@ -13,6 +13,7 @@ import { loadActiveJobsByCustomer } from '@/lib/customer-track';
 import { loadRegistrationByGroup } from '@/lib/registrations';
 import { buildCustomerJobsFlex } from '@/lib/ai-quote/customer-jobs-flex';
 import { createLineSession } from '@/lib/ai-quote/db';
+import { buildPeakOrderArm } from '@/lib/peak-order/deps';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -59,6 +60,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // ตอบ 200 ทันที → ทำงานหนัก (Haiku/Thunder/lookup) ใน after() แล้ว reply via API
   after(async () => {
+    // Off unless PEAK_ORDER_* flags are all set; building it does no I/O and cannot throw.
+    const peakOrder = buildPeakOrderArm(adapter);
     for (const m of messages) {
       try {
         await handleInbound(m, {
@@ -86,6 +89,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             createSessionForUser: createSessionForLineUser,
             anthropic, quoteUrl: quoteUrl!, quoteToken: quoteToken!,
           }) : undefined,
+          peakOrder,
         });
       } catch (err) {
         console.error('[ai-quote/line] handleInbound failed:', err instanceof Error ? err.message : err);

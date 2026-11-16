@@ -37,5 +37,6 @@ export const config = {
     '/quote-leads/:path*',
     '/quote-logs/:path*',
     '/registrations/:path*',
+    '/peak/:path*',
   ],
 };

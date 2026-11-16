@@ -526,6 +526,72 @@ export async function GET() {
     await sql`ALTER TABLE ai_quote_line_modes ADD COLUMN IF NOT EXISTS last_staff_reply_at TIMESTAMPTZ`;
     applied.push('ai_quote_line_modes.last_staff_reply_at column');
 
+    // /order from Peak (2026-11-14): single-row Peak OAuth connection store.
+    // Tokens are AES-256-GCM encrypted (lib/peak/crypto.ts, PEAK_TOKEN_ENC_KEY);
+    // refresh_lock_until = cross-instance single-flight refresh lease;
+    // last_alert_at = once-per-24h "connection broken" alert gate.
+    await sql`
+      CREATE TABLE IF NOT EXISTS peak_oauth (
+        id                 TEXT PRIMARY KEY,
+        client_id          TEXT NOT NULL,
+        access_token_enc   TEXT,
+        refresh_token_enc  TEXT,
+        access_expires_at  TIMESTAMPTZ,
+        scope              TEXT,
+        refresh_lock_until TIMESTAMPTZ,
+        last_ok_at         TIMESTAMPTZ,
+        last_error         TEXT,
+        last_error_at      TIMESTAMPTZ,
+        last_alert_at      TIMESTAMPTZ,
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    applied.push('CREATE TABLE peak_oauth');
+
+    // /order from Peak (2026-11-14): LINE userId → orderer mapping.
+    await sql`
+      CREATE TABLE IF NOT EXISTS peak_order_staff (
+        line_user_id TEXT PRIMARY KEY,
+        orderer      TEXT NOT NULL,
+        display_name TEXT,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    applied.push('CREATE TABLE peak_order_staff');
+
+    // One row per /order draft. Every tap advances it with a conditional
+    // UPDATE … WHERE id AND unit_idx AND step (lib/peak-order/db.ts advanceDraft).
+    await sql`
+      CREATE TABLE IF NOT EXISTS peak_order_drafts (
+        id              TEXT PRIMARY KEY,
+        group_id        TEXT NOT NULL,
+        line_user_id    TEXT NOT NULL,
+        orderer         TEXT NOT NULL,
+        qo_code         TEXT NOT NULL,
+        snapshot        JSONB NOT NULL,
+        mode            TEXT,
+        units           JSONB NOT NULL DEFAULT '[]'::jsonb,
+        unit_idx        INT NOT NULL DEFAULT 0,
+        step            TEXT NOT NULL,
+        creating_kind   TEXT,
+        last_touched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    applied.push('CREATE TABLE peak_order_drafts');
+
+    // Duplicate guard: one Peak quotation line ↔ at most one live work order.
+    // order_id NULL = in-flight claim (taken over after 2 minutes);
+    // order_id → cancelled / missing order = dead, may be re-claimed.
+    await sql`
+      CREATE TABLE IF NOT EXISTS peak_order_links (
+        qo_code    TEXT NOT NULL,
+        line_key   TEXT NOT NULL,
+        order_id   BIGINT,
+        draft_id   TEXT,
+        created_by TEXT,
+        claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (qo_code, line_key)
+      )`;
+    applied.push('CREATE TABLE peak_order_links');
+
     // Quick row counts for confirmation.
     const counts: Record<string, number> = {};
     for (const t of ['audit_log', 'jobs', 'orders', 'shipped', 'cancelled', 'templates', 'ai_quote_sessions', 'ai_quotes', 'ai_quote_turn_flags', 'slip_checks', 'customer_registrations', 'ai_quote_line_modes']) {

@@ -1,0 +1,4 @@
+{ "PeakQuotations": { "quotations": [ { "resCode": "200", "code": "QO-20260900097", "issuedDate": "20260915", "dueDate": "20261015",
+  "contactCode": "C01890", "status": "Approve", "preTaxAmount": 3000, "vatAmount": 210, "netAmount": 3210,
+  "products": [ { "id": "2cfea6c5-a83e-4ae1-91ae-0df093bb5008", "productCode": null, "description": "ไวนิลขนาด 1x2 เมตร\nเจาะรู 4 มุม", "quantity": 10, "price": 300, "vatType": 3 } ] } ],
+  "resCode": "200" }, "eventType": "Retrieve", "apiType": "ApiQuotation" }

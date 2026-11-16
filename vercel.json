@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/morning-report",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/peak-keepalive",
+      "schedule": "30 0 * * *"
     }
   ]
 }
