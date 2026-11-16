@@ -33,7 +33,7 @@
 | `/analytics` | any role | KPIs + 4 charts (recharts), 60s ISR |
 | `/calendar` | admin | Month grid + Bangkok TZ + mobile vertical list |
 | `/archive` | admin | ค้นใบสั่งงานทุกปีจาก Postgres (ไม่จำกัด 12 เดือน) — §13 2026-09-05 |
-| `/peak` | admin | เชื่อมต่อ Peak MCP + สถานะ + mapping ผู้สั่งงาน LINE — **branch `feat/peak-order-line` ยังไม่ merge** |
+| `/peak` | admin | เชื่อมต่อ Peak MCP + สถานะ + mapping ผู้สั่งงาน LINE — merged 2026-11-16 (PR #29) · ใช้ได้หลังตั้ง `PEAK_TOKEN_ENC_KEY` + db-migrate |
 
 ## API routes
 | Route | Method | Auth | Purpose |
@@ -49,9 +49,9 @@
 | `/api/jobs/reassign` | POST | any | Same-dept staff swap |
 | `/api/jobs/cowork` | POST | any | Set co-work list |
 | `/api/orders/add` | POST | admin+sales | Create order + initial job + PIN |
-| `/api/admin/peak/{connect,callback}` | GET | admin | OAuth กับ Peak MCP (PKCE, scope `mcp:read`) — branch, ยังไม่ merge |
-| `/api/admin/peak/{test,staff}` | POST | admin | ทดสอบอ่าน Peak / ลบ mapping LINE user → ผู้สั่งงาน — branch |
-| `/api/cron/peak-keepalive` | GET | `CRON_SECRET` | Cron `30 0 * * *` UTC: refresh token + health + แจ้งกลุ่ม ≤ 1/วัน — branch |
+| `/api/admin/peak/{connect,callback}` | GET | admin | OAuth กับ Peak MCP (PKCE, scope `mcp:read`) |
+| `/api/admin/peak/{test,staff}` | POST | admin | ทดสอบอ่าน Peak / ลบ mapping LINE user → ผู้สั่งงาน |
+| `/api/cron/peak-keepalive` | GET | `CRON_SECRET` | Cron `30 0 * * *` UTC: refresh token + health + แจ้งกลุ่ม ≤ 1/วัน (ข้ามเมื่อ flag ปิดหรือยังไม่เชื่อมต่อ) |
 
 ## Roadmap (current)
 - Phase 3.1 ✅ — scaffold
@@ -59,7 +59,7 @@
 - Phase 3.3 ✅ — Calendar port
 - Phase 3.4 ✅ — Archive port
 - Phase 3.5.1-3.5.8 ✅ + 3.5.5b/3.5.7b deferred — Kanban + write actions
-- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — สร้างบน branch `feat/peak-order-line` (draft PR #29) หลัง flag, **ยังไม่ merge/ไม่ migrate/ไม่เปิด flag** — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
+- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — ✅ merged เข้า `main` 2026-11-16 (PR #29, merge commit `a716b31`) หลัง flag · **ยังไม่ตั้ง env / ยังไม่ migrate / ยังไม่เปิด flag = `/order` ยังปิด** (ลำดับเปิดใช้: NEXT-SESSION 2026-11-16) — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
 - Phase 2.3 — WP UI parity (sidebar + KPI bar + dept icon-headers + filter chips + inline bulk-mode) — Stage A+B+C ✅, Stage D in progress
 - §13 Archive port ✅ (2026-09-05) — /archive อ่าน Postgres, Apps Script client ถอดแล้ว; §15 = คุณนุ๊กถอด env + archive deployment → ลบโปรเจกต์หลัง soak 7 วัน
 

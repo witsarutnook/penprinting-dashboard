@@ -572,7 +572,7 @@ _อัปเดตล่าสุด: 2026-09-17 — added §7.4 (shared semant
 
 ## 12. Integration patterns — external OAuth + LINE group postback (2026-11-14, `feat/peak-order-line`)
 
-> ⚠️ ทั้งสองข้อมาจากฟีเจอร์ `/order` (Peak MCP → ใบสั่งงานผ่านกลุ่ม LINE) ที่สร้างบน branch `feat/peak-order-line` (draft PR [#29](https://github.com/witsarutnook/penprinting-dashboard/pull/29)) — **ยังไม่ merge/ยังไม่ deploy/ยังไม่เปิด flag**; SQL ทั้งหมดยังไม่เคยรันบน Postgres จริง (เทสต์ใช้ mock + fake in-memory) — ยืนยันตอน smoke จริง (ดู NEXT-SESSION 2026-11-14 ☁️)
+> ⚠️ ทั้งสองข้อมาจากฟีเจอร์ `/order` (Peak MCP → ใบสั่งงานผ่านกลุ่ม LINE) ที่สร้างบน branch `feat/peak-order-line` (PR [#29](https://github.com/witsarutnook/penprinting-dashboard/pull/29) — **merged เข้า `main` 2026-11-16 · ยังไม่ migrate/ยังไม่เปิด flag**); SQL ยังไม่เคยรันบน Neon production (เทสต์ใช้ mock + fake in-memory; ผู้ตรวจรอบสุดท้ายรันบน Postgres 16 local) — ยืนยันตอน smoke จริง (ดู NEXT-SESSION 2026-11-16)
 
 ### 12.1 Refresh token แบบ rotate ⇒ DB single-flight + persist-before-use ([lib/peak/token-store.ts](lib/peak/token-store.ts))
 - **ปัญหา**: Peak MCP ออก access token อายุ 1 ชม. และ **refresh token เปลี่ยนตัวใหม่ทุกครั้งที่ใช้ (ตัวเก่าใช้ไม่ได้อีก)**. Vercel มีหลาย lambda instance — สองตัวที่ refresh พร้อมกันด้วย refresh token เดียวกัน ตัวที่สองจะถูกปฏิเสธและ/หรือทำให้การเชื่อมต่อทั้งชุดพัง (ต้องให้คุณนุ๊กล็อกอิน Peak ใหม่)
