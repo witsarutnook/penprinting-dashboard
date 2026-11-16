@@ -603,3 +603,15 @@ _อัปเดตล่าสุด: 2026-09-17 — added §7.4 (shared semant
 - **กับดักที่กัน**: (a) double-tap ✅ / redelivery สร้าง 2 ใบ; (b) สองร่างของใบเดียวกันสร้างพร้อมกัน; (c) retry หลังสร้างแล้วแต่ยังไม่ finalize → ไม่มี marker check ก็สร้างซ้ำ; (d) claim ค้างตลอดกาลหลัง lambda ตาย (ไม่มี TTL); (e) `encodePostback` throw ถ้าค่าไม่เข้า 300 ตัวอักษร → การ์ดต้องไม่ใส่ค่า Peak ที่ไม่ผ่านการ encode ลงปุ่มตรง ๆ
 - **ช่องที่ยังเปิดอยู่ (parked ใน ledger)**: marker อยู่ใน `orders.raw_data` ซึ่ง route แก้ไขของแดชบอร์ดสร้าง snapshot ใหม่จากฟอร์ม → ถ้า lambda ตายหลัง `createOrder` ก่อน `finalizeLinks` **และ** มีคนแก้ order ใบใหม่นั้นก่อนใครแตะซ้ำ retry จะไม่เจอ marker และอาจสร้างใบที่สอง (ต้องตายพร้อมแก้ภายในไม่กี่นาที)
 - **ใช้ซ้ำได้กับ**: flow ปุ่มหลายขั้นใน LINE/Messenger ที่ต้องสร้าง side effect ครั้งเดียว (เฟส 2 สร้างใบเสนอราคาใน Peak = 1 เครดิต/ใบ ยิ่งต้องใช้)
+
+### 12.3 ทาง "ฟื้น" ต้องผ่าน gate เดียวกับทาง "สร้าง" + token ของ claim ไม่ซ้ำต่อ request ([lib/peak-order/restore-guard.ts](lib/peak-order/restore-guard.ts)) (2026-11-16)
+- **ปัญหา**: นิยาม "ใบสั่งงานตาย" ของ §12.2 รวมสถานะที่ **ย้อนกลับได้** — แถว `cancelled` ลบได้ด้วยปุ่มกู้คืน (`restoreJobInPostgres`) → ยกเลิก job จากบอร์ด → `/order` เปิดบรรทัดเดิมเป็นใบใหม่ → กู้คืน job เก่า = 2 ใบ live บนบรรทัดเดียว โดยที่ flow `/order` เองไม่เคยสร้างซ้ำ (1485 tests + mutation + Postgres จริงไม่จับ เพราะทุกเทสต์อยู่ในขอบเขตของ feature).
+- **กฎ**:
+  1. ทุกทางที่ทำให้ของ "ตาย" กลับมา live (restore / undo) ต้อง **claim ผ่าน gate เดียวกับทางสร้าง** (`claimLines`) ก่อนเขียน แล้วรัน marker lookup เหมือน takeover ทุกครั้ง — "เช็คก่อนแล้วค่อยกู้" เหลือช่องระหว่าง look กับ `DELETE`.
+  2. **token ของ claim ไม่ซ้ำต่อ request** (`restore:<jobId>:<random>`) — `claimLines` ปล่อยแถวของ *ผู้เรียก* เมื่อ claim ไม่สำเร็จ; สอง request ที่ใช้ id เดียวกัน (double click / 2 แท็บ) = ผู้แพ้ลบ claim ของผู้ชนะ.
+  3. ถือ claim แล้วต้องปล่อยทุกทางออก (best-effort — ปล่อยไม่ได้ก็หมดอายุเอง 2 นาที แล้ว `/order` ครั้งถัดไป adopt ใบที่กู้คืนผ่าน marker).
+  4. ตัวเช็คเองล่ม = **ไม่กู้** (502) ไม่เดา.
+  5. ของที่ไม่มี marker ห้ามแตะตารางของ feature (`peak_order_*` อาจยังไม่ถูกสร้าง) — เทสต์ด้วย Proxy ที่ throw ทุก method.
+- **วิธีหาช่องแบบนี้**: grep writer ทุกตัวของ column/ตารางที่เงื่อนไข "ตาย" อ่าน (`DELETE FROM cancelled`, `SET status`) ทั้ง repo ไม่ใช่แค่ใน feature; เทสต์ concurrency ให้ครบ 3 คู่: A vs B, **A vs A**, และตัวเช็คล่ม.
+- **ไฟล์**: [lib/peak-order/restore-guard.ts](lib/peak-order/restore-guard.ts) · [app/api/jobs/restore/route.ts](app/api/jobs/restore/route.ts) · เทสต์ `tests/peak-restore-guard.test.ts` + `tests/jobs-restore-peak-guard.test.ts` (รัน guard จริงบน fake ของ link table).
+- **ช่องที่ยังเปิด (มีมาก่อน)**: `restoreJobInPostgres` เป็น 2 statement (INSERT job → DELETE cancelled) — DELETE ล้ม = job กลับขึ้นบอร์ดแต่ order ยังนับว่าตาย · order ที่มีหลาย job ถูกยกเลิกและกู้กลับแค่ตัวเดียวยังนับว่าตายตามนิยาม "มีแถว cancelled".
