@@ -132,23 +132,83 @@ describe('newestQuotations', () => {
     if (p === 2) return quots(rowsOf(51, 100), 120);
     return quots(rowsOf(101, 100 + page3Rows), 120);
   };
-  it('page 1 and last page only when last page has >= n rows', async () => {
+  it('3+ pages: page 1 for the total, then the last two pages; highest document number first', async () => {
     const { reader, calls } = fake(pages(20));
     const r = await reader.newestQuotations({}, 5);
-    expect(calls.map((c) => c.args.page)).toEqual([1, 3]);
+    expect(calls.map((c) => c.args.page)).toEqual([1, 2, 3]);
     expect(r.map((x) => x.code)).toEqual(['QO-120', 'QO-119', 'QO-118', 'QO-117', 'QO-116']);
   });
-  it('also fetches the previous page when last page is short', async () => {
+  it('a short last page still yields n rows (previous page is always in the pool)', async () => {
     const { reader, calls } = fake(pages(2));
     const r = await reader.newestQuotations({}, 5);
-    expect(calls.map((c) => c.args.page)).toEqual([1, 3, 2]);
+    expect(calls.map((c) => c.args.page)).toEqual([1, 2, 3]);
     expect(r.map((x) => x.code)).toEqual(['QO-102', 'QO-101', 'QO-100', 'QO-99', 'QO-98']);
   });
-  it('single page reuses page 1, newest first', async () => {
+  it('single page reuses page 1, highest document number first', async () => {
     const { reader, calls } = fake(() => quots(rowsOf(1, 3), 3));
     const r = await reader.newestQuotations({}, 5);
     expect(calls).toHaveLength(1);
     expect(r.map((x) => x.code)).toEqual(['QO-3', 'QO-2', 'QO-1']);
+  });
+
+  // The order Peak really sends (census on production, 2026-11-17): issue date
+  // ascending, and inside one day the HIGHER document number comes first. So the
+  // tail of the list is the oldest quotation of the newest day, not the newest one.
+  const wireRow = (n: number, issuedDate: string) => ({ ...row(0), code: `QO-202611${String(n).padStart(5, '0')}`, issuedDate });
+  const block = (from: number, to: number, issuedDate: string) => {
+    const out: unknown[] = [];
+    for (let n = from; n >= to; n--) out.push(wireRow(n, issuedDate)); // higher number first, as Peak sends
+    return out;
+  };
+  const wirePages = (all: unknown[]) => (c: Call) => {
+    const p = Number(c.args.page);
+    return quots(all.slice((p - 1) * 50, p * 50), all.length);
+  };
+  const short = (codes: string[]) => codes.map((c) => Number(c.slice(-3)));
+
+  it('prod 2026-11-17: the newest day sits at the tail with its numbers descending -> 120…116, not 110…114', async () => {
+    // 216 rows = 5 pages; page 5 = five rows of 11-16, then 120…110 of 11-17.
+    const older = Array.from({ length: 200 }, (_, i) => ({ ...row(0), code: `QO-202610${String(i + 1).padStart(5, '0')}`, issuedDate: '20261020' }));
+    const all = [...older, ...block(106, 102, '20261116'), ...block(120, 110, '20261117')];
+    expect(all).toHaveLength(216);
+    const { reader } = fake(wirePages(all));
+    expect(short((await reader.newestQuotations({}, 5)).map((x) => x.code))).toEqual([120, 119, 118, 117, 116]);
+    expect(short((await reader.newestQuotations({}, 1)).map((x) => x.code))).toEqual([120]);
+  });
+  it('a page break inside the newest day: the highest numbers are on the page BEFORE the last one', async () => {
+    // 208 rows: page 4 ends with 120, 119, 118; page 5 = 117…110 (8 rows, already >= n).
+    const older = Array.from({ length: 197 }, (_, i) => ({ ...row(0), code: `QO-202610${String(i + 1).padStart(5, '0')}`, issuedDate: '20261020' }));
+    const all = [...older, ...block(120, 110, '20261117')];
+    expect(all).toHaveLength(208);
+    const { reader, calls } = fake(wirePages(all));
+    const r = await reader.newestQuotations({}, 5);
+    expect(calls.map((c) => c.args.page)).toEqual([1, 4, 5]);
+    expect(short(r.map((x) => x.code))).toEqual([120, 119, 118, 117, 116]);
+  });
+  it('two pages: page 1 is reused as the previous page (2 calls)', async () => {
+    const all = [...block(140, 101, '20261110'), ...block(160, 141, '20261117')];
+    expect(all).toHaveLength(60);
+    const { reader, calls } = fake(wirePages(all));
+    const r = await reader.newestQuotations({}, 5);
+    expect(calls.map((c) => c.args.page)).toEqual([1, 2]);
+    expect(short(r.map((x) => x.code))).toEqual([160, 159, 158, 157, 156]);
+  });
+  it('single page in wire order is sorted by document number, not reversed', async () => {
+    const all = [...block(106, 105, '20261116'), ...block(109, 107, '20261117')];
+    const { reader, calls } = fake(wirePages(all));
+    const r = await reader.newestQuotations({}, 5);
+    expect(calls).toHaveLength(1);
+    expect(short(r.map((x) => x.code))).toEqual([109, 108, 107, 106, 105]);
+  });
+  it('a number issued out of date order still ranks by its number (prod: …188 dated before …187)', async () => {
+    const all = [wireRow(186, '20261029'), wireRow(188, '20261029'), wireRow(187, '20261030'), wireRow(15, '20261112')];
+    const { reader } = fake(wirePages(all));
+    expect(short((await reader.newestQuotations({}, 3)).map((x) => x.code))).toEqual([188, 187, 186]);
+  });
+  it('numbers compare as numbers (a longer running number wins), ties and digit-less codes are stable', async () => {
+    const mk = (code: string) => ({ ...row(0), code });
+    const { reader } = fake(() => quots([mk('QO-99'), mk('DRAFT'), mk('QO-100'), mk('QT-100'), mk('QO-7')], 5));
+    expect((await reader.newestQuotations({}, 5)).map((x) => x.code)).toEqual(['QT-100', 'QO-100', 'QO-99', 'QO-7', 'DRAFT']);
   });
   it('total 0 -> [] after one call; n <= 0 -> no call', async () => {
     const a = fake(() => quots([], 0));

@@ -39,7 +39,19 @@ export interface PeakReader {
   /** null = not found. Throws PeakToolError on an unusable payload. */
   getQuotation(code: string): Promise<PeakQuotation | null>;
   listQuotations(q: PeakListQuery & { page: number }): Promise<{ rows: PeakQuotationRow[]; total: number }>;
-  /** Newest first. */
+  /**
+   * The n newest quotations matching `q`, highest document number first (the
+   * order of the "ทั้งหมด" tab on Peak's web).
+   *
+   * Peak's `list_quotation` cannot sort. It sends issue date ascending and, inside
+   * one day, the higher number first (census on production, 2026-11-17) — so the
+   * tail of the list is the oldest quotation of the newest day. This reads the
+   * tail (the last two pages) and orders it by number itself.
+   *
+   * Limit: a quotation whose issue date was set far back — further than the tail
+   * reaches (at least 51 rows) — is not in the pool, even with a high number.
+   * It is still found by searching its number.
+   */
   newestQuotations(q: PeakListQuery, n: number): Promise<PeakQuotationRow[]>;
   getContactName(contactCode: string): Promise<string | null>;
 }
@@ -102,6 +114,19 @@ function toRow(o: Obj): PeakQuotationRow {
   };
 }
 
+/**
+ * Highest document number first — the order of the "ทั้งหมด" tab on Peak's web.
+ * The digits of the code compare as one number (a longer running number wins);
+ * equal digits fall back to the code itself, and a code without digits goes last.
+ */
+export function byCodeDesc(a: PeakQuotationRow, b: PeakQuotationRow): number {
+  const da = a.code.replace(/\D/g, '').replace(/^0+/, '');
+  const db = b.code.replace(/\D/g, '').replace(/^0+/, '');
+  if (da.length !== db.length) return db.length - da.length;
+  if (da !== db) return da < db ? 1 : -1;
+  return a.code < b.code ? 1 : a.code > b.code ? -1 : 0;
+}
+
 function toLines(products: unknown): PeakLine[] {
   if (!Array.isArray(products)) return [];
   const used = new Set<string>();
@@ -157,14 +182,17 @@ export function createPeakReader(client: PeakClient): PeakReader {
       const first = await listPage(q, 1);
       if (first.total <= 0) return [];
       const last = Math.ceil(first.total / PAGE_SIZE);
-      if (last <= 1) return first.rows.slice().reverse().slice(0, n);
-      const lastRows = (await listPage(q, last)).rows;
-      let ordered = lastRows;
-      if (lastRows.length < n) {
-        const prev = (await listPage(q, last - 1)).rows;
-        ordered = [...prev, ...lastRows];
+      // The pool is the tail of the list — its last two pages (51–100 rows), read
+      // together. One page is not enough: the newest day's highest numbers come
+      // first in that day's block, so a page break can leave them on the page before.
+      let pool = first.rows;
+      if (last === 2) {
+        pool = [...first.rows, ...(await listPage(q, 2)).rows];
+      } else if (last >= 3) {
+        const [prev, tail] = await Promise.all([listPage(q, last - 1), listPage(q, last)]);
+        pool = [...prev.rows, ...tail.rows];
       }
-      return ordered.slice().reverse().slice(0, n);
+      return pool.slice().sort(byCodeDesc).slice(0, n);
     },
 
     async getContactName(contactCode) {

@@ -19,6 +19,7 @@
  */
 import type { InboundMessage } from '@/lib/ai-quote/channels/types';
 import type { PeakQuotation, PeakQuotationRow, PeakReader, PeakListQuery } from '@/lib/peak/read';
+import { byCodeDesc } from '@/lib/peak/read';
 import type { DraftRow, LiveLink, PeakOrderDb } from '@/lib/peak-order/db';
 import type { CreateOrderBody, CreateOrderResult, OrderActor } from '@/lib/orders-create';
 import type { PeakOrderDeps } from '@/lib/peak-order/handler';
@@ -199,7 +200,8 @@ export type FakePeak = PeakReader & { calls: Array<{ m: string; a: unknown[] }> 
 /**
  * In-memory PeakReader. Search matches a quotation when searchText is a
  * substring of its code or of its contact's name; dateStart/dateEnd filter on
- * issuedDate. "Newest" = issuedDate desc, then code desc.
+ * issuedDate. `newestQuotations` ranks with the reader's own comparator (highest
+ * document number first), so the fake cannot drift from the real contract.
  */
 export function fakePeak(quotations: PeakQuotation[] = [], contacts: Record<string, string> = {}): FakePeak {
   const calls: Array<{ m: string; a: unknown[] }> = [];
@@ -232,7 +234,7 @@ export function fakePeak(quotations: PeakQuotation[] = [], contacts: Record<stri
     },
     async newestQuotations(q, n) {
       calls.push({ m: 'newestQuotations', a: [q, n] });
-      return match(q).slice(0, n).map(toRow);
+      return match(q).map(toRow).sort(byCodeDesc).slice(0, n);
     },
     async getContactName(contactCode) {
       calls.push({ m: 'getContactName', a: [contactCode] });
