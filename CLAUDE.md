@@ -59,7 +59,7 @@
 - Phase 3.3 ✅ — Calendar port
 - Phase 3.4 ✅ — Archive port
 - Phase 3.5.1-3.5.8 ✅ + 3.5.5b/3.5.7b deferred — Kanban + write actions
-- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — ✅ merged เข้า `main` 2026-11-16 (PR #29, merge commit `a716b31`) หลัง flag · **key ตั้งแล้ว + migrate แล้ว + เชื่อม Peak แล้ว (2026-11-16) · ยังไม่ตั้ง group id / ยังไม่เปิด flag = `/order` ยังปิด** (ลำดับเปิดใช้: NEXT-SESSION 2026-11-16) — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
+- `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — ✅ merged เข้า `main` 2026-11-16 (PR #29, merge commit `a716b31`) · **🟢 เปิดใช้จริง 2026-11-17** (key + migrate + เชื่อม Peak 11/16 · group id 1 กลุ่ม + flag + redeploy 11/17 · refresh token พิสูจน์แล้ว) · "5 ใบล่าสุด" = เลขเอกสารมากสุดก่อน (`29957a2`) · smoke ในกลุ่มจริง: ดูสถานะรายข้อใน NEXT-SESSION 2026-11-17 — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
 - Phase 2.3 — WP UI parity (sidebar + KPI bar + dept icon-headers + filter chips + inline bulk-mode) — Stage A+B+C ✅, Stage D in progress
 - §13 Archive port ✅ (2026-09-05) — /archive อ่าน Postgres, Apps Script client ถอดแล้ว; §15 = คุณนุ๊กถอด env + archive deployment → ลบโปรเจกต์หลัง soak 7 วัน
 
@@ -76,8 +76,8 @@ npm run build            # before push
 - `DASHBOARD_AUTH_SECRET` — random ≥32 chars (cookie HMAC)
 - `DASHBOARD_AUTH_USERS` — JSON map password → {role, user}
 - `NEXT_PUBLIC_SENTRY_DSN` (optional) — error tracking
-- `PEAK_ORDER_ENABLED` — `true` เปิด `/order` ในกลุ่ม LINE (ยังไม่ตั้ง = ปิด) — ต้องครบทั้ง 3 ค่า (`PEAK_ORDER_ENABLED=true` + `PEAK_ORDER_GROUP_IDS` + `PEAK_TOKEN_ENC_KEY`) `/order` จึงเปิด; ตัวเดียวไม่พอ
-- `PEAK_ORDER_GROUP_IDS` — LINE group id ที่อนุญาต คั่น comma
+- `PEAK_ORDER_ENABLED` — `true` เปิด `/order` ในกลุ่ม LINE (ตั้งเป็น `true` แล้ว 2026-11-17; ไม่ตั้ง = ปิด) — ต้องครบทั้ง 3 ค่า (`PEAK_ORDER_ENABLED=true` + `PEAK_ORDER_GROUP_IDS` + `PEAK_TOKEN_ENC_KEY`) `/order` จึงเปิด; ตัวเดียวไม่พอ
+- `PEAK_ORDER_GROUP_IDS` — LINE group id ที่อนุญาต คั่น comma (ตอนนี้ 1 กลุ่ม — กลุ่มที่มีแค่คุณนุ๊ก + กิ๊ฟ; การ์ดแสดงยอดเงิน ต้องทบทวนก่อนเพิ่มกลุ่มอื่น)
 - `PEAK_TOKEN_ENC_KEY` — base64 ของ 32 random bytes (**Sensitive**) เข้ารหัส token Peak
 
 ## Source-of-truth files

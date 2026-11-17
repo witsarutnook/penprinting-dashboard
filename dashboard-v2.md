@@ -49,9 +49,9 @@
 | `components/dashboard-shell.tsx` | Layout wrapper (sidebar + bottom-nav + Toast/Confirm providers) |
 | `components/{toast,confirm}-provider.tsx` | Themed dialogs replacing native `alert/confirm/prompt` |
 | `components/nav-config.ts` | Sidebar + bottom-nav source of truth |
-| `lib/peak/*` | **(branch)** Peak MCP: `oauth.ts` (DCR/PKCE/exchange/refresh) · `crypto.ts` (AES-256-GCM) · `token-store.ts` (ตาราง `peak_oauth`, single-flight refresh) · `mcp-client.ts` (JSON-RPC, SSE/JSON, 404 re-init, 401 refresh) · `read.ts` (ทูลอ่าน 3 ตัว) |
-| `lib/peak-order/*` | **(branch)** `/order` ใน LINE: `command` · `resolve` · `mapper` · `postback` · `db` (ตาราง staff/drafts/links) · `flex` · `handler` · `deps` |
-| `lib/orders-create.ts` + `lib/order-constants.ts` | **(branch)** `createOrderFromForm` (ย้ายตรรกะสร้างออเดอร์ออกจาก `/api/orders/add` — พฤติกรรมเดิม) + `ORDERERS`/`QTY_UNITS` แหล่งเดียว |
+| `lib/peak/*` | Peak MCP: `oauth.ts` (DCR/PKCE/exchange/refresh) · `crypto.ts` (AES-256-GCM) · `token-store.ts` (ตาราง `peak_oauth`, single-flight refresh) · `mcp-client.ts` (JSON-RPC, SSE/JSON, 404 re-init, 401 refresh) · `read.ts` (ทูลอ่าน 3 ตัว; `newestQuotations` = เลขเอกสารมากสุดก่อน — อ่าน 2 หน้าท้ายแล้วเรียงเอง เพราะ Peak sort ไม่ได้) |
+| `lib/peak-order/*` | `/order` ใน LINE: `command` · `resolve` · `mapper` · `postback` · `db` (ตาราง staff/drafts/links) · `flex` · `handler` · `deps` |
+| `lib/orders-create.ts` + `lib/order-constants.ts` | `createOrderFromForm` (ย้ายตรรกะสร้างออเดอร์ออกจาก `/api/orders/add` — พฤติกรรมเดิม) + `ORDERERS`/`QTY_UNITS` แหล่งเดียว |
 | `instrumentation*.ts` + `sentry.*.config.ts` | Sentry init (server / edge / client) |
 
 ### Google Sheet
@@ -108,7 +108,7 @@
 | `/quote-leads` | admin + sales | Lead table จาก AI quote sessions (status + claim) — Phase 1a |
 | `/quote-logs` | admin only | AI conversation log viewer — list ทุก session + filter + แท็บ 🚩 flags (2026-07-20) |
 | `/quote-logs/[id]` | admin only | Transcript บับเบิล + quote cards แทรกไทม์ไลน์ + tag 🚩 "AI ตอบผิด" ต่อข้อความ |
-| `/peak` | admin only | **(merged 2026-11-16 — ใช้ได้หลังตั้ง `PEAK_TOKEN_ENC_KEY` + db-migrate)** สถานะการเชื่อมต่อ Peak (เชื่อมแล้ว/ต่ออายุล่าสุด/error ล่าสุด/scope) + ปุ่ม "เชื่อมต่อ Peak" + "ทดสอบ" + รายการ mapping LINE user → ผู้สั่งงาน (ลบได้) + สถานะ flag `/order` |
+| `/peak` | admin only | **(merged 2026-11-16 · เปิดใช้จริง 2026-11-17)** สถานะการเชื่อมต่อ Peak (เชื่อมแล้ว/ต่ออายุล่าสุด/error ล่าสุด/scope) + ปุ่ม "เชื่อมต่อ Peak" + "ทดสอบ" + รายการ mapping LINE user → ผู้สั่งงาน (ลบได้) + สถานะ flag `/order` |
 
 Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders /shipped /cancelled /quote-assistant /quote-leads /quote-logs /peak` paths — defence-in-depth on top of per-page `verifySession()`. (API routes self-guard ด้วย `requireSession` — ไม่ใส่ใน matcher ตาม convention.)
 
@@ -144,7 +144,7 @@ Middleware (`middleware.ts`) gates `/analytics /calendar /archive /board /orders
 | `/api/admin/db-migrate` | GET | admin | Idempotent schema runner (`CREATE … IF NOT EXISTS` + counts) — รันหลัง deploy ที่เพิ่ม table/index ใหม่ |
 | `/api/admin/peak/connect` | GET | admin | เริ่ม OAuth กับ Peak MCP: เช็ค `PEAK_TOKEN_ENC_KEY` ก่อน → ลงทะเบียน client (DCR, ครั้งแรก) → PKCE + state ใน cookie `pp_peak_oauth` → redirect ไป Peak (scope `mcp:read` เท่านั้น) |
 | `/api/admin/peak/callback` | GET | admin | redirect URI `https://dashboard.penprinting.co/api/admin/peak/callback` — ตรวจ state/cookie → แลก code → เข้ารหัสเก็บ token → กลับ `/peak` (error ทุกแบบ → `/peak?error=…` ไม่ 500 · cookie ถูกล้างเสมอ) |
-| `/api/admin/peak/test` | POST | admin | ปุ่ม "ทดสอบ": อ่านใบเสนอราคาล่าสุด 1 ใบ (ย้อน 30 วัน) → `{ok, latestCode, ms}` — กรณีล้มมีแค่ชื่อ error class |
+| `/api/admin/peak/test` | POST | admin | ปุ่ม "ทดสอบ": อ่านใบเสนอราคาล่าสุด 1 ใบ = เลขเอกสารมากสุด (ย้อน 30 วัน) → `{ok, latestCode, ms}` — กรณีล้มมีแค่ชื่อ error class |
 | `/api/admin/peak/staff` | POST | admin | ลบ mapping LINE user → ผู้สั่งงาน `{lineUserId}` (คนนั้นเลือกชื่อใหม่ตอน `/order` ครั้งถัดไป) |
 | `/api/cron/peak-keepalive` | GET | `CRON_SECRET` (Bearer) | Vercel Cron วันละครั้ง (ข้ามเมื่อ flag ปิดหรือยังไม่เชื่อมต่อ) — บังคับ refresh token + อ่าน 1 ครั้ง + บันทึกสุขภาพ (ไม่พึ่งอายุ refresh token ตอนไม่ได้ใช้ ซึ่งยังไม่ทราบ); ล้ม → push แจ้งกลุ่มแรกใน `PEAK_ORDER_GROUP_IDS` **ไม่เกินวันละครั้ง** (slot 20 ชม.; จองเฉพาะเมื่อมี group id; push ล้ม → คืน slot ให้รอบถัดไปแจ้งได้); ข้ามเงียบถ้า `PEAK_ORDER_ENABLED` ไม่ใช่ `true` หรือยังไม่เชื่อมต่อ · `maxDuration = 60` |
 
@@ -373,7 +373,14 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### 🧾 `/order` — เปิดใบสั่งงานจากใบเสนอราคา Peak ผ่านกลุ่ม LINE ทีม (เฟส 1) — ✅ **merged เข้า `main` 2026-11-16 (merge commit `a716b31`) หลัง flag · key ตั้งแล้ว · migrate แล้ว · เชื่อม Peak แล้ว (2026-11-16) · ยังไม่ตั้ง group id · flag ปิด** (สร้าง 2026-11-14 บน branch `feat/peak-order-line`, PR [#29](https://github.com/witsarutnook/penprinting-dashboard/pull/29), tests 950→1518 บน branch หลัง fix wave + ตัวกันปุ่มกู้งาน · ตรวจซ้ำผ่าน 2026-11-16)
+### 🟢 `/order` เปิดใช้จริง + "5 ใบล่าสุด" เรียงตามเลขเอกสาร + ป้ายปุ่มการ์ดสถานะ (2026-11-17, tests 1518→1525)
+- **Rollout จบ**: refresh token พิสูจน์บน production (12:36 `ok: true`) · คุณนุ๊กตั้ง `PEAK_ORDER_GROUP_IDS` (1 กลุ่ม) + `PEAK_ORDER_ENABLED=true` + redeploy (smoke [44025869863](https://github.com/witsarutnook/penprinting-dashboard/actions/runs/44025869863)) → `/peak` "เปิดใช้งาน". Smoke ในกลุ่มจริงผ่าน: สร้างงาน→บอร์ด · ใบร่างในแดชบอร์ด · หลายรายการแบบแยก · ผู้สั่งงานครั้งแรก · การ์ดสถานะตอนเปิดซ้ำ · แชต 1-1 เงียบ. **ยังไม่ได้ทดสอบ**: แตะ ✅ รัว · ข้ามรายการ · ยกเลิกแล้วเปิดใหม่ · กล่อง "กู้คืนไม่ได้" · เปิดรายการที่เหลือ · เหมือนใบก่อน (NEXT-SESSION 2026-11-17)
+- **🐞 "5 ใบล่าสุด" ไม่ตรงเว็บ Peak** ([`29957a2`](https://github.com/witsarutnook/penprinting-dashboard/commit/29957a2)): ระบบตอบ QO-…110 ทั้งที่มี 111–120. เหตุ: `newestQuotations` กลับลำดับท้ายรายการ บนสมมติฐานจาก probe ว่า Peak "เรียงเก่า→ใหม่เสมอ" — ของจริง (ตัวอ่านชั่วคราวบน production) คือ **วันที่ออก เก่า→ใหม่ แต่ในวันเดียวกันเลขมากมาก่อน** → ท้ายรายการ = ใบเก่าสุดของวันล่าสุด. แก้: อ่าน 2 หน้าท้ายพร้อมกัน (51–100 แถว) แล้วเรียงตามเลขเอกสารเอง (`byCodeDesc`) = ลำดับเดียวกับแท็บ "ทั้งหมด" ของเว็บ Peak ตามที่คุณนุ๊กกำหนด. ยืนยันบน production: "ทดสอบ" ตอบ QO-20261100120 = เลขมากสุด ณ ตอนนั้น (2.15 วิ). ข้อจำกัด: ใบที่ย้อนวันที่ออกไกลเกิน 2 หน้าท้ายไม่ติด "ล่าสุด" (ค้นด้วยเลขยังเจอ)
+- **ป้ายปุ่มการ์ดสถานะ** ([`3eef4e1`](https://github.com/witsarutnook/penprinting-dashboard/commit/3eef4e1)): "เปิดใบร่างในแดชบอร์ด #…" โดน LINE ตัดเป็น "#20261…" บนมือถือ → "เปิดใบร่าง #<id>" (เทสต์ pin ว่าป้ายใบร่างไม่กว้างกว่าป้ายใบสั่งงาน)
+- **ตัวอ่านชั่วคราว** `GET /api/admin/peak/list-order-census` (admin, อ่านอย่างเดียว, คืนแค่เลขใบ + วันที่ออก + ชื่อฟิลด์): เพิ่ม [`3eef4e1`](https://github.com/witsarutnook/penprinting-dashboard/commit/3eef4e1) → ใช้ → ลบ [`5cbc4c8`](https://github.com/witsarutnook/penprinting-dashboard/commit/5cbc4c8) (ไม่ล็อกอินได้ 404). ข้อเท็จจริงที่ได้: 30 วัน = 216 ใบ = 5 หน้า · เฉลี่ย ~1.4 วิ/call · ใบเสนอราคาไม่มีฟิลด์ "แก้ไขล่าสุด" (ทำลำดับแบบแท็บ "อัปเดตล่าสุด" ไม่ได้)
+- Pattern ใหม่: PATTERNS §12.4 (API ภายนอกที่ sort ไม่ได้ — อย่าเดาลำดับ)
+
+### 🧾 `/order` — เปิดใบสั่งงานจากใบเสนอราคา Peak ผ่านกลุ่ม LINE ทีม (เฟส 1) — 🟢 **เปิดใช้จริง 2026-11-17 (entry บน)** · ✅ **merged เข้า `main` 2026-11-16 (merge commit `a716b31`) หลัง flag · key ตั้งแล้ว · migrate แล้ว · เชื่อม Peak แล้ว (2026-11-16) · ยังไม่ตั้ง group id · flag ปิด** (สร้าง 2026-11-14 บน branch `feat/peak-order-line`, PR [#29](https://github.com/witsarutnook/penprinting-dashboard/pull/29), tests 950→1518 บน branch หลัง fix wave + ตัวกันปุ่มกู้งาน · ตรวจซ้ำผ่าน 2026-11-16)
 > 🔄 **Rollout บ่าย 2026-11-16**: คุณนุ๊กตั้ง `PEAK_TOKEN_ENC_KEY` + redeploy (smoke เขียว) · รัน db-migrate (ตารางมีแล้ว) · เชื่อมต่อ Peak 14:59 scope `mcp:read` · "ทดสอบ" บน production ได้ `ok: true` (อ่านใบเสนอราคาล่าสุดได้, 6.4 วินาที). **เหลือ**: `/groupid` → `PEAK_ORDER_GROUP_IDS` + `PEAK_ORDER_ENABLED=true` → redeploy → smoke ในกลุ่มจริง. ระหว่างที่ flag ยังปิด cron `peak-keepalive` ตอบ `skipped: disabled` = ไม่มีอะไรต่ออายุ token; refresh เกิดเองตอนใช้งานครั้งถัดไป ("ทดสอบ" / `/order`) — ถ้าไม่ผ่านให้เชื่อมต่อใหม่. ข้อความด้านล่างเป็นสถานะตอน merge (เที่ยง) — ส่วน "ตารางยังไม่ถูกสร้าง / ยังไม่มี env" ไม่จริงแล้ว.
 >
 > ⚠️ **สถานะ (อัปเดต 2026-11-16)**: merge เข้า `main` แล้วตามคำสั่งคุณนุ๊ก — merge commit [`a716b31`](https://github.com/witsarutnook/penprinting-dashboard/commit/a716b31) · post-deploy smoke run [43816288320](https://github.com/witsarutnook/penprinting-dashboard/actions/runs/43816288320) เขียว 7/7 (headSha ตรง `a716b31`). โค้ดอยู่บน production แต่ **ปิดอยู่**: ตาราง 4 ตัวยังไม่ถูกสร้าง (ยังไม่รัน `/api/admin/db-migrate`); ยังไม่มี env ของฟีเจอร์นี้ใน Vercel; `PEAK_ORDER_ENABLED` ปิด → `/order` **ยังไม่ใช้งานได้**. ขั้นที่เหลือ (env, migrate, เชื่อม Peak, เปิด flag) เป็นของคุณนุ๊ก — ลำดับใน NEXT-SESSION 2026-11-16
