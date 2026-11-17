@@ -278,7 +278,8 @@ export function statusCard(p0: {
     if (ok) {
       footer.push(
         uriButton(
-          o.isDraft ? `เปิดใบร่างในแดชบอร์ด #${o.orderId}` : `เปิดใบสั่งงาน #${o.orderId}`,
+          // Short on purpose: LINE cuts a long button label, and the order id is the part that matters.
+          o.isDraft ? `เปิดใบร่าง #${o.orderId}` : `เปิดใบสั่งงาน #${o.orderId}`,
           `${DASHBOARD_BASE}/orders/${o.orderId}/edit`,
         ),
       );

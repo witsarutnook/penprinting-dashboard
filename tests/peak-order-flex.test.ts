@@ -155,6 +155,20 @@ describe('statusCard', () => {
     const c = statusCard({ qoCode: 'QO-1', customerName: 'x', opened, remaining: [] });
     expect(c.text).toContain('ใบร่าง');
   });
+  it('button labels keep the whole order id visible (prod 2026-11-17: the draft label was cut at "#20261…")', () => {
+    const c = statusCard({
+      qoCode: 'QO-1',
+      customerName: 'x',
+      opened: [{ orderId: 202611092, name: 'คู่มือ', isDraft: false }, { orderId: 202611091, name: 'แผ่นพับ', isDraft: true }],
+      remaining: [],
+    });
+    const uriLabels = actions(c).filter((a) => a.type === 'uri').map((a) => String(a.label));
+    expect(uriLabels).toEqual(['เปิดใบสั่งงาน #202611092', 'เปิดใบร่าง #202611091']);
+    // Width on the card = code points that are not Thai combining marks. The job
+    // label is the one seen to fit on a phone; the draft label must not be wider.
+    const cells = (s: string) => Array.from(s.replace(/[ัิ-ฺ็-๎]/g, '')).length;
+    expect(cells(uriLabels[1])).toBeLessThanOrEqual(cells(uriLabels[0]));
+  });
   it('R4: 400-char code -> no rest button, rows still shown', () => {
     const c = statusCard({ qoCode: 'Q'.repeat(400), customerName: 'x', opened: [], remaining: [{ name: 'ค่าส่ง' }] });
     invariants(c);
