@@ -16,6 +16,7 @@ import type { DraftRow, DraftUnit } from '@/lib/peak-order/db';
 import type { QuotationChoice } from '@/lib/peak-order/resolve';
 import { encodePostback, type OrderPostback } from '@/lib/peak-order/postback';
 import { NO_NAME, addDaysISO, bangkokISODate, firstLine } from '@/lib/peak-order/mapper';
+import { specForUnit } from '@/lib/peak-order/spec-from-text';
 import { ORDERERS, QTY_UNITS } from '@/lib/order-constants';
 import { STAFF } from '@/lib/board';
 import { displayDate } from '@/lib/jobs';
@@ -32,6 +33,7 @@ export const FLEX_LABEL_MAX = 40;
 const ALT_MAX = 400;
 const TEXT_MAX = 4500; // LINE text message limit is 5000
 const LINE_MAX = 160; // description lines in cards
+const SPEC_MAX = 300; // "สเปกที่อ่านได้" line on the summary card
 const MAX_LISTED = 8;
 const BRAND = '#c8553d';
 
@@ -433,6 +435,9 @@ export function summaryCard(d: DraftRow): Card {
   add(p, `ส่งต่อพิมพ์ ${txt(press, 60)}`);
   add(p, `ส่ง ${displayDate(c.dateDue)}`);
   add(p, `ผู้สั่งงาน ${txt(d.orderer, 40)}`);
+  // What the keyword rules read from this line — the same result the order is created with.
+  const spec = clip(specForUnit(q, u.lineKeys).summary, SPEC_MAX);
+  if (spec) add(p, `สเปกที่อ่านได้: ${spec}`, { size: 'sm', color: C.muted });
   add(p, txt(q?.code, 40), { size: 'xs', color: C.muted });
   p.t.push('ตัวเลือก: สร้างงาน / บันทึกเป็นใบร่างในแดชบอร์ด / ยกเลิก');
   p.c.push(

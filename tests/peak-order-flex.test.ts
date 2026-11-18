@@ -457,3 +457,70 @@ describe('FLEX_LABEL_MAX', () => {
     expect([...'📝 บันทึกเป็นใบร่างในแดชบอร์ด'].length).toBeLessThanOrEqual(40);
   });
 });
+
+// ─── spec read from the line text (spec 2026-11-18) ────────────────
+describe('summaryCard — spec that was read', () => {
+  const NOTEBOOK =
+    'สมุดบันทึก ขนาดเอ 5\nเนื้อใน 80 แผ่น(160หน้า)\nกระดาษถนอมสายตา(จริงใจ AA) 75 แกรม พิมพ์ 1 สี-น้ำเงิน\nปก อาร์ทการ์ดหน้าเดียว 350 แกรม พิมพ์ 4 สี\nปกนอกเคลือบลามิเนตด้าน\nเข้าเล่มแบบห่วงลวดกระดูกงู ไดคัทมุม 2 ด้านนอก';
+  const READ =
+    'สเปกที่อ่านได้: ขนาด A5 · ปก อาร์ทการ์ดหน้าเดียว 350 แกรม 4สี · เนื้อใน ถนอมสายตา(จริงใจ AA) 75 แกรม 1สี (น้ำเงิน) · เคลือบด้าน · กระดูกงู';
+  const choices = { qtyUnit: 'เล่ม', graphic: 'pook', press: 'sm74', dateDue: '2026-11-24' };
+  const withLines = (descs: string[], over: Partial<DraftRow> = {}): DraftRow => {
+    const base = mkDraft();
+    return mkDraft({
+      snapshot: {
+        ...base.snapshot,
+        quotation: {
+          ...base.snapshot.quotation,
+          lines: descs.map((description, i) => ({ key: `k${i}`, description, quantity: 1000, price: 1 })),
+        },
+      },
+      units: [mkUnit({ name: 'สมุดบันทึก ขนาดเอ 5', qty: '1000', choices })],
+      step: 'confirm',
+      ...over,
+    });
+  };
+  const texts = (c: Card): string[] => { const out: string[] = []; walk(c.flex, (o) => { if (o.type === 'text') out.push(o.text as string); }); return out; };
+
+  it('one line with a spec: the card shows what was read, after the orderer line (flex and text)', () => {
+    const c = summaryCard(withLines([NOTEBOOK]));
+    invariants(c);
+    const flex = texts(c);
+    expect(flex).toContain(READ);
+    expect(flex.indexOf(READ)).toBeGreaterThan(flex.findIndex((t) => t.startsWith('ผู้สั่งงาน')));
+    const rows = c.text.split('\n');
+    expect(rows).toContain(READ);
+    expect(rows.indexOf(READ)).toBeGreaterThan(rows.findIndex((t) => t.startsWith('ผู้สั่งงาน')));
+  });
+
+  it('nothing read: no such line at all', () => {
+    const c = summaryCard(withLines(['ค่าจัดส่ง']));
+    invariants(c);
+    expect(c.text).not.toContain('สเปกที่อ่านได้');
+    expect(JSON.stringify(c.flex)).not.toContain('สเปกที่อ่านได้');
+  });
+
+  it('merged unit (several lines in one order): no such line', () => {
+    const d = withLines([NOTEBOOK, NOTEBOOK], { mode: 'merged' });
+    d.units = [mkUnit({ lineKeys: ['k0', 'k1'], choices })];
+    const c = summaryCard(d);
+    invariants(c);
+    expect(c.text).not.toContain('สเปกที่อ่านได้');
+  });
+
+  it('split: the spec of the current unit, not of another line', () => {
+    const d = withLines(['ค่าจัดส่ง', NOTEBOOK], { mode: 'split', unitIdx: 1 });
+    d.units = [mkUnit({ lineKeys: ['k0'], choices }), mkUnit({ lineKeys: ['k1'], choices })];
+    expect(summaryCard(d).text).toContain(READ);
+    d.unitIdx = 0;
+    expect(summaryCard(d).text).not.toContain('สเปกที่อ่านได้');
+  });
+
+  it('damaged draft (no snapshot): the card still builds, without the line', () => {
+    const d = withLines([NOTEBOOK]);
+    (d as { snapshot?: unknown }).snapshot = undefined;
+    const c = summaryCard(d);
+    invariants(c);
+    expect(c.text).not.toContain('สเปกที่อ่านได้');
+  });
+});
