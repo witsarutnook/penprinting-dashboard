@@ -152,7 +152,7 @@ describe('specFromText — look-alikes', () => {
     ['พิมพ์ 14 สี', {}],
     ['ใบปลิว A4 สี 2 หน้า', { size: 'A4' }],
     ['โปสเตอร์ เอ 3 สี', { size: 'A3' }],
-    ['ป้าย 3 สีเดียว-ดำ', { innerColor: '1สี', innerColorNote: 'ดำ' }],
+    ['พิมพ์ป้าย 3 สีเดียว-ดำ', { innerColor: '1สี', innerColorNote: 'ดำ' }],
     ['พิมพ์ 4 สี 12 หน้า ขาวดำ 128 หน้า', {}],
     ['ขนาด a4', { size: 'A4' }],
     ['ขนาด 10.5X15 นิ้ว', { size: '10.5x15', sizeUnit: 'นิ้ว' }],
@@ -190,6 +190,111 @@ describe("specFromText — rules from คุณนุ๊ก's review of the real
   });
   it('summary names cover and inner when the whole book has one colour', () => {
     expect(specFromText('หนังสือ A4 พิมพ์ 4 สี ทั้งเล่ม').summary).toBe('ขนาด A4 · ปก 4สี · เนื้อใน 4สี');
+  });
+});
+
+// Wrong fills an independent reviewer found on plausible wording (2026-11-18). Each row failed first.
+describe('specFromText — plausible wording that must not be misread', () => {
+  it.each<[string, string, SpecFields]>([
+    // cover section: binding-type words are not a section; a cover never carries to the next line
+    ['ปกอ่อน is a binding type', 'หนังสือ ปกอ่อน ขนาด A5\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี 200 หน้า\nเข้าเล่มไสกาว',
+      { size: 'A5', paperInner: 'ปอนด์ 80 แกรม', innerColor: '1สี', glue: true }],
+    ['ปกแข็ง line before the paper line', 'photobook ขนาด 26x26 ซม.\nปกแข็ง เคลือบด้าน\nกระดาษอาร์ต 160 แกรม 40 หน้า พิมพ์ 4 สี',
+      { size: '26x26', sizeUnit: 'ซม.', paperInner: 'อาร์ต 160 แกรม', innerColor: '4สี', coatMatte: true }],
+    ['line after a cover line is not the cover', 'หนังสือ A4\nปกอาร์ต 230 แกรม พิมพ์ 4 สี\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี 100 หน้า',
+      { size: 'A4', paperCover: 'อาร์ต 230 แกรม', coverColor: '4สี' }],
+    ['ปกหนัง PU then a paper line', 'สมุดโน้ต A5 ปกหนัง PU\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี', { size: 'A5' }],
+    // coating
+    ['gloss / matte with a slash', 'กระดาษอาร์ต 350g เคลือบเงา/ด้าน', { paperInner: 'อาร์ต 350g' }],
+    ['หรือ far from the word', 'เคลือบลามิเนตด้าน 1 หน้า หรือเงา', {}],
+    ['ด้านหน้า is a side', 'เคลือบด้านหน้า UV', {}],
+    ['ด้านเดียว is a side', 'เคลือบด้านเดียว เงา', {}],
+    ['ด้านนอก is a side', 'เคลือบด้านนอกเงา', {}],
+    ['ไม่ต้องเคลือบ', 'ไม่ต้องเคลือบด้าน', {}],
+    ['ไม่รวมเคลือบ', 'ไม่รวมเคลือบเงา', {}],
+    ['ไม่มีเคลือบ UV', 'ไม่มีเคลือบ UV', {}],
+    ['ไม่มี Spot UV', 'ไม่มี Spot UV', {}],
+    ['UV เฉพาะจุด is spot UV', 'เคลือบ UV เฉพาะจุด', { coatSpotUV: true }],
+    ['ยูวีเฉพาะจุด is spot UV', 'เคลือบยูวีเฉพาะจุด', { coatSpotUV: true }],
+    ['conditional', 'หากเคลือบด้าน เพิ่ม 0.50 บาท/ใบ', {}],
+    ['option list: gloss and matte both named', '- เคลือบเงา 3,500\n- เคลือบด้าน 3,800', {}],
+    ['gloss on two sides', 'เคลือบเงา 2 ด้าน', { coatGloss: true }],
+    // size
+    ['two sizes offered', 'ใบปลิวขนาด A4 หรือ A5', {}],
+    ['two sizes with a slash', 'ขนาด A4/A5', {}],
+    ['two sizes on one line', 'ขนาด 5x5 ซม. และ 3x3 ซม. อย่างละ 500 ดวง', {}],
+    ['envelope size after the product size', 'การ์ดเชิญ A5 พิมพ์ 4 สี\nพร้อมซองขนาด 6.5x9 นิ้ว', { innerColor: '4สี' }],
+    ['foil block size after the product size', 'นามบัตร 9x5.5 ซม.\nปั๊มฟอยล์ทอง ขนาดบล็อก 3x3 ซม.', {}],
+    ['two different sizes each after ขนาด', 'โบรชัวร์ขนาด A4\nพร้อมซองขนาด 6.5x9 นิ้ว', {}],
+    ['1/4 A4', 'ขนาด 1/4 A4', {}],
+    ['2/3 A4', 'ขนาด 2/3 A4', {}],
+    ['1/2 A4', 'ขนาด 1/2 A4', {}],
+    ['ครึ่งหน้า A4', 'ขนาดครึ่งหน้า A4', {}],
+    ['A4 ครึ่งแผ่น', 'ขนาด A4 ครึ่งแผ่น', {}],
+    ['กาง A3 folded to A4', 'ขนาดกาง A3 พับครึ่งเป็น A4', {}],
+    ['กาง A3', 'ขนาดกาง A3', {}],
+    ['mixed fraction 8 1/2', 'ขนาด 8 1/2 x 11 นิ้ว', {}],
+    ['mixed fraction 5 1/2', '5 1/2 x 8 นิ้ว', {}],
+    ['นิ้วครึ่ง', 'ขนาด 2 x 3 นิ้วครึ่ง', {}],
+    ['an opening quote is not inches', 'ป้าย 60x160 "เปิดร้านใหม่"', {}],
+    ['a closing inch mark is inches', 'ขนาด 4x6"', { size: '4x6', sizeUnit: 'นิ้ว' }],
+    ['เอ inside another word', 'หนังสือ ดีเอ็นเอ 5 เล่ม', {}],
+    ['A3+ is not A3', 'ขนาด A3+', {}],
+    // colour count
+    ['4/1', 'พิมพ์ 4/1 สี', {}],
+    ['4+1', 'พิมพ์ 4+1 สี (CMYK + ทอง)', {}],
+    ['1-2', 'พิมพ์ 1-2 สี', {}],
+    ['colours of carbon paper', 'กระดาษคาร์บอน 3 ชั้น 3 สี (ขาว ชมพู ฟ้า)', { paperInner: 'คาร์บอน 3 ชั้น 3 สี (ขาว ชมพู ฟ้า)' }],
+    ['paper colours after the ink count', 'พิมพ์ 1 สี กระดาษคาร์บอน 3 ชั้น 3 สี (ขาว ชมพู ฟ้า)',
+      { innerColor: '1สี', paperInner: 'คาร์บอน 3 ชั้น 3 สี (ขาว ชมพู ฟ้า)' }],
+    ['paper colours right after เนื้อใน', 'สมุดโน้ต\nเนื้อใน กระดาษโน้ต 4 สี (ชมพู ฟ้า เขียว เหลือง)', {}],
+    ['foil colours', 'ปั๊มฟอยล์ 2 สี (ทอง เงิน)', {}],
+    ['sticker colours', 'สติ๊กเกอร์ PVC ขาว ดำ', {}],
+    ['same colour as before', 'พิมพ์สีเดียวกับงานเดิม', {}],
+    ['same colour for both', 'ปกและเนื้อในพิมพ์สีเดียวกัน', {}],
+    // colour name
+    ['rope colour', 'ถุงกระดาษ พิมพ์ 1 สี หูเชือกสีดำ', { innerColor: '1สี' }],
+    ['foil colour', 'พิมพ์ 1 สี ปั๊มฟอยล์สีทอง 1 จุด', { innerColor: '1สี' }],
+    ['parenthesis that is not a colour', 'พิมพ์ 1 สี (ใบเสร็จรับเงิน)', { innerColor: '1สี' }],
+    ['parenthesis with sides', 'พิมพ์ 1 สี (2 หน้า)', { innerColor: '1สี' }],
+    ['two names after a space', 'พิมพ์ 2 สี แดง ดำ', { innerColor: '2สี', innerColorNote: 'แดง ดำ' }],
+    ['two names after a dash', 'พิมพ์ 2 สี-แดง,ดำ', { innerColor: '2สี', innerColorNote: 'แดง,ดำ' }],
+    ['a shade is not copied half', 'พิมพ์ 1 สี น้ำเงินเข้ม', { innerColor: '1สี' }],
+    ['no name for four colours', 'พิมพ์ 4 สี (ทอง)', { innerColor: '4สี' }],
+    ['two different names', 'พิมพ์ 1 สี-ดำ\nพิมพ์ 1 สี-แดง', { innerColor: '1สี' }],
+    // digital
+    ['Digital in a title', 'หนังสือ Digital Marketing 101 ขนาด A5\nพิมพ์ออฟเซ็ท 4 สี', { size: 'A5', innerColor: '4สี' }],
+    ['digital proof', 'ปรู๊ฟดิจิตอล 1 ครั้งก่อนพิมพ์ออฟเซ็ท', {}],
+    ['not digital', 'พิมพ์ออฟเซ็ท (ไม่ใช่ดิจิตอล)', {}],
+    ['พิมพ์ดิจิทัล', 'พิมพ์ดิจิทัล', { digital: true }],
+    // paper
+    ['two weights offered', 'กระดาษอาร์ต 230 แกรม หรือ 260 แกรม', { paperInner: 'อาร์ต 230 แกรม หรือ 260 แกรม' }],
+    ['two weights with a slash', 'กระดาษอาร์ต 230g/260g', { paperInner: 'อาร์ต 230g/260g' }],
+    ['a load, not a paper weight', 'ถุงกระดาษรับน้ำหนักได้ 500 กรัม', {}],
+    ['artwork is not art paper', 'ปก artwork เดิม พิมพ์ 4 สี', { coverColor: '4สี' }],
+    ['paper glued to a verb', 'พิมพ์บนกระดาษอาร์ต 120 แกรม', { paperInner: 'อาร์ต 120 แกรม' }],
+    ['paper name ends at จำนวน', 'กระดาษปอนด์ จำนวน 500 แผ่น', { paperInner: 'ปอนด์' }],
+    ['paper name ends at พิมพ์', 'กระดาษปอนด์ พิมพ์ 1 สี', { paperInner: 'ปอนด์', innerColor: '1สี' }],
+    ['paper name ends at ปริ้น', 'กระดาษปอนด์ ปริ้น 4 สี', { paperInner: 'ปอนด์', innerColor: '4สี' }],
+    ['paper name ends at เคลือบ', 'กระดาษอาร์ต เคลือบเงา', { paperInner: 'อาร์ต', coatGloss: true }],
+    ['paper name ends at ขนาด', 'กระดาษอาร์ต ขนาด A4', { paperInner: 'อาร์ต', size: 'A4' }],
+    ['paper name ends at เข้าเล่ม', 'กระดาษอาร์ต เข้าเล่มไสกาว', { paperInner: 'อาร์ต', glue: true }],
+    ['paper name ends at ไดคัท', 'กระดาษการ์ด ไดคัทตามแบบ', { paperInner: 'การ์ด' }],
+    ['a paper colour after a space is not the ink colour', 'พิมพ์ 1 สี กระดาษการ์ด สีชมพู 150g', { innerColor: '1สี', paperInner: 'การ์ด สีชมพู 150g' }],
+    ['paper text longer than a paper name', 'กระดาษอาร์ต' + 'ก'.repeat(70), {}],
+    // binding
+    ['two bindings offered', 'เข้าเล่มไสกาว หรือ เย็บมุงหลังคา', {}],
+    ['ไม่ปรุ', 'ไม่ปรุ', {}],
+    ['ไม่ไสกาว', 'ไม่ไสกาว', {}],
+    ['roofing company', 'ใบปลิว บริษัทรับมุงหลังคาเมทัลชีท A5', { size: 'A5' }],
+    ['ห่วงลวด alone', 'เข้าเล่มห่วงลวด', { spine: true }],
+    // odd spacing and length
+    ['tabs', 'ขนาด\tA4\tพิมพ์\t4 สี', { size: 'A4', innerColor: '4สี' }],
+    ['cut inside a token: the cut line is not read', 'ก '.repeat(1993) + 'กระดาษอาร์ต 230 แกรม', {}],
+    ['too long: only whole lines before the limit are read', 'ขนาด A4\n' + 'ก '.repeat(1989) + 'กระดาษอาร์ต 230 แกรม\nเคลือบด้าน', { size: 'A4' }],
+    ['zero-width space inside a phrase', 'พิมพ์ 4' + String.fromCharCode(0x200b) + 'สี', { innerColor: '4สี' }],
+  ])('%s', (_name, d, expected) => {
+    expect(specFromText(d).fields).toEqual(expected);
   });
 });
 
