@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSpecSections } from '@/lib/spec-format';
+import { buildSpecSections, specLabel } from '@/lib/spec-format';
 
 /** Find the "อื่นๆ" section's resolved entries. */
 function otherEntries(raw: Record<string, unknown>) {
@@ -38,5 +38,13 @@ describe('buildSpecSections — อื่นๆ staff fields', () => {
   it('falls back to the raw id for an unknown staff id', () => {
     const entries = otherEntries({ assignStaff: 'ghost', forwardPrint: 'sm74' });
     expect(entries.find((e) => e.key === 'assignStaff')!.display).toBe('ghost');
+  });
+});
+
+describe('binding labels match the order form and the printed A4', () => {
+  it('box 4 (spine) is กระดูกงู; sew is เย็บกี่', () => {
+    const binding = buildSpecSections({ spine: true, sew: true }, false).find((s) => s.title === 'เข้าเล่ม');
+    expect(binding?.entries.map((e) => [e.key, e.label])).toEqual([['sew', 'เย็บกี่'], ['spine', 'กระดูกงู']]);
+    expect(specLabel('spine')).toBe('กระดูกงู');
   });
 });

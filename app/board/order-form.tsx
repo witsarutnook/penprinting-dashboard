@@ -1203,7 +1203,7 @@ function PostPressTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
           <CB checked={data.glue} onChange={(c) => patch({ glue: c })} label="ไสกาว" />
           <CB checked={data.saddle} onChange={(c) => patch({ saddle: c })} label="มุงหลังคา" />
-          <CB checked={data.sew} onChange={(c) => patch({ sew: c })} label="เย็บที่" />
+          <CB checked={data.sew} onChange={(c) => patch({ sew: c })} label="เย็บกี่" />
           <CB checked={data.spine} onChange={(c) => patch({ spine: c })} label="กระดูกงู" />
           <CB checked={data.glueHead} onChange={(c) => patch({ glueHead: c })} label="กาวหัว" />
           <CB checked={data.glueSide} onChange={(c) => patch({ glueSide: c })} label="กาวข้าง" />

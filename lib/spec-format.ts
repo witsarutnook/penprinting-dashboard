@@ -77,7 +77,7 @@ export const SPEC_LABELS: Record<string, string> = {
   glue: 'ไสกาว',
   saddle: 'เย็บมุงหลังคา',
   sew: 'เย็บกี่',
-  spine: 'สันธรรมดา',
+  spine: 'กระดูกงู',
   glueHead: 'ทากาวหัว',
   glueSide: 'ทากาวข้าง',
   sewHead: 'เย็บหัว',
