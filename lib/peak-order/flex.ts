@@ -437,7 +437,7 @@ export function summaryCard(d: DraftRow): Card {
   add(p, `ผู้สั่งงาน ${txt(d.orderer, 40)}`);
   // What the keyword rules read from this line — the same result the order is created with.
   const spec = clip(specForUnit(q, u.lineKeys).summary, SPEC_MAX);
-  if (spec) add(p, `สเปกที่อ่านได้: ${spec}`, { size: 'sm', color: C.muted });
+  if (spec) add(p, `สเปกที่อ่านได้: ${spec}`);
   add(p, txt(q?.code, 40), { size: 'xs', color: C.muted });
   p.t.push('ตัวเลือก: สร้างงาน / บันทึกเป็นใบร่างในแดชบอร์ด / ยกเลิก');
   p.c.push(

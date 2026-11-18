@@ -493,6 +493,15 @@ describe('summaryCard — spec that was read', () => {
     expect(rows.indexOf(READ)).toBeGreaterThan(rows.findIndex((t) => t.startsWith('ผู้สั่งงาน')));
   });
 
+  it('the line is as readable as the other summary lines (it is the check before ✅)', () => {
+    const objs: Obj[] = [];
+    walk(summaryCard(withLines([NOTEBOOK])).flex, (o) => { if (o.type === 'text') objs.push(o); });
+    const spec = objs.find((o) => o.text === READ)!;
+    const orderer = objs.find((o) => (o.text as string).startsWith('ผู้สั่งงาน'))!;
+    expect(spec.color).toBe(orderer.color);
+    expect(spec.size).toBe(orderer.size);
+  });
+
   it('nothing read: no such line at all', () => {
     const c = summaryCard(withLines(['ค่าจัดส่ง']));
     invariants(c);
