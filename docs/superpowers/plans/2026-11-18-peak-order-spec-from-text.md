@@ -195,3 +195,24 @@ Spec §10. Same files as Task 1; each change RED first; tests in the describe "r
 - [ ] **Step 3: Push.** Wait for the post-deploy smoke run whose `headSha` is this push.
 - [ ] **Step 4: Production check with คุณนุ๊ก** — `/order` one real quotation in the team group: the summary card shows "สเปกที่อ่านได้"; create; open the order form and compare each filled field with the quotation text; confirm from `/api/orders/raw/<id>`.
 - [ ] **Step 5: Retire** the census route + test; confirm the URL answers 404 on production; docs; commit + push.
+
+### Task 6: Notes without the lines that went into fields (added 2026-11-18 after the real-order check — spec §13)
+
+**Files:**
+- Modify: `lib/peak-order/spec-from-text.ts` (track where each emitted value was read), `lib/peak-order/mapper.ts`
+- Test: `tests/peak-order-spec-from-text.test.ts`, `tests/peak-order-mapper.test.ts`
+- Modify (temporary): `app/api/admin/peak/line-text-census/route.ts` + its test
+
+**Interfaces:**
+- Produces: `linesReadFrom(description: unknown): number[]` (spec-from-text.ts) — 0-based numbers of the lines (split on `\r\n|\r|\n`) whose whole content went into the fields `specFromText` returns; `[]` for anything else; never throws. `specFromText` / `specForUnit` results are unchanged.
+- Produces: `notesBody(description: string, read: readonly number[], name: string): string` (mapper.ts) — the text without the `read` lines and without the first non-empty line when its cleaned text equals `name`; kept lines are untouched; blank runs collapsed.
+
+- [ ] **Step 1:** failing tests — hand-derived read lines for real rows + rows that must keep their line (spec §13 "กันข้อมูลหาย") → implement → every existing test still green.
+- [ ] **Step 2:** `notesBody` test-first. Mutation check on both.
+- [ ] **Step 3:** census returns, per line, the read line numbers and whether line 1 is the name → push (nothing wired) → run on production → table for คุณนุ๊ก. Independent reviewer on the diff, hunting lost information.
+- [ ] **Step 4 (GATE — คุณนุ๊ก):** table approved.
+
+### Task 7: Wire the notes into order creation (only after the Task 6 gate)
+
+- [ ] `buildOrderBody` takes `notes?: string`; handler passes `withRef(notesBody(…), code)` for a unit that is exactly one line; merged units and missing snapshots keep `unit.notes`. Tests in `tests/peak-order-mapper.test.ts` + `tests/peak-order-handler-steps.test.ts` (create, draft, split, merged, missing line).
+- [ ] Push, smoke by headSha, one real `/order` with คุณนุ๊ก, then Task 5 step 5 (retire the census).
