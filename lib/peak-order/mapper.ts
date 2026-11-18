@@ -5,7 +5,7 @@
  */
 import type { PeakQuotation } from '@/lib/peak/read';
 import type { CreateOrderBody } from '@/lib/orders-create';
-import type { SpecFields } from '@/lib/peak-order/spec-from-text';
+import { linesReadFrom, type SpecFields } from '@/lib/peak-order/spec-from-text';
 import { emptyOrderForm } from '@/lib/photobook';
 
 export const NO_NAME = '(ไม่มีชื่อรายการ)';
@@ -130,6 +130,20 @@ export function planUnits(q: PeakQuotation, mode: 'single' | 'merged' | 'split',
   ];
 }
 
+/**
+ * The notes an order is created with (spec §13). A unit that is exactly one quotation line:
+ * the line text without what went into the form fields (notesBody), plus the Peak reference.
+ * A merged unit, a missing snapshot or a line that is gone: the notes as planned (the full text).
+ * Read from the same stored text, by the same rules, as the fields (specForUnit) — a line
+ * leaves the notes only when its values are in the fields of that same order.
+ */
+export function unitNotes(q: PeakQuotation | null | undefined, unit: UnitPlan, code: string): string {
+  if (!q || !Array.isArray(q.lines) || unit.lineKeys.length !== 1) return unit.notes;
+  const line = q.lines.find((l) => l?.key === unit.lineKeys[0]);
+  if (!line || typeof line.description !== 'string') return unit.notes;
+  return withRef(notesBody(line.description, linesReadFrom(line.description), unit.name), code);
+}
+
 export interface UnitChoices {
   qtyUnit?: string;
   graphic: string;
@@ -141,6 +155,7 @@ export interface UnitChoices {
  * Order body for createOrderFromForm. Never sets `price`. `peak` is read by findOrderByPeakMarker (raw_data->'peak').
  * `spec` = form fields read from the line text (spec-from-text.ts). It is spread first, so everything
  * that comes from Peak or was chosen in LINE always wins over it.
+ * `notes` = the notes to create the order with (unitNotes); without it, the unit's planned notes.
  */
 export function buildOrderBody(p: {
   unit: UnitPlan;
@@ -153,6 +168,7 @@ export function buildOrderBody(p: {
   asDraft: boolean;
   force?: boolean;
   spec?: SpecFields;
+  notes?: string;
 }): CreateOrderBody {
   const body: CreateOrderBody = {
     ...emptyOrderForm(p.orderer),
@@ -162,7 +178,7 @@ export function buildOrderBody(p: {
     dateIn: p.todayISO,
     dateDue: p.choices.dateDue,
     qty: p.unit.qty,
-    notes: p.unit.notes,
+    notes: p.notes ?? p.unit.notes,
     assignStaff: p.choices.graphic,
     forwardPrint: p.choices.press,
     orderer: p.orderer,

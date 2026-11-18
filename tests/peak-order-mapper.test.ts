@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PeakQuotation } from '@/lib/peak/read';
 import { emptyOrderForm } from '@/lib/photobook';
 import { QTY_UNITS } from '@/lib/order-constants';
-import { NO_NAME, addDaysISO, bangkokISODate, buildOrderBody, firstLine, formatQty, notesBody, planUnits } from '@/lib/peak-order/mapper';
+import { NO_NAME, addDaysISO, bangkokISODate, buildOrderBody, firstLine, formatQty, notesBody, planUnits, unitNotes } from '@/lib/peak-order/mapper';
 import { linesReadFrom, type SpecFields } from '@/lib/peak-order/spec-from-text';
 
 const Q = (lines: Array<[string, string, number | null]>): PeakQuotation => ({
@@ -162,6 +162,12 @@ describe('buildOrderBody', () => {
     const b = buildOrderBody({ ...base, spec: hostile });
     for (const k of Object.keys(hostile)) expect(b[k], k).toEqual(plain[k]);
   });
+  it('notes given at creation replace the notes stored in the unit; without them the unit\'s notes stand', () => {
+    expect(buildOrderBody({ ...base, notes: 'เหลือเท่านี้' }).notes).toBe('เหลือเท่านี้');
+    expect(buildOrderBody({ ...base, notes: '' }).notes).toBe('');
+    expect(buildOrderBody(base).notes).toBe('n');
+    expect(buildOrderBody({ ...base, notes: undefined }).notes).toBe('n');
+  });
   it('no spec and an empty spec give the same body as before', () => {
     expect(buildOrderBody({ ...base, spec: {} })).toEqual(buildOrderBody(base));
     expect(buildOrderBody({ ...base, spec: undefined })).toEqual(buildOrderBody(base));
@@ -228,5 +234,39 @@ describe('notesBody + linesReadFrom agree on line numbers', () => {
     ['blank lines between', 'ตั๋ว\n\nพิมพ์ 4 สี 1 หน้า\n\nกระดาษอาร์ต 260 แกรม\n\nเคลือบด้าน\n', 'พิมพ์ 4 สี 1 หน้า'],
   ])('%s', (_name, d, expected) => {
     expect(notes(d)).toBe(expected);
+  });
+});
+
+// Spec §13: what order creation writes into the notes.
+describe('unitNotes — notes of a unit at creation', () => {
+  const CARD = 'นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\nกระดาษอาร์ตมัน 260 แกรม';
+  const TICKET = 'ตั๋วขนาด 6x12 ซม.\nกระดาษอาร์ต 260 แกรม\nเคลือบด้าน';
+  const q = Q([['a', CARD, 100], ['b', TICKET, 50]]);
+  const REF = 'อ้างอิง Peak: QO-20261100072';
+  const [ua, ub] = planUnits(q, 'split');
+
+  it('one line: without the name line and the lines that went into fields; the Peak reference stays', () => {
+    expect(unitNotes(q, ua, q.code)).toBe(`พิมพ์ 4 สี 1 หน้า\n\n${REF}`);
+  });
+  it('everything on the line is in a field: only the Peak reference is left', () => {
+    expect(unitNotes(q, ub, q.code)).toBe(REF);
+  });
+  it('merged unit: the notes as planned (every line in full)', () => {
+    const [m] = planUnits(q, 'merged');
+    expect(unitNotes(q, m, q.code)).toBe(m.notes);
+    expect(m.notes).toContain(CARD);
+    expect(m.notes).toContain(TICKET);
+  });
+  it('no snapshot, a line that is gone, a line without text: the notes as planned', () => {
+    expect(unitNotes(null, ua, q.code)).toBe(ua.notes);
+    expect(unitNotes(undefined, ua, q.code)).toBe(ua.notes);
+    expect(unitNotes({ ...q, lines: [] }, ua, q.code)).toBe(ua.notes);
+    expect(unitNotes({ ...q, lines: undefined as unknown as PeakQuotation['lines'] }, ua, q.code)).toBe(ua.notes);
+    const odd = { ...q, lines: [{ key: 'a', description: null as unknown as string, quantity: 1, price: 1 }] };
+    expect(unitNotes(odd, ua, q.code)).toBe(ua.notes);
+    expect(ua.notes).toBe(`${CARD}\n\n${REF}`);
+  });
+  it('a unit whose name is not the first line (edited name) keeps that line', () => {
+    expect(unitNotes(q, { ...ua, name: 'ชื่ออื่น' }, q.code)).toBe(`นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\n\n${REF}`);
   });
 });

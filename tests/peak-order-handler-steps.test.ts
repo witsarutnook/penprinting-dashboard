@@ -151,8 +151,11 @@ describe('handlePeakOrderPostback — single line, create', () => {
         draftId: 'd1',
         todayISO: TODAY,
         asDraft: false,
+        // the line's only text is the order's name, so the notes hold just the reference (spec §13)
+        notes: `อ้างอิง Peak: ${Q1.code}`,
       }),
     );
+    expect(f.created[0].name).toBe('ไวนิลขนาด 1x2 เมตร');
     expect(f.created[0]).toMatchObject({ assignStaff: 'pook', forwardPrint: 'inkjet', qtyUnit: 'ชิ้น', dateDue: '2026-11-17', orderer: 'กิ๊ฟ' });
     expect(f.created[0].status).toBeUndefined();
     expect(f.created[0].force).toBeUndefined();
@@ -1140,14 +1143,15 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
   ]);
   const CARD_SPEC = { size: '9x5.5', sizeUnit: 'ซม.', paperInner: 'อาร์ตมัน 260 แกรม', innerColor: '4สี' };
 
-  it('create: size / paper / colour are filled; notes keep the whole line; LINE choices stand', async () => {
+  it('create: size / paper / colour are filled; notes keep only what is in no field; LINE choices stand', async () => {
     const f = setup([QS]);
     await start(f, QS.code);
     await toConfirm(f);
     await tap(f, okCreate());
     expect(f.created).toHaveLength(1);
     expect(f.created[0]).toMatchObject(CARD_SPEC);
-    expect(f.created[0].notes).toBe(`${CARD}\n\nอ้างอิง Peak: ${QS.code}`);
+    // spec §13: the name line and the paper line are in fields; "1 หน้า" is not
+    expect(f.created[0].notes).toBe(`พิมพ์ 4 สี 1 หน้า\n\nอ้างอิง Peak: ${QS.code}`);
     expect(f.created[0]).toMatchObject({ qty: '100', qtyUnit: 'ชิ้น', assignStaff: 'pook', forwardPrint: 'inkjet' });
     expect(f.created[0].coatMatte).toBe(false);
   });
@@ -1160,6 +1164,7 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
     expect(f.created).toHaveLength(1);
     expect(f.created[0].status).toBe('draft');
     expect(f.created[0]).toMatchObject(CARD_SPEC);
+    expect(f.created[0].notes).toBe(`พิมพ์ 4 สี 1 หน้า\n\nอ้างอิง Peak: ${QS.code}`);
   });
 
   it('split: each order gets the spec of its own line', async () => {
@@ -1175,6 +1180,8 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
     expect(f.created[0]).toMatchObject(CARD_SPEC);
     expect(f.created[0].coatMatte).toBe(false);
     expect(f.created[1]).toMatchObject({ size: 'A4', sizeUnit: 'ซม.', paperInner: 'อาร์ตมัน 120 แกรม', innerColor: '4สี', coatMatte: true });
+    expect(f.created[0].notes).toBe(`พิมพ์ 4 สี 1 หน้า\n\nอ้างอิง Peak: ${QM.code}`);
+    expect(f.created[1].notes).toBe(`พิมพ์ 4 สี หน้าหลัง\n\nอ้างอิง Peak: ${QM.code}`);
   });
 
   it('merged: several lines in one order — no spec is filled', async () => {
@@ -1188,6 +1195,7 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
     expect(f.created).toHaveLength(1);
     expect(f.created[0]).toMatchObject({ size: '', paperInner: '', innerColor: '', coatMatte: false });
     expect(f.created[0].notes).toContain(CARD);
+    expect(f.created[0].notes).toContain(FLYER);
   });
 
   it('a unit whose line is gone from the stored snapshot is still created, spec blank', async () => {
@@ -1198,5 +1206,7 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
     await tap(f, okCreate());
     expect(f.created).toHaveLength(1);
     expect(f.created[0]).toMatchObject({ size: '', paperInner: '', innerColor: '', name: 'นามบัตรขนาด 9x5.5 ซม.' });
+    // nothing was read into fields, so nothing leaves the notes
+    expect(f.created[0].notes).toBe(`${CARD}\n\nอ้างอิง Peak: ${QS.code}`);
   });
 });

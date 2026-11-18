@@ -9,7 +9,7 @@ import { PeakConfigError } from '@/lib/peak/crypto';
 import type { DraftRow, DraftStep, DraftUnit, LiveLink, PeakOrderDb } from '@/lib/peak-order/db';
 import { orderCommandArgs, parseOrderCommand } from '@/lib/peak-order/command';
 import { clipEcho, notFoundHint, resolveOrderCommand } from '@/lib/peak-order/resolve';
-import { addDaysISO, bangkokISODate, buildOrderBody, firstLine, planUnits } from '@/lib/peak-order/mapper';
+import { addDaysISO, bangkokISODate, buildOrderBody, firstLine, planUnits, unitNotes } from '@/lib/peak-order/mapper';
 import { specForUnit } from '@/lib/peak-order/spec-from-text';
 import { decodePostback, type OrderPostback } from '@/lib/peak-order/postback';
 import {
@@ -609,6 +609,7 @@ async function createUnit(deps: PeakOrderDeps, g: DraftRow, asDraft: boolean, fo
       asDraft,
       force,
       spec: specForUnit(g.snapshot?.quotation, unit.lineKeys).fields,
+      notes: unitNotes(g.snapshot?.quotation, unit, g.qoCode),
     });
     const r = await deps.createOrder(body, { role: 'sales', user: `${g.orderer} (LINE)` });
     // 4. Success → finalize links, record, advance.
