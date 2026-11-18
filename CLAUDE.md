@@ -60,6 +60,7 @@
 - Phase 3.4 ✅ — Archive port
 - Phase 3.5.1-3.5.8 ✅ + 3.5.5b/3.5.7b deferred — Kanban + write actions
 - `/order` จาก Peak (LINE กลุ่มทีม → ใบสั่งงาน, ไม่มี AI) — ✅ merged เข้า `main` 2026-11-16 (PR #29, merge commit `a716b31`) · **🟢 เปิดใช้จริง 2026-11-17** (key + migrate + เชื่อม Peak 11/16 · group id 1 กลุ่ม + flag + redeploy 11/17 · refresh token พิสูจน์แล้ว) · "5 ใบล่าสุด" = เลขเอกสารมากสุดก่อน (`29957a2`) · smoke ในกลุ่มจริง: ดูสถานะรายข้อใน NEXT-SESSION 2026-11-17 — spec `docs/superpowers/specs/2026-11-14-peak-order-from-line-design.md`
+- `/order` เติมช่องสเปกจากข้อความรายการ (กฎคำหลัก) — ✅ live 2026-11-18 · spec `docs/superpowers/specs/2026-11-18-peak-order-spec-from-text-design.md` · เพิ่มกฎใหม่ = เพิ่มแถวข้อความจริงใน `tests/peak-order-spec-from-text.test.ts` ให้ล้มก่อนเสมอ
 - Phase 2.3 — WP UI parity (sidebar + KPI bar + dept icon-headers + filter chips + inline bulk-mode) — Stage A+B+C ✅, Stage D in progress
 - §13 Archive port ✅ (2026-09-05) — /archive อ่าน Postgres, Apps Script client ถอดแล้ว; §15 = คุณนุ๊กถอด env + archive deployment → ลบโปรเจกต์หลัง soak 7 วัน
 
@@ -96,6 +97,7 @@ npm run build            # before push
 | [lib/peak/token-store.ts](lib/peak/token-store.ts) | token Peak เข้ารหัส + single-flight refresh (PATTERNS §12.1) |
 | [lib/peak/mcp-client.ts](lib/peak/mcp-client.ts) · [read.ts](lib/peak/read.ts) | Peak MCP client + ทูลอ่าน 3 ตัว (`get_quotation`/`list_quotation`/`search_contacts`) |
 | [lib/peak-order/db.ts](lib/peak-order/db.ts) · [handler.ts](lib/peak-order/handler.ts) | gate/claim ร่าง `/order` + state machine (PATTERNS §12.2) |
+| [lib/peak-order/spec-from-text.ts](lib/peak-order/spec-from-text.ts) | กฎคำหลัก: ข้อความรายการใบเสนอราคา → ช่องสเปกในฟอร์ม + บรรทัด "สเปกที่อ่านได้" บนการ์ด LINE (ไม่มี AI · ไม่แน่ใจ = ว่าง · PATTERNS §12.5) — 2026-11-18 |
 | [components/nav-config.ts](components/nav-config.ts) | Sidebar + bottom-nav source of truth |
 | [components/dashboard-shell.tsx](components/dashboard-shell.tsx) | Layout wrapper |
 
