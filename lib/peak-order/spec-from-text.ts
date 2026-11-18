@@ -35,6 +35,8 @@ const PAPER_MAX = 60;
 
 /** `เนื้อใน`, or `ปก` that starts a word (not รองปก / รวมปก / หน้าปก / ปกอ่อน after text, not ปกติ). */
 const MARKER = /เนื้อใน|(?<![\u0E00-\u0E7F])ปก(?!ติ)/g;
+/** In a calendar, ภู่ / ไส้ start a part that stays in the notes only; ป้าย ends it. */
+const MARKER_CALENDAR = new RegExp(`${MARKER.source}|ภู่|ไส้|ป้าย`, 'g');
 const PAPER_WORD = /^(?:อาร์ต|อาร์ท|art|ปอนด์|การ์ด|ถนอมสายตา|น้ำตาล|คาร์บอน|กล่องแป้ง|ปรู๊ฟ|ปรุ๊ฟ)/i;
 const PAPER_STOP = /กระดาษ|พิมพ์|ปริ้น|เคลือบ|ขนาด|จำนวน|เข้าเล่ม|ไดคัท/;
 const WEIGHT = /\d{2,3}\s*(?:แกรม|กรัม|gsm|g)(?![a-z])/i;
@@ -51,12 +53,17 @@ const HAS_COLOUR_WORD = new RegExp(COLOUR_WORD);
 const SIZE_TOKEN =
   /(?<![A-Za-z0-9])A([3-6])(?![0-9A-Za-z])|เอ\s?([3-6])(?!\d)|(?<![\d.])(\d+(?:\.\d+)?)\s*[x×*]\s*(?:สูง\s*)?(\d+(?:\.\d+)?)(?:\s*[x×*]\s*(\d+(?:\.\d+)?))?\s*(ซม\.?|นิ้ว|มม\.?|"|(?:cm|mm|inch(?:es)?)(?![a-z])\.?)?/gi;
 const SIZE_ANCHOR = /ขนาด[^\d\n]{0,15}$/;
+/** "ครึ่ง A4" = A5 (exact for A sizes). Any other halved / unfolded / fraction size is not read. */
+const SIZE_HALF = /ครึ่ง\s*$/;
 const SIZE_QUALIFIER = /(?:ครึ่ง|กางออก|1\/3|1\/2)\s*$/;
+const WHOLE_BOOK = /^\s*ทั้งเล่ม/;
 
 const COAT = /เคลือบ/g;
 const COAT_TAIL = 20;
 
 type Section = 'general' | 'cover' | 'inner';
+/** 'sub' = the ภู่ / ไส้ part of a calendar: read into no field. */
+type Where = Section | 'sub';
 
 function sizeUnitOf(raw: string | undefined): string {
   const u = (raw ?? '').toLowerCase();
@@ -104,7 +111,8 @@ interface Bucket {
 }
 const bucket = (): Bucket => ({ paper: new Set(), colour: new Set(), note: new Set() });
 
-function readSegment(text: string, afterMarker: boolean, into: Bucket): void {
+/** `whole` collects a colour written as "N สี ทั้งเล่ม" outside any section: it is the cover's and the inner's. */
+function readSegment(text: string, afterMarker: boolean, into: Bucket, whole: Set<string> | null): void {
   for (let i = text.indexOf('กระดาษ'); i >= 0; i = text.indexOf('กระดาษ', i + 6)) {
     const p = paperFrom(text.slice(i + 6));
     if (p) into.paper.add(p);
@@ -117,9 +125,12 @@ function readSegment(text: string, afterMarker: boolean, into: Bucket): void {
     }
   }
   for (const m of text.matchAll(COLOUR)) {
-    into.colour.add(m[1] ? `${m[1]}สี` : '1สี');
+    const value = m[1] ? `${m[1]}สี` : '1สี';
+    const rest = text.slice(m.index + m[0].length);
+    into.colour.add(value);
+    if (whole && WHOLE_BOOK.test(rest)) whole.add(value);
     if (!m[1] || m[1] === '1' || m[1] === '2') {
-      const note = colourNote(text.slice(m.index + m[0].length));
+      const note = colourNote(rest);
       if (note) into.note.add(note);
     }
   }
@@ -131,12 +142,13 @@ function readSize(lines: string[], fields: SpecFields): void {
     for (const m of line.matchAll(SIZE_TOKEN)) {
       const prefix = line.slice(0, m.index);
       const a = m[1] ?? m[2];
+      const half = !!a && SIZE_HALF.test(prefix);
       tokens.push({
-        value: a ? `A${a}` : [m[3], m[4], m[5]].filter(Boolean).join('x'),
+        value: a ? `A${half ? Number(a) + 1 : a}` : [m[3], m[4], m[5]].filter(Boolean).join('x'),
         unit: a ? '' : sizeUnitOf(m[6]),
         dim: !a,
         anchored: SIZE_ANCHOR.test(prefix),
-        qualified: SIZE_QUALIFIER.test(prefix),
+        qualified: !half && SIZE_QUALIFIER.test(prefix),
       });
     }
   }
@@ -180,10 +192,11 @@ function part(label: string, paper: string | undefined, colour: string | undefin
 }
 
 function summarise(f: SpecFields, sectioned: boolean): string {
+  const labelled = sectioned || !!f.paperCover || !!f.coverColor;
   const parts = [
     f.size ? `ขนาด ${f.size}${f.sizeUnit ? ` ${f.sizeUnit}` : ''}` : '',
-    sectioned ? part('ปก ', f.paperCover, f.coverColor, f.coverColorNote) : '',
-    part(sectioned ? 'เนื้อใน ' : '', f.paperInner, f.innerColor, f.innerColorNote),
+    labelled ? part('ปก ', f.paperCover, f.coverColor, f.coverColorNote) : '',
+    part(labelled ? 'เนื้อใน ' : '', f.paperInner, f.innerColor, f.innerColorNote),
     f.coatGloss ? 'เคลือบเงา' : '',
     f.coatMatte ? 'เคลือบด้าน' : '',
     f.coatUV ? 'เคลือบ UV' : '',
@@ -202,23 +215,42 @@ function read(description: string): SpecFromText {
   const lines = text.split(/\r\n|\r|\n/);
 
   const buckets: Record<Section, Bucket> = { general: bucket(), cover: bucket(), inner: bucket() };
-  let section: Section = 'general';
+  const whole = new Set<string>();
+  const marker = text.includes('ปฏิทิน') ? MARKER_CALENDAR : MARKER;
+  /** The lines without the ภู่ / ไส้ part — what size and the checkboxes are read from. */
+  const main: string[] = [];
+  let section: Where = 'general';
   let sectioned = false;
   for (const line of lines) {
     let from = 0;
     let afterMarker = false;
-    for (const m of line.matchAll(MARKER)) {
-      readSegment(line.slice(from, m.index), afterMarker, buckets[section]);
-      section = m[0] === 'ปก' ? 'cover' : 'inner';
-      sectioned = true;
+    let kept = '';
+    const take = (end: number): void => {
+      if (section === 'sub') return;
+      const seg = line.slice(from, end);
+      kept += seg;
+      readSegment(seg, afterMarker, buckets[section], section === 'general' ? whole : null);
+    };
+    for (const m of line.matchAll(marker)) {
+      let next: Where;
+      if (m[0] === 'เนื้อใน') next = 'inner';
+      else if (m[0] === 'ปก') next = 'cover';
+      else if (m[0] !== 'ป้าย') next = 'sub';
+      else if (section === 'sub') next = 'general';
+      else continue; // ป้าย outside a ภู่ / ไส้ part is ordinary text
+      take(m.index);
+      section = next;
+      kept += next === 'sub' ? ' ' : m[0];
       from = m.index + m[0].length;
-      afterMarker = true;
+      afterMarker = next === 'cover' || next === 'inner';
+      if (afterMarker) sectioned = true;
     }
-    readSegment(line.slice(from), afterMarker, buckets[section]);
+    take(line.length);
+    main.push(kept);
   }
 
   const fields: SpecFields = {};
-  readSize(lines, fields);
+  readSize(main, fields);
 
   // No ปก / เนื้อใน anywhere = a single-sheet job: the team fills the inner fields.
   // With sections, paper / colour written before the first one is not used.
@@ -226,8 +258,8 @@ function read(description: string): SpecFromText {
   const inner = sectioned ? buckets.inner : buckets.general;
   const paperCover = only(cover.paper);
   const paperInner = only(inner.paper);
-  const coverColor = only(cover.colour);
-  const innerColor = only(inner.colour);
+  const coverColor = only(new Set([...cover.colour, ...whole]));
+  const innerColor = only(new Set([...inner.colour, ...whole]));
   if (paperCover) fields.paperCover = paperCover;
   if (paperInner) fields.paperInner = paperInner;
   if (coverColor) {
@@ -241,7 +273,7 @@ function read(description: string): SpecFromText {
     if (note) fields.innerColorNote = note;
   }
 
-  readFlags(lines, text, fields);
+  readFlags(main, main.join('\n'), fields);
   return { fields, summary: summarise(fields, sectioned) };
 }
 

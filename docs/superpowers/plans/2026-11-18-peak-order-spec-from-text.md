@@ -76,10 +76,10 @@
 | 6 | `สมุดขนาด A5 ปกหุ้มจั่วปัง เข้าห่วง⏎ปกอาร์ต 230 แกรม พิมพ์ 4 สี⏎เนื้อใน 200 หน้า 100 แผ่น⏎กระดาษ ถนอมสายตา 75 แกรม⏎พิมพ์ 1 สี (ดำ)⏎ปั๊มฟอยล์ทอง 2 จุด (โลโก้ และ ตัวอักษร)` | size `A5`, paperCover `อาร์ต 230 แกรม`, coverColor `4สี`, paperInner `ถนอมสายตา 75 แกรม`, innerColor `1สี`, innerColorNote `ดำ`, spine |
 | 7 | `หนังสือขนาด A4⏎ปกอาร์ต 230 แกรม เคลือบด้าน พิมพ์ 4 สี⏎เนื้อในปอนด์ 80 แกรม พิมพ์ 1 สี 32 หน้า⏎เข้าเล่มไสกาวปกอ่อน⏎` | size `A4`, paperCover `อาร์ต 230 แกรม`, coverColor `4สี`, coatMatte, paperInner `ปอนด์ 80 แกรม`, innerColor `1สี`, glue |
 | 8 | `แคตตาล็อคขนาด 19x26 cm⏎16 หน้ารวมปก⏎ปกกระดาษอาร์ต 230g⏎เนื้อในกระดาษปอนด์ 80g⏎มุงหลังคา` | size `19x26`, sizeUnit `ซม.`, paperCover `อาร์ต 230g`, paperInner `ปอนด์ 80g`, saddle |
-| 9 | `สมุดประจำตัวผู้ป่วย⏎ขนาดครึ่งเอ 4 ปก 4 สี 230 แกรม⏎เนื้อใน 4 สีทั้งเล่ม 20 หน้า กระดาษปอนด์ 70g⏎เข้าเล่มเย็มมุงหลังคา` | coverColor `4สี`, innerColor `4สี`, paperInner `ปอนด์ 70g`, saddle |
+| 9 | `สมุดประจำตัวผู้ป่วย⏎ขนาดครึ่งเอ 4 ปก 4 สี 230 แกรม⏎เนื้อใน 4 สีทั้งเล่ม 20 หน้า กระดาษปอนด์ 70g⏎เข้าเล่มเย็มมุงหลังคา` | size `A5` *(gate change)*, coverColor `4สี`, innerColor `4สี`, paperInner `ปอนด์ 70g`, saddle |
 | 10 | `สมุด Passport ⏎ขนาด 13x9.5 ซม.⏎ปกกระดาษอาร์ตมัน 230 แกรมเคลือบด้าน⏎เนื้อในกระดาษปอนด์ 100⏎จำนวน 8 หน้า⏎กระดาษเปล่า 70g รองปก 1 แผ่น` | size `13x9.5`, sizeUnit `ซม.`, paperCover `อาร์ตมัน 230 แกรม`, coatMatte *(inner paper: two candidates → blank)* |
-| 11 | `ปฏิทินแขวน⏎ขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี⏎กระดาษอาร์ต 230 แกรม เคลือบเงา⏎ภู่ปฏิทิน ขนาด 7x15 นิ้ว⏎พิมพ์ 4สี กระดาษปอนด์⏎เข้าหัวเหล็กปฏิทิน` | innerColor `4สี`, coatGloss *(two sizes, two papers → blank)* |
-| 12 | `ปฏิทินแขวน ตัด 4 ขนาด 15x21 นิ้ว⏎พิมพ์ 4 สี หน้าเดียว กระดาษอาร์ต 230g⏎เคลือบเงา เข้าหัวเหล็ก⏎ไส้ 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์⏎หน้าปกแบบโฆษณาของร้าน` | size `15x21`, sizeUnit `นิ้ว`, innerColor `4สี`, coatGloss |
+| 11 | `ปฏิทินแขวน⏎ขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี⏎กระดาษอาร์ต 230 แกรม เคลือบเงา⏎ภู่ปฏิทิน ขนาด 7x15 นิ้ว⏎พิมพ์ 4สี กระดาษปอนด์⏎เข้าหัวเหล็กปฏิทิน` | size `15x21`, sizeUnit `นิ้ว`, paperInner `อาร์ต 230 แกรม`, innerColor `4สี`, coatGloss *(gate change: the ภู่ part is not read)* |
+| 12 | `ปฏิทินแขวน ตัด 4 ขนาด 15x21 นิ้ว⏎พิมพ์ 4 สี หน้าเดียว กระดาษอาร์ต 230g⏎เคลือบเงา เข้าหัวเหล็ก⏎ไส้ 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์⏎หน้าปกแบบโฆษณาของร้าน` | size `15x21`, sizeUnit `นิ้ว`, paperInner `อาร์ต 230g` *(gate change)*, innerColor `4สี`, coatGloss |
 | 13 | `หนังสือพับ 11.11 Midmonth⏎- ขนาดกางออก 63 x 29.7 cm.⏎- ขนาดสำเร็จ A4 พับ 3 ทบ⏎- กระดาษอาร์ต 230 แกรม⏎- เคลือบด้าน⏎- พิมพ์หน้า-หลัง` | paperInner `อาร์ต 230 แกรม`, coatMatte |
 | 14 | `แผ่นพับ ขนาดกางออก A5⏎พิมพ์ 4 สี หน้าหลัง⏎กระดาษอาร์ตมัน 120g⏎พับครึ่ง` | innerColor `4สี`, paperInner `อาร์ตมัน 120g` |
 | 15 | `ป้ายแขวนประตู ขนาด 24x9.5 cm⏎พิมพ์ 4 สี 2 หน้า⏎กระดาษอาร์ต 350g เคลือบเงาหรือด้าน` | size `24x9.5`, sizeUnit `ซม.`, innerColor `4สี`, paperInner `อาร์ต 350g` |
@@ -98,7 +98,7 @@
 | 28 | `ปฏิทินแขวนขนาด 15x21 นิ้ว⏎ปกอาร์ต 230 แกรม เคลือบ UV⏎ติดไส้ปฏิทินสำเร็จ` | size `15x21`, sizeUnit `นิ้ว`, paperCover `อาร์ต 230 แกรม`, coatUV |
 | 29 | `คู่มือการใช้งาน ขนาด A4⏎ปกพิมพ์ 1 สี-ดำ กระดาษการ์ดฟ้า 150g⏎เนื้อใน พิมพ์สีเดียว-ดำ 25 หน้า พิมพ์หน้าเดียว⏎กระดาษปอนด์ 70g⏎เข้าเล่มไสกาว` | size `A4`, coverColor `1สี`, coverColorNote `ดำ`, paperCover `การ์ดฟ้า 150g`, innerColor `1สี`, innerColorNote `ดำ`, paperInner `ปอนด์ 70g`, glue |
 | 30 | `สมุดขนาด A5⏎ปก พิมพ์ 4 สี 4 หน้า⏎เนื้อในพิมพ์สีเดียว น้ำเงิน 32 หน้า (เนื้อหา 8-10 หน้า ที่เหลือ note)⏎เย็บมุงหลังคา` | size `A5`, coverColor `4สี`, innerColor `1สี`, innerColorNote `น้ำเงิน`, saddle |
-| 31 | `photobook ขนาด 26x26 ซม.⏎พิมพ์ 4 สี ทั้งเล่ม⏎เนื้อใน 40 หน้า กระดาษอาร์ต 160 แกรม⏎ปกแข็ง เคลือบด้าน⏎เข้าเล่มไสกาว` | size `26x26`, sizeUnit `ซม.`, paperInner `อาร์ต 160 แกรม`, coatMatte, glue |
+| 31 | `photobook ขนาด 26x26 ซม.⏎พิมพ์ 4 สี ทั้งเล่ม⏎เนื้อใน 40 หน้า กระดาษอาร์ต 160 แกรม⏎ปกแข็ง เคลือบด้าน⏎เข้าเล่มไสกาว` | size `26x26`, sizeUnit `ซม.`, coverColor `4สี`, innerColor `4สี` *(gate change)*, paperInner `อาร์ต 160 แกรม`, coatMatte, glue |
 | 32 | `ซองตะเกียบ ขนาดกางออก 20.5x8 cm⏎พิมพ์ 1 สี (แดง)⏎กระดาษปอนด์ 100⏎ไดคัทติดกาวขึ้นซอง` | innerColor `1สี`, innerColorNote `แดง`, paperInner `ปอนด์ 100` |
 | 33 | `กระดาษหัวจดหมาย ขนาด เอ 4⏎กระดาษปอนด์ 80 แกรม พิมพ์ 1 สี 1 หน้า สีทอง⏎` | size `A4`, paperInner `ปอนด์ 80 แกรม`, innerColor `1สี`, innerColorNote `ทอง` |
 | 34 | `กระดาษหัวจดหมาย ขนาด 10*14 ซม.⏎กระดาษปอนด์ 80 แกรม พิมพ์ 4 สี 1 หน้า` | size `10x14`, sizeUnit `ซม.`, paperInner `ปอนด์ 80 แกรม`, innerColor `4สี` |
@@ -124,6 +124,14 @@
 - [ ] **Step 3: Implement** `lib/peak-order/spec-from-text.ts` per the Rules block.
 - [ ] **Step 4: Run** the same command — expected: all pass. Then `npx tsc --noEmit` and `npx eslint lib/peak-order/spec-from-text.ts tests/peak-order-spec-from-text.test.ts` — expected: exit 0.
 - [ ] **Step 5: Commit** `feat(peak-order): keyword parser — spec fields from a quotation line (not wired yet)`
+
+### Task 1b: Rule changes from the Task 2 gate (คุณนุ๊ก, 2026-11-18)
+
+Spec §10. Same files as Task 1; each change RED first; tests in the describe "rules from คุณนุ๊ก's review of the real-line table" plus rows 9, 11, 12, 31, 45, 46.
+
+- **ครึ่ง + A size** → the next A size (`ครึ่งเอ 4` → `A5`); such a token is not *qualified*. `ครึ่ง` + a dimension, `กางออก`, `1/3`, `1/2` stay qualified (no size).
+- **`N สี ทั้งเล่ม`** in the general part (before any section, or no section at all) → that colour is a candidate for **both** `coverColor` and `innerColor`. Inside a section it is that section's colour only. The summary prints `ปก …` / `เนื้อใน …` labels whenever a cover field is set.
+- **Calendar** (text contains `ปฏิทิน`): `ภู่` and `ไส้` open a part that is read into **no field** (size, paper, colour, checkboxes); it carries to the following lines and ends at `ป้าย`, `ปก` or `เนื้อใน`. `ป้าย` outside such a part is ordinary text. Outside calendars `ภู่` / `ไส้` mean nothing.
 
 ### Task 2: Run the parser over the real lines (gate for คุณนุ๊ก)
 

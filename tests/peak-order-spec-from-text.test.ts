@@ -33,18 +33,18 @@ const ROWS: Array<[string, string, SpecFields]> = [
   ['8 catalogue; "รวมปก" opens no section',
     'แคตตาล็อคขนาด 19x26 cm\n16 หน้ารวมปก\nปกกระดาษอาร์ต 230g\nเนื้อในกระดาษปอนด์ 80g\nมุงหลังคา',
     { size: '19x26', sizeUnit: 'ซม.', paperCover: 'อาร์ต 230g', paperInner: 'ปอนด์ 80g', saddle: true }],
-  ['9 "ครึ่งเอ 4" is no size; cover paper without a paper word is no paper; misspelt saddle',
+  ['9 "ครึ่งเอ 4" = A5; cover paper without a paper word is no paper; misspelt saddle',
     'สมุดประจำตัวผู้ป่วย\nขนาดครึ่งเอ 4 ปก 4 สี 230 แกรม\nเนื้อใน 4 สีทั้งเล่ม 20 หน้า กระดาษปอนด์ 70g\nเข้าเล่มเย็มมุงหลังคา',
-    { coverColor: '4สี', innerColor: '4สี', paperInner: 'ปอนด์ 70g', saddle: true }],
+    { size: 'A5', coverColor: '4สี', innerColor: '4สี', paperInner: 'ปอนด์ 70g', saddle: true }],
   ['10 two inner papers -> inner paper blank',
     'สมุด Passport \nขนาด 13x9.5 ซม.\nปกกระดาษอาร์ตมัน 230 แกรมเคลือบด้าน\nเนื้อในกระดาษปอนด์ 100\nจำนวน 8 หน้า\nกระดาษเปล่า 70g รองปก 1 แผ่น',
     { size: '13x9.5', sizeUnit: 'ซม.', paperCover: 'อาร์ตมัน 230 แกรม', coatMatte: true }],
-  ['11 calendar: two sizes and two papers -> both blank',
+  ['11 calendar: ภู่ is left to the notes; size and paper come from the ป้าย',
     'ปฏิทินแขวน\nขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษอาร์ต 230 แกรม เคลือบเงา\nภู่ปฏิทิน ขนาด 7x15 นิ้ว\nพิมพ์ 4สี กระดาษปอนด์\nเข้าหัวเหล็กปฏิทิน',
-    { innerColor: '4สี', coatGloss: true }],
-  ['12 calendar: the size after "ขนาด" wins; "หน้าปก" opens no section',
+    { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230 แกรม', innerColor: '4สี', coatGloss: true }],
+  ['12 calendar: ไส้ is left to the notes; "หน้าปก" opens no section',
     'ปฏิทินแขวน ตัด 4 ขนาด 15x21 นิ้ว\nพิมพ์ 4 สี หน้าเดียว กระดาษอาร์ต 230g\nเคลือบเงา เข้าหัวเหล็ก\nไส้ 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์\nหน้าปกแบบโฆษณาของร้าน',
-    { size: '15x21', sizeUnit: 'นิ้ว', innerColor: '4สี', coatGloss: true }],
+    { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230g', innerColor: '4สี', coatGloss: true }],
   ['13 unfolded + finished size -> blank',
     'หนังสือพับ 11.11 Midmonth\n- ขนาดกางออก 63 x 29.7 cm.\n- ขนาดสำเร็จ A4 พับ 3 ทบ\n- กระดาษอาร์ต 230 แกรม\n- เคลือบด้าน\n- พิมพ์หน้า-หลัง',
     { paperInner: 'อาร์ต 230 แกรม', coatMatte: true }],
@@ -86,9 +86,9 @@ const ROWS: Array<[string, string, SpecFields]> = [
   ['30 colour name after a space; "เนื้อหา" opens no section',
     'สมุดขนาด A5\nปก พิมพ์ 4 สี 4 หน้า\nเนื้อในพิมพ์สีเดียว น้ำเงิน 32 หน้า (เนื้อหา 8-10 หน้า ที่เหลือ note)\nเย็บมุงหลังคา',
     { size: 'A5', coverColor: '4สี', innerColor: '1สี', innerColorNote: 'น้ำเงิน', saddle: true }],
-  ['31 colour before the first section is not used',
+  ['31 "4 สี ทั้งเล่ม" = cover and inner',
     'photobook ขนาด 26x26 ซม.\nพิมพ์ 4 สี ทั้งเล่ม\nเนื้อใน 40 หน้า กระดาษอาร์ต 160 แกรม\nปกแข็ง เคลือบด้าน\nเข้าเล่มไสกาว',
-    { size: '26x26', sizeUnit: 'ซม.', paperInner: 'อาร์ต 160 แกรม', coatMatte: true, glue: true }],
+    { size: '26x26', sizeUnit: 'ซม.', coverColor: '4สี', innerColor: '4สี', paperInner: 'อาร์ต 160 แกรม', coatMatte: true, glue: true }],
   ['32 paper word + bare number', 'ซองตะเกียบ ขนาดกางออก 20.5x8 cm\nพิมพ์ 1 สี (แดง)\nกระดาษปอนด์ 100\nไดคัทติดกาวขึ้นซอง',
     { innerColor: '1สี', innerColorNote: 'แดง', paperInner: 'ปอนด์ 100' }],
   ['33 "กระดาษหัวจดหมาย" is not paper; colour name later on the line',
@@ -109,6 +109,11 @@ const ROWS: Array<[string, string, SpecFields]> = [
   ['42 Thai "เอ 3"', 'โปสเตอร์ เอ 3 บัตรฟรี 4eve + ไดคัท', { size: 'A3' }],
   ['43 "X7" is no size', 'ใบติ๊กเมนูเตี๋ยว X7 ,เมนูยำ\nพิมพ์ 1 สี หน้า หลัง', { innerColor: '1สี' }],
   ['44 "กระดาษคำตอบ" is not paper', 'การประเมิน NT ป.3\n- ภาษาไทย จำนวน 18 หน้า\nกระดาษคำตอบ 1 หน้า (7 บาท)', {}],
+  ['45 calendar: ป้าย line, then ไส้', 'ปฏิทินแขวน ตัด 8\nป้ายพิมพ์4สี กระดาษอาร์ต 230g\nไส้ปฏิทินตัด32 พิมพ์ 4 สี เจาะตราไก่\n2 แบบ แบบละ 300 ชุด',
+    { paperInner: 'อาร์ต 230g', innerColor: '4สี' }],
+  ['46 calendar whose first line does not say ปฏิทิน',
+    'วารสารประชาสัมพันธ์\nขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษอาร์ต 230 แกรม เคลือบเงา\nภู่ปฏิทิน ขนาด 7x15 นิ้ว\nพิมพ์ 4สี กระดาษปอนด์ 55g\nเพิ่มภู่โฆษณาของลูกค้า',
+    { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230 แกรม', innerColor: '4สี', coatGloss: true }],
 ];
 
 describe('specFromText — real quotation lines', () => {
@@ -157,6 +162,34 @@ describe('specFromText — look-alikes', () => {
     ['พิมพ์ 1 สี กระดาษการ์ดสีชมพู 150g', { innerColor: '1สี', paperInner: 'การ์ดสีชมพู 150g' }],
   ])('%j', (d, expected) => {
     expect(specFromText(d).fields).toEqual(expected);
+  });
+});
+
+describe("specFromText — rules from คุณนุ๊ก's review of the real-line table (2026-11-18)", () => {
+  it.each<[string, SpecFields]>([
+    // ครึ่ง + an A size = the next A size; anything else halved or qualified stays blank
+    ['ขนาดครึ่ง A4', { size: 'A5' }],
+    ['ขนาดครึ่งเอ 3', { size: 'A4' }],
+    ['ขนาดครึ่ง 21x29.7 ซม.', {}],
+    ['ขนาด 1/3 A4', {}],
+    // "N สี ทั้งเล่ม" outside a section = cover and inner; inside a section it is that section's colour
+    ['หนังสือ A4 พิมพ์ 4 สี ทั้งเล่ม', { size: 'A4', coverColor: '4สี', innerColor: '4สี' }],
+    ['พิมพ์ 4 สี ทั้งเล่ม\nปก พิมพ์ 1 สี', { innerColor: '4สี' }],
+    ['ปก พิมพ์ 1 สี\nเนื้อใน 4 สีทั้งเล่ม', { coverColor: '1สี', innerColor: '4สี' }],
+    // a colour before the first section, without "ทั้งเล่ม", belongs to neither part
+    ['สมุด A5 พิมพ์ 2 สี\nปกอาร์ต 230 แกรม\nเนื้อในปอนด์ 80 แกรม พิมพ์ 1 สี',
+      { size: 'A5', paperCover: 'อาร์ต 230 แกรม', paperInner: 'ปอนด์ 80 แกรม', innerColor: '1สี' }],
+    // calendars: nothing about ภู่ / ไส้ reaches a field; ป้าย ends that part; other products are not affected
+    ['ปฏิทินแขวนขนาด 15x21 นิ้ว\nป้าย กระดาษอาร์ต 230g เคลือบเงา\nไส้ กระดาษปอนด์ เคลือบด้าน เข้ากระดูกงู',
+      { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230g', coatGloss: true }],
+    ['ปฏิทินตั้งโต๊ะ\nไส้ 7x15 นิ้ว กระดาษปอนด์\nป้าย ขนาด 15x21 นิ้ว กระดาษอาร์ต 230g',
+      { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230g' }],
+    ['โปสเตอร์ A3\nกระดาษอาร์ต 120g\nไส้ กระดาษปอนด์ 80g', { size: 'A3' }],
+  ])('%j', (d, expected) => {
+    expect(specFromText(d).fields).toEqual(expected);
+  });
+  it('summary names cover and inner when the whole book has one colour', () => {
+    expect(specFromText('หนังสือ A4 พิมพ์ 4 สี ทั้งเล่ม').summary).toBe('ขนาด A4 · ปก 4สี · เนื้อใน 4สี');
   });
 });
 
