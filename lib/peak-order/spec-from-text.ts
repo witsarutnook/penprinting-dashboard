@@ -41,10 +41,13 @@ const isThai = (ch: string | undefined): boolean => ch !== undefined && THAI.tes
 // ─── sections ───────────────────────────────────────────────────────
 
 /**
- * `เนื้อใน`, or `ปก` that starts a word. Not รองปก / รวมปก / หน้าปก (glued to Thai
- * text), not ปกติ, and not the binding types ปกอ่อน / ปกแข็ง.
+ * `เนื้อใน` (also the typo `เนิ้อใน`, seen in a real quotation), or `ปก` that starts a
+ * word. Not รองปก / รวมปก / หน้าปก (glued to Thai text) and not ปกติ.
  */
-const MARKER = /เนื้อใน|(?<![\u0E00-\u0E7F])ปก(?!ติ|อ่อน|แข็ง)/g;
+const MARKER = /เนื้อใน|เนิ้อใน|(?<![\u0E00-\u0E7F])ปก(?!ติ)/g;
+/** ปกอ่อน / ปกแข็ง head a cover line ("ปกแข็ง พิมพ์ 4 สี"); inside a line they are a binding type. */
+const COVER_TYPE = /^(?:อ่อน|แข็ง)/;
+const LINE_LEAD = /^[\s\-•*]*$/;
 /** In a calendar, ภู่ / ไส้ start a part that stays in the notes only; ป้าย ends it. */
 const MARKER_CALENDAR = new RegExp(`${MARKER.source}|ภู่|ไส้|ป้าย`, 'g');
 
@@ -55,7 +58,8 @@ type Where = Section | 'sub';
 // ─── paper ──────────────────────────────────────────────────────────
 
 const PAPER_WORD = /^(?:อาร์ต|อาร์ท|art(?![a-z])|ปอนด์|การ์ด|ถนอมสายตา|น้ำตาล|คาร์บอน|กล่องแป้ง|ปรู๊ฟ|ปรุ๊ฟ)/i;
-const PAPER_STOP = /พิมพ์|ปริ้น|เคลือบ|ขนาด|จำนวน|เข้าเล่ม|ไดคัท/;
+/** Where a paper name ends: the next attribute, or a page / sheet count ("24 หน้า", "100 แผ่น"). */
+const PAPER_STOP = /พิมพ์|ปริ้น|เคลือบ|ขนาด|จำนวน|เข้าเล่ม|ไดคัท|\d+\s*(?:หน้า|แผ่น)/;
 const WEIGHT = /\d{2,3}\s*(?:แกรม|กรัม|gsm|g)(?![a-z])/i;
 /** "… หรือ 260 แกรม", "…/260g": an alternative weight is copied along, never dropped. */
 const WEIGHT_MORE = /^\s*(?:หรือ|\/|,)\s*\d{2,3}\s*(?:แกรม|กรัม|gsm|g)(?![a-z])/i;
@@ -350,8 +354,10 @@ function read(description: string): SpecFromText {
     };
     for (const m of line.matchAll(marker)) {
       let next: Where;
-      if (m[0] === 'เนื้อใน') next = 'inner';
-      else if (m[0] === 'ปก') next = 'cover';
+      if (m[0] === 'ปก') {
+        if (COVER_TYPE.test(line.slice(m.index + 2)) && !LINE_LEAD.test(line.slice(0, m.index))) continue;
+        next = 'cover';
+      } else if (m[0] === 'เนื้อใน' || m[0] === 'เนิ้อใน') next = 'inner';
       else if (m[0] !== 'ป้าย') next = 'sub';
       else if (section === 'sub') next = 'general';
       else continue; // ป้าย outside a ภู่ / ไส้ part is ordinary text
