@@ -37,13 +37,40 @@ export function addDaysISO(iso: string, days: number): string {
   return isoFromUTC(t);
 }
 
+/** A line without its leading bullets / whitespace. */
+const bare = (line: string): string => line.replace(/^[-•*\s]+/, '').trim();
+
 /** First non-empty line, leading bullets/whitespace stripped, <= 120 chars; '' -> NO_NAME. */
 export function firstLine(description: string): string {
   for (const raw of String(description ?? '').split(/\r\n|\r|\n/)) {
-    const line = raw.replace(/^[-•*\s]+/, '').trim();
+    const line = bare(raw);
     if (line !== '') return clip(line, NAME_MAX);
   }
   return NO_NAME;
+}
+
+/**
+ * The line text for an order's notes once its spec is in the form fields (spec §13):
+ * without the `read` lines (linesReadFrom — nothing on them but values that are in a field)
+ * and without the first line when it is the order's `name` as written (the name field holds it).
+ * Kept lines are untouched; blank lines left behind do not pile up. Nothing dropped = the text as it is.
+ */
+export function notesBody(description: string, read: readonly number[], name: string): string {
+  const text = String(description ?? '');
+  const lines = text.split(/\r\n|\r|\n/);
+  const drop = new Set(read.filter((n) => Number.isInteger(n) && n >= 0 && n < lines.length));
+  const first = lines.findIndex((l) => bare(l) !== '');
+  if (first >= 0 && bare(lines[first]) === name) drop.add(first);
+  if (drop.size === 0) return text;
+  const kept: string[] = [];
+  lines.forEach((line, n) => {
+    if (drop.has(n)) return;
+    const blank = line.trim() === '';
+    if (blank && (kept.length === 0 || kept[kept.length - 1].trim() === '')) return;
+    kept.push(line);
+  });
+  while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+  return kept.join('\n');
 }
 
 /** Clean decimal string (no float noise); '' for 0 / null / NaN / non-positive. */

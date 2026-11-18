@@ -5,8 +5,8 @@ import { createPeakClient } from '@/lib/peak/mcp-client';
 import { createPeakReader } from '@/lib/peak/read';
 import { peakErrorLabel } from '@/lib/peak/error-label';
 import { bangkokTodayISO } from '@/lib/jobs';
-import { addDaysISO } from '@/lib/peak-order/mapper';
-import { specFromText, type SpecFields } from '@/lib/peak-order/spec-from-text';
+import { addDaysISO, firstLine, notesBody } from '@/lib/peak-order/mapper';
+import { linesReadFrom, specFromText, type SpecFields } from '@/lib/peak-order/spec-from-text';
 import { sql } from '@/lib/postgres';
 
 export const dynamic = 'force-dynamic';
@@ -54,7 +54,8 @@ async function peakSide() {
   const rows = await reader.newestQuotations({ dateStart }, NEWEST);
 
   const t0 = Date.now();
-  type Line = { q: number | null; d: string; f: SpecFields; s: string };
+  /** n = the text the order's notes would hold once the read lines and the name line are left out (spec §13). */
+  type Line = { q: number | null; d: string; f: SpecFields; s: string; n: string };
   const slots: Array<{ code: string; status: string; lines: Line[] } | null> = rows.map(() => null);
   let next = 0;
   let failed = 0;
@@ -79,7 +80,8 @@ async function peakSide() {
           // The rules read the text as Peak sent it; only the copy shown here is masked.
           lines: q.lines.map((l) => {
             const spec = specFromText(l.description);
-            return { q: l.quantity, d: redact(l.description), f: spec.fields, s: spec.summary };
+            const notes = notesBody(l.description, linesReadFrom(l.description), firstLine(l.description));
+            return { q: l.quantity, d: redact(l.description), f: spec.fields, s: spec.summary, n: redact(notes) };
           }),
         };
       } catch {
@@ -90,10 +92,19 @@ async function peakSide() {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
   const quotations = slots.filter((s) => s !== null);
-  const coverage = { lines: 0, anyField: 0, perField: {} as Record<string, number> };
+  const textLines = (s: string): number => s.split(/\r\n|\r|\n/).filter((x) => x.trim() !== '').length;
+  const coverage = {
+    lines: 0,
+    anyField: 0,
+    perField: {} as Record<string, number>,
+    notes: { linesBefore: 0, linesAfter: 0, shorter: 0 },
+  };
   for (const q of quotations) {
     for (const l of q.lines) {
       coverage.lines++;
+      coverage.notes.linesBefore += textLines(l.d);
+      coverage.notes.linesAfter += textLines(l.n);
+      if (l.n !== l.d) coverage.notes.shorter++;
       const keys = Object.keys(l.f);
       if (keys.length > 0) coverage.anyField++;
       for (const k of keys) coverage.perField[k] = (coverage.perField[k] ?? 0) + 1;

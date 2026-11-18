@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PeakQuotation } from '@/lib/peak/read';
-import { EMPTY_SPEC, specForUnit, specFromText, type SpecFields } from '@/lib/peak-order/spec-from-text';
+import { EMPTY_SPEC, linesReadFrom, specForUnit, specFromText, type SpecFields } from '@/lib/peak-order/spec-from-text';
 
 // Every description below is a real quotation line (production census, 2026-11-18).
 const ROWS: Array<[string, string, SpecFields]> = [
@@ -117,6 +117,9 @@ const ROWS: Array<[string, string, SpecFields]> = [
   ['46 calendar whose first line does not say ปฏิทิน',
     'วารสารประชาสัมพันธ์\nขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษอาร์ต 230 แกรม เคลือบเงา\nภู่ปฏิทิน ขนาด 7x15 นิ้ว\nพิมพ์ 4สี กระดาษปอนด์ 55g\nเพิ่มภู่โฆษณาของลูกค้า',
     { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230 แกรม', innerColor: '4สี', coatGloss: true }],
+  ['48 calendar: the ภู่ part (size, colour, paper, weight) written on one line — the first real /order after go-live',
+    'ปฏิทินแขวน ขนาด 15x21 นิ้ว\nปฏิทินขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษการ์ดอาร์ตหน้าเดียว 230 แกรม เคลือบเงา\nภู่ปฏิทิน ขนาด 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์ 55 แกรม\nเข้าหัวเหล็ก',
+    { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'การ์ดอาร์ตหน้าเดียว 230 แกรม', innerColor: '4สี', coatGloss: true }],
 ];
 
 describe('specFromText — real quotation lines', () => {
@@ -334,5 +337,114 @@ describe('specForUnit', () => {
     expect(specForUnit(undefined, ['a'])).toEqual(EMPTY_SPEC);
     expect(specForUnit(q, null)).toEqual(EMPTY_SPEC);
     expect(specForUnit({ ...q, lines: undefined as unknown as PeakQuotation['lines'] }, ['a'])).toEqual(EMPTY_SPEC);
+  });
+});
+
+// Spec §13: the 0-based lines whose WHOLE content went into the fields — those are the
+// lines the order's notes may leave out. Anything else on a line keeps the line.
+describe('linesReadFrom — lines that went completely into the fields', () => {
+  it("คุณนุ๊ก's first real order (row 48): the ป้าย line and the paper line; the ภู่ part stays", () => {
+    // 0 name + size · 1 ป้าย size + colour · 2 paper + coating · 3 ภู่ · 4 เข้าหัวเหล็ก
+    expect(linesReadFrom(ROWS[47][1])).toEqual([1, 2]);
+  });
+  it('the notebook he asked about first (row 5): inner paper line and cover paper line', () => {
+    // 0 สมุดบันทึก ขนาดเอ 5 · 1 เนื้อใน 80 แผ่น · 2 inner paper + 1 สี-น้ำเงิน · 3 cover paper + 4 สี
+    // 4 ปกนอกเคลือบ… ("นอก" is not in a field) · 5 binding + ไดคัทมุม
+    expect(ROWS[4][1].split('\n')[3]).toContain('ปก อาร์ทการ์ด');
+    expect(linesReadFrom(ROWS[4][1])).toEqual([2, 3]);
+  });
+
+  // Every real row, read by eye on 2026-11-18 (one entry per ROWS entry, in order):
+  // each listed line holds nothing but values that are in the fields.
+  const READ: number[][] = [
+    [2], [], [2], [2, 3], [2, 3], [1, 3, 4], [1], [2, 3, 4], [], [1, 2],
+    [1, 2], [], [3, 4], [2], [], [1, 2], [2], [1], [1], [],
+    [1], [], [1], [1], [1], [1, 2], [2, 3], [1], [1, 3, 4], [3],
+    [1, 4], [1, 2], [], [], [1, 2], [], [1], [], [1], [1],
+    [], [], [], [], [1], [3], [1, 2], [1, 2],
+  ];
+  it('every real quotation line: exactly the lines that are nothing but the spec', () => {
+    expect(READ).toHaveLength(ROWS.length);
+    ROWS.forEach(([name, d], i) => {
+      expect([name, linesReadFrom(d)]).toEqual([name, READ[i]]);
+    });
+  });
+
+  it.each<[string, string, number[]]>([
+    ['size line and colour line', 'ใบปลิว\nขนาด A4\nพิมพ์ 4 สี', [1, 2]],
+    ['a line of its own with no product word', 'ขนาด A4\nพิมพ์ 4 สี', [0, 1]],
+    ['paper + colour + coating on one line', 'โบรชัวร์\nกระดาษอาร์ต 130 แกรม พิมพ์ 4 สี เคลือบด้าน', [1]],
+    ['cover line and inner line', 'หนังสือ\nปก อาร์ตการ์ด 260 แกรม พิมพ์ 4 สี\nเนื้อใน ปอนด์ 80 แกรม พิมพ์ 1 สี', [1, 2]],
+    ['an inner line carried from the line above', 'สมุด\nเนื้อใน 100 หน้า\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี', [2]],
+    ['colour name that went into the note field', 'สมุด\nเนื้อใน พิมพ์ 1 สี-น้ำเงิน', [1]],
+    ['binding words', 'สมุด\nเข้าเล่มแบบห่วงลวดกระดูกงู', [1]],
+    ['เย็บมุงหลังคา', 'หนังสือ\nเย็บมุงหลังคา', [1]],
+    ['ปริ้น', 'นามบัตร\nปริ้น 4 สี', [1]],
+    ['เข้าเล่มไสกาว', 'หนังสือ\nเข้าเล่มไสกาว', [1]],
+    ['เคลือบลามิเนตด้าน', 'นามบัตร\nเคลือบลามิเนตด้าน', [1]],
+    ['Spot UV', 'นามบัตร\nเคลือบ Spot UV', [1]],
+    ['coating on its own line below the inner line (the line itself names no part)', 'หนังสือ\nเนื้อใน 100 หน้า\nเคลือบเงา', [2]],
+    ['the same size written twice', 'ใบปลิว ขนาด A4\nขนาด A4', [1]],
+    ['"N สี ทั้งเล่ม" that filled both colours', 'หนังสือ\nพิมพ์ 4 สี ทั้งเล่ม\nปก อาร์ตการ์ด 260 แกรม\nเนื้อใน ปอนด์ 80 แกรม', [1, 2, 3]],
+    ['bullets', 'ใบปลิว\n- ขนาด A4\n• พิมพ์ 4 สี', [1, 2]],
+    ['CRLF', 'ใบปลิว\r\nขนาด A4\r\nพิมพ์ 4 สี', [1, 2]],
+    ['tab, blank lines', 'ใบปลิว\n\nขนาด\tA4\n', [2]],
+  ])('read: %s', (_name, d, expected) => {
+    expect(linesReadFrom(d)).toEqual(expected);
+  });
+
+  it.each<[string, string, number[]]>([
+    ['a number left over', 'โบรชัวร์\nพิมพ์ 4 สี 2 หน้า', []],
+    ['a bare number left over', 'โบรชัวร์\nพิมพ์ 4 สี (2)', []],
+    ['another size that is not the one in the field', 'ใบปลิว\nขนาด A4\nA3', [1]],
+    ['two colour names: the colour is in the field, the names are not', 'สมุด\nเนื้อใน พิมพ์ 1 สี-น้ำเงิน\nพิมพ์ 1 สี-แดง', []],
+    ['หน้าเดียว left over', 'โบรชัวร์\nพิมพ์ 4 สี หน้าเดียว', []],
+    ['a quantity after the paper', 'นามบัตร\nกระดาษอาร์ตการ์ด 300 แกรม จำนวน 200 ใบ', []],
+    ['ปกนอก', 'หนังสือ\nปกนอกเคลือบด้าน', []],
+    ['ปกแข็ง heading a line', 'หนังสือ\nปกแข็ง พิมพ์ 4 สี', []],
+    ['ปกอ่อน after the binding', 'หนังสือ\nเข้าเล่มไสกาวปกอ่อน', []],
+    ['the wire colour', 'สมุด\nเข้าห่วงกระดูกงู สีขาว', []],
+    ['half an A size is a derived value', 'ใบปลิว\nขนาดครึ่งเอ 4\nพิมพ์ 4 สี', [2]],
+    ['ขาวดำ names a colour the field does not hold', 'แบบฟอร์ม\nกระดาษปอนด์ 80 แกรม\nพิมพ์ขาวดำ', [1]],
+    ['a size written with สูง', 'กล่อง\nขนาด 10 x สูง 15 ซม.', []],
+    ['a dimension without a unit fills nothing', 'ใบปลิว\nขนาด 21x29.7', []],
+    ['PVC names the film', 'นามบัตร\nเคลือบ PVC ด้าน', []],
+    ['coating written for the inner pages', 'หนังสือ\nปก อาร์ตการ์ด 260 แกรม พิมพ์ 4 สี\nเนื้อใน อาร์ต 120 แกรม พิมพ์ 4 สี เคลือบเงา', [1]],
+    ['"N สี ทั้งเล่ม" that filled only the cover colour', 'หนังสือ A5\nพิมพ์ 4 สี ทั้งเล่ม\nเนื้อใน พิมพ์ 1 สี', []],
+    ['two papers: no field, nothing read', 'แผ่นพับ\nกระดาษอาร์ต 130 แกรม\nกระดาษอาร์ต 160 แกรม', []],
+    ['a choice ticks nothing', 'ใบปลิว\nเคลือบเงาหรือด้าน', []],
+    ['gloss and matte both named', 'หนังสือ\nเคลือบเงา\nเคลือบด้าน', []],
+    ['paper outside the sections is not used', 'หนังสือ\nกระดาษปอนด์ 80 แกรม\nปก อาร์ตการ์ด 260 แกรม', [2]],
+    ['colour outside the sections is not used', 'หนังสือ\nพิมพ์ 4 สี\nปก พิมพ์ 4 สี\nเนื้อใน พิมพ์ 1 สี', [2, 3]],
+    ['a colour note that was not understood', 'สมุด\nเนื้อใน พิมพ์ 1 สี (pantone 286)', []],
+    ['a condition about the binding', 'หนังสือ\nเข้าเล่มไสกาว\nหากไสกาวไม่ได้ให้แจ้ง', [1]],
+    ['the ภู่ / ไส้ part of a calendar', 'ปฏิทินตั้งโต๊ะ\nไส้ พิมพ์ 4 สี\nกระดาษปอนด์ 100 แกรม', []],
+    ['ป้าย is a filler word only in a calendar', 'สติ๊กเกอร์\nป้าย ขนาด A4', []],
+    ['สกรีน is not พิมพ์', 'ถุงผ้า\nสกรีน 1 สี', []],
+    ['แบบพิมพ์ is a product, not two filler words', 'งานราชการ\nแบบพิมพ์ ขนาด A4', []],
+    ['a filler word glued to another word', 'ใบปลิว\nงานพิมพ์ 4 สี', []],
+    ['coating written right after เนื้อใน', 'หนังสือ\nเนื้อใน เคลือบเงา', []],
+    ['a line with nothing read on it', 'ใบปลิว\nพิมพ์', []],
+    ['too long: lines after the limit are never read', 'ขนาด A4\n' + 'ก '.repeat(1989) + 'กระดาษอาร์ต 230 แกรม\nเคลือบด้าน', [0]],
+  ])('kept: %s', (_name, d, expected) => {
+    expect(linesReadFrom(d)).toEqual(expected);
+  });
+
+  it('any input; never throws', () => {
+    for (const v of [null, undefined, 42, {}, [], '']) expect(linesReadFrom(v)).toEqual([]);
+    expect(linesReadFrom('ก'.repeat(5000))).toEqual([]);
+  });
+
+  it('reading the lines changes nothing about the fields', () => {
+    for (const [, d, expected] of ROWS) {
+      linesReadFrom(d);
+      expect(specFromText(d).fields).toEqual(expected);
+    }
+  });
+
+  it('a line is read only when the text has a field for it: no fields, no lines', () => {
+    for (const [, d] of ROWS) {
+      if (Object.keys(specFromText(d).fields).length === 0) expect(linesReadFrom(d)).toEqual([]);
+    }
   });
 });

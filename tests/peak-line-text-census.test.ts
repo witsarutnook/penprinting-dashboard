@@ -54,7 +54,7 @@ describe('GET /api/admin/peak/line-text-census', () => {
       if (code === 'QO-2') return null; // vanished between list and get
       if (code === 'QO-1') throw new Error('boom');
       return quotation('QO-3', [
-        { description: 'ใบปลิว A4\nกระดาษอาร์ตมัน 130 แกรม พิมพ์ 4 สี 2 หน้า', quantity: 5000 },
+        { description: 'ใบปลิว A4\nกระดาษอาร์ตมัน 130 แกรม พิมพ์ 4 สี 2 หน้า\nเคลือบด้าน', quantity: 5000 },
         { description: 'ติดต่อ 081-234-5678 หรือ 043123456 / a.b@example.com เลขบัญชี 1234567890123', quantity: null },
       ]);
     });
@@ -75,11 +75,14 @@ describe('GET /api/admin/peak/line-text-census', () => {
         lines: [
           {
             q: 5000,
-            d: 'ใบปลิว A4\nกระดาษอาร์ตมัน 130 แกรม พิมพ์ 4 สี 2 หน้า',
-            f: { size: 'A4', paperInner: 'อาร์ตมัน 130 แกรม', innerColor: '4สี' },
-            s: 'ขนาด A4 · อาร์ตมัน 130 แกรม 4สี',
+            d: 'ใบปลิว A4\nกระดาษอาร์ตมัน 130 แกรม พิมพ์ 4 สี 2 หน้า\nเคลือบด้าน',
+            f: { size: 'A4', paperInner: 'อาร์ตมัน 130 แกรม', innerColor: '4สี', coatMatte: true },
+            s: 'ขนาด A4 · อาร์ตมัน 130 แกรม 4สี · เคลือบด้าน',
+            // spec §13: the name line and the line that is nothing but a ticked box leave the notes
+            n: 'กระดาษอาร์ตมัน 130 แกรม พิมพ์ 4 สี 2 หน้า',
           },
-          { q: null, d: 'ติดต่อ [phone] หรือ [phone] / [email] เลขบัญชี [number]', f: {}, s: '' },
+          // the whole line is the order's name -> nothing left for the notes; still masked
+          { q: null, d: 'ติดต่อ [phone] หรือ [phone] / [email] เลขบัญชี [number]', f: {}, s: '', n: '' },
         ],
       },
     ]);
@@ -87,7 +90,8 @@ describe('GET /api/admin/peak/line-text-census', () => {
     expect(body.peak.coverage).toEqual({
       lines: 2,
       anyField: 1,
-      perField: { size: 1, paperInner: 1, innerColor: 1 },
+      perField: { size: 1, paperInner: 1, innerColor: 1, coatMatte: 1 },
+      notes: { linesBefore: 4, linesAfter: 1, shorter: 2 },
     });
     // identity and money never leave the server
     expect(text).not.toContain('C-SECRET');
