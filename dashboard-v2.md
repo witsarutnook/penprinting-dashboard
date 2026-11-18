@@ -373,7 +373,7 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
-### 🧾 `/order` เติมช่องสเปกจากข้อความใบเสนอราคา — กฎคำหลัก ไม่มี AI (2026-11-18, tests 1525→1715)
+### 🧾 `/order` เติมช่องสเปกจากข้อความใบเสนอราคา + หมายเหตุไม่ซ้ำกับช่อง — กฎคำหลัก ไม่มี AI (2026-11-18, tests 1525→1870)
 - **ที่มา**: คุณนุ๊กเปิดใบที่สร้างจาก `/order` แล้วสเปกทั้งหมดอยู่ในหมายเหตุ ("ไม่ได้ติ๊กข้อมูลให้เหรอ") — เป็นส่วนที่สเปก 11/14 เว้นไว้ "ค่อยเพิ่มทีหลัง". เลือกกฎคำหลัก (ไม่ใช้ AI) เพราะ "✅ สร้างงาน" ขึ้นบอร์ดโดยไม่มีคนตรวจฟอร์ม — หลัก **ไม่แน่ใจ = เว้นว่าง**, หมายเหตุไม่ถูกแตะ. Spec [`2026-11-18-peak-order-spec-from-text-design.md`](docs/superpowers/specs/2026-11-18-peak-order-spec-from-text-design.md) · plan [`2026-11-18-peak-order-spec-from-text.md`](docs/superpowers/plans/2026-11-18-peak-order-spec-from-text.md)
 - **ตัวอ่าน** [`lib/peak-order/spec-from-text.ts`](lib/peak-order/spec-from-text.ts) — ฟังก์ชันล้วน `specFromText(description) → { fields, summary }`: ขนาด (+หน่วย) · กระดาษปก/เนื้อใน · สีปก/เนื้อใน + ชื่อสี · เคลือบเงา/ด้าน/UV/Spot UV · ไสกาว/มุงหลังคา/กระดูกงู · ปรุ · Print Digital. งานแผ่นเดียวลงช่อง "เนื้อใน" ตามที่ทีมกรอกจริง (69% ของ 500 ใบล่าสุด). ไม่ติ๊กไดคัท (ฟอร์มมี 2 ช่อง ข้อความไม่บอกว่าแบบไหน)
 - **ต่อเข้า 2 ที่ จากผลเดียวกัน** (`specForUnit` อ่านจาก snapshot ที่เก็บในร่าง — ไม่เรียก Peak เพิ่ม ไม่เพิ่มคอลัมน์): `buildOrderBody` (ทั้ง "สร้างงาน" และ "ใบร่าง"; spec ถูก spread ก่อนค่าจาก Peak/LINE จึงทับไม่ได้) · การ์ดสรุปใน LINE บรรทัด **"สเปกที่อ่านได้: …"** ให้คนสั่งเห็นก่อนกด ✅. แบบ "รวมหลายรายการ" ไม่เติม
