@@ -6,6 +6,7 @@ import { createPeakReader } from '@/lib/peak/read';
 import { peakErrorLabel } from '@/lib/peak/error-label';
 import { bangkokTodayISO } from '@/lib/jobs';
 import { addDaysISO } from '@/lib/peak-order/mapper';
+import { specFromText, type SpecFields } from '@/lib/peak-order/spec-from-text';
 import { sql } from '@/lib/postgres';
 
 export const dynamic = 'force-dynamic';
@@ -53,8 +54,8 @@ async function peakSide() {
   const rows = await reader.newestQuotations({ dateStart }, NEWEST);
 
   const t0 = Date.now();
-  const slots: Array<{ code: string; status: string; lines: Array<{ q: number | null; d: string }> } | null> =
-    rows.map(() => null);
+  type Line = { q: number | null; d: string; f: SpecFields; s: string };
+  const slots: Array<{ code: string; status: string; lines: Line[] } | null> = rows.map(() => null);
   let next = 0;
   let failed = 0;
   let skipped = 0;
@@ -75,7 +76,11 @@ async function peakSide() {
         slots[i] = {
           code: q.code,
           status: q.status,
-          lines: q.lines.map((l) => ({ q: l.quantity, d: redact(l.description) })),
+          // The rules read the text as Peak sent it; only the copy shown here is masked.
+          lines: q.lines.map((l) => {
+            const spec = specFromText(l.description);
+            return { q: l.quantity, d: redact(l.description), f: spec.fields, s: spec.summary };
+          }),
         };
       } catch {
         failed++;
@@ -85,13 +90,23 @@ async function peakSide() {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
   const quotations = slots.filter((s) => s !== null);
+  const coverage = { lines: 0, anyField: 0, perField: {} as Record<string, number> };
+  for (const q of quotations) {
+    for (const l of q.lines) {
+      coverage.lines++;
+      const keys = Object.keys(l.f);
+      if (keys.length > 0) coverage.anyField++;
+      for (const k of keys) coverage.perField[k] = (coverage.perField[k] ?? 0) + 1;
+    }
+  }
   return {
     ok: true as const,
     dateStart,
     asked: rows.length,
     failed,
     skipped,
-    lineCount: quotations.reduce((n, q) => n + q.lines.length, 0),
+    lineCount: coverage.lines,
+    coverage,
     quotations,
   };
 }
@@ -151,7 +166,9 @@ async function formSide() {
  *
  * It answers two questions before any rule is written (2026-11-18):
  *  1. peak — how do people actually word a quotation line (size / paper / colours /
- *     coating / binding)? Line text + quantity of the newest quotations.
+ *     coating / binding)? Line text + quantity of the newest quotations, and (plan
+ *     Task 2) what the rule set `specFromText` reads from each line — checked by
+ *     คุณนุ๊ก before the rules are wired into order creation.
  *  2. form — which words does the team put in the spec fields of an order today?
  *     Counts and most common values only, over the newest non-draft, non-photobook
  *     orders that did not come from /order.
