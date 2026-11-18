@@ -45,11 +45,23 @@ const PAPER_MAX = 60;
 const THAI = /[\u0E00-\u0E7F]/;
 const isThai = (ch: string | undefined): boolean => ch !== undefined && THAI.test(ch);
 
-/** Where on a line a value was read (spec §13): the notes may leave out a line that is nothing but these. */
+/** A place on a line. */
 interface Mark {
   line: number;
   start: number;
   end: number;
+}
+
+type Kind = 'size' | 'paper' | 'colour' | 'note' | 'coat' | 'bind' | 'flag';
+
+/**
+ * The place a value that reached a field is written (spec §13).
+ * `asWritten` = the text there says no more than the field holds; when it says more
+ * ("ขาวดำ", "10 x สูง 15", "เคลือบ PVC ด้าน") its line always stays in the notes.
+ */
+interface Found extends Mark {
+  kind: Kind;
+  asWritten: boolean;
 }
 
 // ─── sections ───────────────────────────────────────────────────────
@@ -115,6 +127,8 @@ const NOTE_DASH = new RegExp(`^\\s*[-–]\\s*(${COLOUR_RUN})`);
 const NOTE_PAREN = new RegExp(`^\\s*\\(\\s*(${COLOUR_RUN})\\s*\\)`);
 const NOTE_SPACE = new RegExp(`^\\s+(${COLOUR_RUN})`);
 const NOTE_LATER = new RegExp(`สี\\s*(${COLOUR_WORD})`, 'g');
+/** Between an ink count and a colour name written later only a page / side count may stand ("1 สี 1 หน้า สีทอง"). */
+const NOTE_GAP = /^(?:[\s\d,.()\-–]|หน้า|ด้าน|หลัง|เดียว)*$/;
 
 /**
  * Is this "N สี" an ink count? Yes when a print verb comes before it (and no
@@ -149,17 +163,13 @@ function colourNote(rest: string): Note | null {
   const space = NOTE_SPACE.exec(rest);
   if (space) return whole(space);
   for (const later of rest.matchAll(NOTE_LATER)) {
-    // "สีทอง" as a word of its own — not หูเชือกสีดำ, ฟอยล์สีทอง, and not a paper's colour.
+    // "สีทอง" as a word of its own — not หูเชือกสีดำ, ฟอยล์สีทอง; and nothing but a page count before it —
+    // not a paper's colour, not the wire's ("เข้าเล่มห่วงลวด สีดำ"), not a foil's.
     if (isThai(rest[later.index - 1]) || isThai(rest[later.index + later[0].length])) continue;
-    if (rest.slice(0, later.index).includes('กระดาษ')) return null;
+    if (!NOTE_GAP.test(rest.slice(0, later.index))) return null;
     return { text: later[1], start: later.index, end: later.index + later[0].length };
   }
   return null;
-}
-
-/** The place a value is written — kept only when it is written as the field holds it. */
-interface Found extends Mark {
-  kind: 'paper' | 'colour' | 'note';
 }
 
 interface Bucket {
@@ -190,7 +200,7 @@ function readSegment(
     const p = paperFrom(text.slice(i + 6), i > 0 && isThai(text[i - 1]));
     if (p) {
       into.paper.add(p.value);
-      into.found.push({ kind: 'paper', line, start: offset + i, end: offset + i + 6 + p.length });
+      into.found.push({ kind: 'paper', asWritten: true, line, start: offset + i, end: offset + i + 6 + p.length });
     }
   }
   if (afterMarker) {
@@ -198,7 +208,7 @@ function readSegment(
     const p = paperFrom(text.trimStart(), true);
     if (p) {
       into.paper.add(p.value);
-      into.found.push({ kind: 'paper', line, start: offset + lead, end: offset + lead + p.length });
+      into.found.push({ kind: 'paper', asWritten: true, line, start: offset + lead, end: offset + lead + p.length });
     }
   }
   for (const m of text.matchAll(COLOUR)) {
@@ -207,21 +217,19 @@ function readSegment(
     const end = m.index + m[0].length;
     const rest = text.slice(end);
     into.colour.add(value);
-    // "ขาวดำ" also names the ink, which the field does not hold: its line always stays in the notes.
+    // "ขาวดำ" also names the ink, which the field does not hold.
     const asWritten = m[1] !== undefined || m[0].startsWith('สีเดียว');
-    if (asWritten) into.found.push({ kind: 'colour', line, start: offset + m.index, end: offset + end });
+    into.found.push({ kind: 'colour', asWritten, line, start: offset + m.index, end: offset + end });
     const book = whole ? WHOLE_BOOK.exec(rest) : null;
     if (whole && book) {
       whole.values.add(value);
-      if (asWritten) {
-        whole.found.push({ kind: 'colour', line, start: offset + m.index, end: offset + end + book[0].length });
-      }
+      whole.found.push({ kind: 'colour', asWritten, line, start: offset + m.index, end: offset + end + book[0].length });
     }
     if (!m[1] || m[1] === '1' || m[1] === '2') {
       const note = colourNote(rest);
       if (note) {
         into.note.add(note.text);
-        into.found.push({ kind: 'note', line, start: offset + end + note.start, end: offset + end + note.end });
+        into.found.push({ kind: 'note', asWritten: true, line, start: offset + end + note.start, end: offset + end + note.end });
       }
     }
   }
@@ -251,8 +259,8 @@ function sizeUnitOf(raw: string | undefined): string {
   return '';
 }
 
-/** Returns where the size that went into the field is written (as the field holds it). */
-function readSize(lines: string[], fields: SpecFields): Mark[] {
+/** Returns every place the size that went into the field is written. */
+function readSize(lines: string[], fields: SpecFields): Found[] {
   const tokens: Array<
     Mark & { key: string; value: string; unit: string; dim: boolean; anchored: boolean; qualified: boolean; asWritten: boolean }
   > = [];
@@ -297,7 +305,9 @@ function readSize(lines: string[], fields: SpecFields): Mark[] {
   } else {
     return [];
   }
-  return tokens.filter((t) => t.key === first.key && t.asWritten);
+  return tokens
+    .filter((t) => t.key === first.key)
+    .map((t) => ({ kind: 'size', asWritten: t.asWritten, line: t.line, start: t.start, end: t.end }));
 }
 
 // ─── checkboxes ─────────────────────────────────────────────────────
@@ -335,14 +345,11 @@ function states(lines: string[], word: RegExp, after?: RegExp, notAfter?: RegExp
 /** A film named with the coating ("เคลือบ PVC ด้าน") is more than the checkbox holds. */
 const COAT_FILM = /pvc|opp/i;
 
-/**
- * Ticks the boxes; returns where they are written. `forInner` = that place is in a part the
- * text itself marks as เนื้อใน — the form's coating boxes cannot say that, so it is not returned.
- */
-function readFlags(lines: string[], fields: SpecFields, forInner: (line: number, at: number) => boolean): Mark[] {
-  const used: Mark[] = [];
-  const glossAt: Mark[] = [];
-  const matteAt: Mark[] = [];
+/** Ticks the boxes; returns where they are written. */
+function readFlags(lines: string[], fields: SpecFields): Found[] {
+  const found: Found[] = [];
+  const glossAt: Found[] = [];
+  const matteAt: Found[] = [];
   let gloss = false;
   let matte = false;
   lines.forEach((line, n) => {
@@ -366,30 +373,39 @@ function readFlags(lines: string[], fields: SpecFields, forInner: (line: number,
         kind = COAT_GLOSS;
       } else continue;
       const words = kind.exec(tail)?.[0] ?? '';
-      if (COAT_FILM.test(words) || forInner(n, m.index)) continue;
-      const mark: Mark = { line: n, start: m.index, end: m.index + m[0].length + words.length };
-      (kind === COAT_MATTE ? matteAt : kind === COAT_GLOSS ? glossAt : used).push(mark);
+      const mark: Found = {
+        kind: 'coat',
+        asWritten: !COAT_FILM.test(words),
+        line: n,
+        start: m.index,
+        end: m.index + m[0].length + words.length,
+      };
+      (kind === COAT_MATTE ? matteAt : kind === COAT_GLOSS ? glossAt : found).push(mark);
     }
   });
   // Both named = a list of options, not a spec.
   if (gloss !== matte) {
     if (gloss) fields.coatGloss = true;
     else fields.coatMatte = true;
-    used.push(...glossAt, ...matteAt);
+    found.push(...glossAt, ...matteAt);
   }
-  const tick = (key: 'coatSpotUV' | 'glue' | 'saddle' | 'spine' | 'perf' | 'digital', marks: Mark[]): void => {
+  const tick = (
+    key: 'coatSpotUV' | 'glue' | 'saddle' | 'spine' | 'perf' | 'digital',
+    kind: Kind,
+    marks: Mark[],
+  ): void => {
     if (marks.length === 0) return;
     fields[key] = true;
-    used.push(...marks);
+    for (const m of marks) found.push({ ...m, kind, asWritten: true });
   };
-  tick('coatSpotUV', states(lines, /spot\s*uv|สปอต\s*ยูวี/gi));
-  tick('glue', states(lines, /ไสกาว/g));
-  tick('saddle', states(lines, /มุงหลังคา(?![\u0E00-\u0E7F])/g));
-  tick('spine', states(lines, /กระดูกงู|เข้าห่วง|ห่วงลวด/g));
-  tick('perf', states(lines, /ปรุ(?![\u0E00-\u0E7F])/g));
+  tick('coatSpotUV', 'coat', states(lines, /spot\s*uv|สปอต\s*ยูวี/gi));
+  tick('glue', 'bind', states(lines, /ไสกาว/g));
+  tick('saddle', 'bind', states(lines, /มุงหลังคา(?![\u0E00-\u0E7F])/g));
+  tick('spine', 'bind', states(lines, /กระดูกงู|เข้าห่วง|ห่วงลวด/g));
+  tick('perf', 'flag', states(lines, /ปรุ(?![\u0E00-\u0E7F])/g));
   // "พิมพ์ … ดิจิตอล" — not a title (Digital Marketing), not a digital proof.
-  tick('digital', states(lines, /ดิจิตอล|ดิจิทัล|digital/gi, /พิมพ์|ปริ้น|print/i, /ปรู๊ฟ|ปรุ๊ฟ|proof/i));
-  return used;
+  tick('digital', 'flag', states(lines, /ดิจิตอล|ดิจิทัล|digital/gi, /พิมพ์|ปริ้น|print/i, /ปรู๊ฟ|ปรุ๊ฟ|proof/i));
+  return found;
 }
 
 // ─── summary ────────────────────────────────────────────────────────
@@ -428,32 +444,53 @@ function only(values: Set<string>): string {
 
 // ─── lines that are nothing but the spec (spec §13) ─────────────────
 
-/**
- * Words that say nothing by themselves once the value next to them is in a field.
- * Whatever is left of a word they are part of still counts ("แบบพิมพ์", "งานพิมพ์", "เย็บกี่" stay).
- */
-const FILLER = /เข้าเล่มแบบ|เข้าเล่ม|พิมพ์|ปริ้น|ขนาด|เย็บ/g;
-/** In a calendar the product word and "ป้าย" (the sheet the fields describe) are fillers too. */
-const FILLER_CALENDAR = new RegExp(`${FILLER.source}|ปฏิทิน|ป้าย`, 'g');
-/** A letter or a digit: something the fields do not hold. */
-const SOMETHING = /[\p{L}\p{N}]/u;
+/** A letter or a digit. */
+const WORD = /[\p{L}\p{N}]/u;
+/** What may be left of a line once its values are out: spaces, plain punctuation, a stray tone mark. */
+const NOTHING = /^[\s\-,.()\p{M}]*$/u;
 
-/** Is the line nothing but the values at `marks` and filler words? */
-function nothingElse(line: string, marks: Mark[], words: RegExp): boolean {
+/**
+ * The word that introduces a value says nothing once the value is in a field — but only
+ * right before that value ("พิมพ์ 4 สี", "ขนาด A4", "เข้าเล่มแบบไสกาว"). Anywhere else it
+ * stays ("ขนาดพิมพ์ 10x10", "พิมพ์ 1 สี เข้าเล่ม"). "ปริ้น" is never one: it may be the only
+ * word that says the job is a digital print.
+ */
+type Intro = Partial<Record<Kind, RegExp>>;
+const INTRO: Intro = {
+  colour: /พิมพ์\s*$/,
+  size: /ขนาด\s*[:：]?\s*$/,
+  bind: /(?:เข้าเล่ม(?:แบบ)?\s*)?(?:เย็บ\s*)?$/,
+  flag: /พิมพ์\s*$/,
+};
+/**
+ * In a calendar the fields describe the ป้าย: "ขนาดป้าย 15x21", "ป้ายพิมพ์ 4 สี".
+ * "ปฏิทิน" before it goes too when the order's name (the first line) already says ปฏิทิน.
+ */
+const introCalendar = (named: boolean): Intro => ({
+  ...INTRO,
+  colour: /(?:ป้าย\s*)?พิมพ์\s*$/,
+  size: new RegExp(`${named ? '(?:ปฏิทิน\\s*)?' : ''}(?:ป้าย\\s*)?ขนาด\\s*(?:ป้าย\\s*)?[:：]?\\s*$`),
+});
+
+/** Is the line nothing but its bullet and what stands at `marks`? */
+function nothingElse(line: string, marks: Mark[]): boolean {
   const chars = line.split('');
+  chars.fill(' ', 0, /^[\s\-•*]*/.exec(line)?.[0].length ?? 0);
   for (const m of marks) chars.fill(' ', m.start, m.end);
-  return !SOMETHING.test(chars.join('').replace(words, ' '));
+  return NOTHING.test(chars.join(''));
 }
 
 // ─── read ───────────────────────────────────────────────────────────
 
 function read(description: string): Reading {
   let text = description;
+  let cut = false;
   if (text.length > MAX_INPUT) {
     // Too long: read only the whole lines before the limit (a cut line could lose half a value).
-    const cut = text.lastIndexOf('\n', MAX_INPUT);
-    if (cut <= 0) return NOTHING_READ;
-    text = text.slice(0, cut);
+    const at = text.lastIndexOf('\n', MAX_INPUT);
+    if (at <= 0) return NOTHING_READ;
+    text = text.slice(0, at);
+    cut = true;
   }
   text = text.replace(/[\t\u00a0\u200b]/g, ' ');
   const lines = text.split(/\r\n|\r|\n/);
@@ -462,28 +499,30 @@ function read(description: string): Reading {
   const whole: Whole = { values: new Set(), found: [] };
   const calendar = text.includes('ปฏิทิน');
   const marker = calendar ? MARKER_CALENDAR : MARKER;
-  /** The lines without the ภู่ / ไส้ part — what size and the checkboxes are read from. */
+  /**
+   * The lines with the ภู่ / ไส้ part blanked out — what size and the checkboxes are read from.
+   * Same length as the lines, so a place on one is the same place on the other.
+   */
   const main: string[] = [];
-  /** The ปก / เนื้อใน words that opened a part: they name where a value goes, nothing more. */
+  /** Every ปก / เนื้อใน word that opened a part. */
   const openers: Mark[] = [];
-  /** The parts a line itself marks as เนื้อใน. */
+  /** The ปก / เนื้อใน a line begins with: it names where the values go, nothing more. (Any other one on the line stays.) */
+  const leading: Mark[] = [];
+  /** Lines that begin with ปก / เนื้อใน: they head a part. */
+  const heads = new Set<number>();
+  /** Lines with a ภู่ / ไส้ part. */
+  const subs = new Set<number>();
+  /** Lines under a heading that names two parts ("ปก/เนื้อใน"): their values are in one part's fields only. */
+  const shared = new Set<number>();
+  /** Every stretch of text that belongs to เนื้อใน, marked on its line or carried from above. */
   const innerParts: Mark[] = [];
-  /** What an unmarked line belongs to. A cover is its own line only; it never carries on. */
+  /** What an unmarked line belongs to. A cover is its own line: the line after it belongs to no part. */
   let carry: Exclude<Where, 'cover'> = 'general';
+  let joint = false;
   let sectioned = false;
   lines.forEach((line, n) => {
-    let section: Where = carry;
-    let from = 0;
-    let afterMarker = false;
-    let marked = false;
-    let kept = '';
-    const take = (end: number): void => {
-      if (section === 'sub') return;
-      const seg = line.slice(from, end);
-      kept += seg;
-      if (section === 'inner' && marked) innerParts.push({ line: n, start: from, end });
-      readSegment(seg, afterMarker, buckets[section], section === 'general' ? whole : null, n, from);
-    };
+    const hits: Array<{ start: number; end: number; next: Where }> = [];
+    let state: Where = carry;
     for (const m of line.matchAll(marker)) {
       let next: Where;
       if (m[0] === 'ปก') {
@@ -491,30 +530,63 @@ function read(description: string): Reading {
         next = 'cover';
       } else if (m[0] === 'เนื้อใน' || m[0] === 'เนิ้อใน') next = 'inner';
       else if (m[0] !== 'ป้าย') next = 'sub';
-      else if (section === 'sub') next = 'general';
-      else continue; // ป้าย outside a ภู่ / ไส้ part is ordinary text
-      take(m.index);
-      section = next;
-      if (next !== 'cover') carry = next;
-      kept += next === 'sub' ? ' ' : m[0];
-      from = m.index + m[0].length;
-      afterMarker = next === 'cover' || next === 'inner';
-      marked = true;
-      if (afterMarker) {
-        sectioned = true;
-        openers.push({ line: n, start: m.index, end: from });
+      // ป้าย ends a ภู่ / ไส้ part only at the start of a line ("เพิ่มป้ายโฆษณา" inside it does not).
+      else if (state === 'sub' && LINE_LEAD.test(line.slice(0, m.index))) next = 'general';
+      else continue; // any other ป้าย is ordinary text
+      hits.push({ start: m.index, end: m.index + m[0].length, next });
+      state = next;
+    }
+    const parts = hits.filter((h) => h.next === 'cover' || h.next === 'inner');
+    if (parts.length > 0) {
+      sectioned = true;
+      for (const p of parts) openers.push({ line: n, start: p.start, end: p.end });
+      // "… (ปก)", "… + ปก": a part named after the values. Which of them it covers is a guess,
+      // so none is read into paper / colour, and the part above carries on untouched.
+      if (WORD.test(line.slice(0, parts[0].start)) && !WORD.test(line.slice(parts[parts.length - 1].end))) {
+        main.push(line);
+        return;
       }
+      if (LINE_LEAD.test(line.slice(0, parts[0].start))) {
+        heads.add(n);
+        leading.push({ line: n, start: parts[0].start, end: parts[0].end });
+      }
+      joint = parts.length > 1;
+    } else if (joint) shared.add(n);
+
+    let section: Where = carry;
+    let from = 0;
+    let afterMarker = false;
+    let masked = '';
+    const take = (end: number): void => {
+      const seg = line.slice(from, end);
+      if (section === 'sub') {
+        masked += ' '.repeat(seg.length);
+        if (seg.trim() !== '') subs.add(n);
+        return;
+      }
+      masked += seg;
+      if (section === 'inner') innerParts.push({ line: n, start: from, end });
+      readSegment(seg, afterMarker, buckets[section], section === 'general' ? whole : null, n, from);
+    };
+    for (const h of hits) {
+      take(h.start);
+      section = h.next;
+      carry = h.next === 'cover' ? 'general' : h.next;
+      if (h.next === 'sub') subs.add(n);
+      masked += h.next === 'sub' ? ' '.repeat(h.end - h.start) : line.slice(h.start, h.end);
+      from = h.end;
+      afterMarker = h.next === 'cover' || h.next === 'inner';
     }
     take(line.length);
-    main.push(kept);
+    main.push(masked);
   });
 
   const fields: SpecFields = {};
-  /** Where the values that went into `fields` are written. */
-  const used: Mark[] = readSize(main, fields);
-  /** A field took the one value of its kind: every place that value is written is in the field. */
-  const inField = (from: Found[], kind: Found['kind']): void => {
-    for (const f of from) if (f.kind === kind) used.push(f);
+  /** Every place a value that went into `fields` is written. */
+  const found: Found[] = readSize(main, fields);
+  /** A field took the one value of its kind: every place that kind is written there is in the field. */
+  const inField = (from: Found[], kind: Kind): void => {
+    for (const f of from) if (f.kind === kind) found.push(f);
   };
 
   // No ปก / เนื้อใน anywhere = a single-sheet job: the team fills the inner fields.
@@ -553,22 +625,73 @@ function read(description: string): Reading {
   }
   // "N สี ทั้งเล่ม" is in the fields only when both colours took it.
   if (coverColor && coverColor === innerColor) inField(whole.found, 'colour');
+  found.push(...readFlags(main, fields));
 
-  const inInnerPart = (line: number, at: number): boolean =>
-    innerParts.some((p) => p.line === line && p.start <= at && at < p.end);
-  used.push(...readFlags(main, fields, inInnerPart));
+  const summary = summarise(fields, sectioned);
+  // Part of the text was not read: it may say otherwise, so no line leaves the notes.
+  if (cut) return { fields, summary, lines: [] };
 
-  // A line may leave the notes when it holds a value that is in a field and nothing else.
-  // (A line with a ภู่ / ไส้ part always stays: that word is in no field, and a line carried
-  // under it has no value in a field at all.)
-  const words = calendar ? FILLER_CALENDAR : FILLER;
-  const read: number[] = [];
+  // ── Which lines hold nothing but those values (spec §13) ──
+  const first = lines.findIndex((l) => l.trim() !== '');
+  const intro = calendar ? introCalendar(first >= 0 && lines[first].includes('ปฏิทิน')) : INTRO;
+  /**
+   * May the text of this value leave the notes? Only when the field says all of it, the part included:
+   * the coating boxes cannot say "inner pages"; size, binding and the other boxes cannot say "of the
+   * cover" / "of the inner pages"; under "ปก/เนื้อใน" paper and colour sit in one part's fields only.
+   */
+  const usable = (f: Found): boolean => {
+    if (!f.asWritten) return false;
+    if (f.kind === 'coat') return !innerParts.some((p) => p.line === f.line && p.start <= f.start && f.start < p.end);
+    if (f.kind === 'paper' || f.kind === 'colour' || f.kind === 'note') return !shared.has(f.line);
+    return !openers.some((o) => o.line === f.line);
+  };
+  const valued = new Set(found.map((f) => f.line));
+  const could = new Set<number>();
   lines.forEach((line, n) => {
-    const mine = used.filter((m) => m.line === n);
-    if (mine.length === 0) return;
-    if (nothingElse(line, [...mine, ...openers.filter((m) => m.line === n)], words)) read.push(n);
+    if (!valued.has(n)) return;
+    const mine = found.filter((f) => f.line === n && usable(f));
+    // The same colour or coating twice on a line is two sides ("4 สี / 4 สี"); the field holds one.
+    for (const kind of ['colour', 'coat'] as const) {
+      let end = -1;
+      let times = 0;
+      for (const f of mine.filter((x) => x.kind === kind).sort((x, y) => x.start - y.start)) {
+        if (f.start >= end) times++;
+        end = Math.max(end, f.end);
+      }
+      if (times > 1) return;
+    }
+    const marks: Mark[] = mine.map((f) => {
+      const lead = intro[f.kind]?.exec(line.slice(0, f.start));
+      return { line: n, start: f.start - (lead ? lead[0].length : 0), end: f.end };
+    });
+    if (nothingElse(line, [...marks, ...leading.filter((m) => m.line === n)])) could.add(n);
   });
-  return { fields, summary: summarise(fields, sectioned), lines: read };
+
+  // A line with no value in any field may be the heading of the line under it, or say something
+  // about the line above it ("ด้านหน้า", "ซอง", "ทั้ง 2 ด้าน", "หรือเคลือบเงา"): both neighbours stay.
+  const bare = (n: number): boolean => n !== first && !valued.has(n) && !heads.has(n) && !subs.has(n);
+  const near = (n: number, step: 1 | -1): number => {
+    for (let i = n + step; i >= 0 && i < lines.length; i += step) if (lines[i].trim() !== '') return i;
+    return -1;
+  };
+  const leave = new Set<number>();
+  for (const n of could) {
+    if (heads.has(n)) continue;
+    const above = near(n, -1);
+    const below = near(n, 1);
+    if ((above >= 0 && bare(above)) || (below >= 0 && bare(below))) continue;
+    leave.add(n);
+  }
+  // A ปก / เนื้อใน line heads the lines under it: it stays while one of them stays.
+  for (const n of could) {
+    if (!heads.has(n)) continue;
+    let alone = true;
+    for (let i = n + 1; alone && i < lines.length && !heads.has(i); i++) {
+      if (lines[i].trim() !== '' && !leave.has(i)) alone = false;
+    }
+    if (alone) leave.add(n);
+  }
+  return { fields, summary, lines: [...leave].sort((x, y) => x - y) };
 }
 
 /** Spec fields read from one quotation line. Any input; never throws. */
@@ -583,14 +706,14 @@ export function specFromText(description: unknown): SpecFromText {
 }
 
 /**
- * The lines of the text (0-based, split on line breaks) that went completely into the
- * fields `specFromText` returns — a value that is in a field, filler words, nothing else.
- * The order's notes may leave these lines out (spec §13). Any input; never throws.
+ * The lines of the text (0-based, split on line breaks) that the order's notes may leave out
+ * (spec §13): every word on the line is a value `specFromText` put in a field, written as the
+ * field holds it — and no line next to it needs it to be understood. Any input; never throws.
  */
 export function linesReadFrom(description: unknown): number[] {
   if (typeof description !== 'string' || description === '') return [];
   try {
-    return read(description).lines;
+    return [...read(description).lines];
   } catch {
     return [];
   }

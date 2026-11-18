@@ -3,7 +3,7 @@ import type { PeakQuotation } from '@/lib/peak/read';
 import { emptyOrderForm } from '@/lib/photobook';
 import { QTY_UNITS } from '@/lib/order-constants';
 import { NO_NAME, addDaysISO, bangkokISODate, buildOrderBody, firstLine, formatQty, notesBody, planUnits } from '@/lib/peak-order/mapper';
-import type { SpecFields } from '@/lib/peak-order/spec-from-text';
+import { linesReadFrom, type SpecFields } from '@/lib/peak-order/spec-from-text';
 
 const Q = (lines: Array<[string, string, number | null]>): PeakQuotation => ({
   code: 'QO-20261100072',
@@ -214,5 +214,19 @@ describe('notesBody — the line text for the notes', () => {
   });
   it('line numbers that are not lines of the text are ignored', () => {
     expect(notesBody('ก\n\n\nข', [5, -1, 1.5, Number.NaN], 'x')).toBe('ก\n\n\nข');
+  });
+});
+
+// The two functions number lines separately: they must agree on every kind of line break.
+describe('notesBody + linesReadFrom agree on line numbers', () => {
+  const notes = (d: string): string => notesBody(d, linesReadFrom(d), firstLine(d));
+  it.each<[string, string, string]>([
+    ['LF', 'ตั๋ว\nพิมพ์ 4 สี 1 หน้า\nกระดาษอาร์ต 260 แกรม\nเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
+    ['CRLF', 'ตั๋ว\r\nพิมพ์ 4 สี 1 หน้า\r\nกระดาษอาร์ต 260 แกรม\r\nเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
+    ['lone CR', 'ตั๋ว\rพิมพ์ 4 สี 1 หน้า\rกระดาษอาร์ต 260 แกรม\rเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
+    ['mixed breaks and a tab', 'ตั๋ว\r\nพิมพ์ 4 สี 1 หน้า\rกระดาษ\tอาร์ต 260 แกรม\nเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
+    ['blank lines between', 'ตั๋ว\n\nพิมพ์ 4 สี 1 หน้า\n\nกระดาษอาร์ต 260 แกรม\n\nเคลือบด้าน\n', 'พิมพ์ 4 สี 1 หน้า'],
+  ])('%s', (_name, d, expected) => {
+    expect(notes(d)).toBe(expected);
   });
 });

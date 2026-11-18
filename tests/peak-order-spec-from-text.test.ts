@@ -354,13 +354,13 @@ describe('linesReadFrom — lines that went completely into the fields', () => {
     expect(linesReadFrom(ROWS[4][1])).toEqual([2, 3]);
   });
 
-  // Every real row, read by eye on 2026-11-18 (one entry per ROWS entry, in order):
-  // each listed line holds nothing but values that are in the fields.
+  // Every real row, read by eye on 2026-11-18 (one entry per ROWS entry, in order): each listed line
+  // holds nothing but values that are in the fields, and no line next to it needs it to be understood.
   const READ: number[][] = [
-    [2], [], [2], [2, 3], [2, 3], [1, 3, 4], [1], [2, 3, 4], [], [1, 2],
-    [1, 2], [], [3, 4], [2], [], [1, 2], [2], [1], [1], [],
-    [1], [], [1], [1], [1], [1, 2], [2, 3], [1], [1, 3, 4], [3],
-    [1, 4], [1, 2], [], [], [1, 2], [], [1], [], [1], [1],
+    [2], [], [2], [2, 3], [2, 3], [1, 3], [1], [2, 3, 4], [], [1, 2],
+    [1, 2], [], [], [], [], [1], [2], [], [1], [],
+    [1], [], [1], [1], [], [1], [2, 3], [], [1, 3, 4], [3],
+    [1, 4], [1], [], [], [1, 2], [], [1], [], [1], [1],
     [], [], [], [], [1], [3], [1, 2], [1, 2],
   ];
   it('every real quotation line: exactly the lines that are nothing but the spec', () => {
@@ -379,11 +379,9 @@ describe('linesReadFrom — lines that went completely into the fields', () => {
     ['colour name that went into the note field', 'สมุด\nเนื้อใน พิมพ์ 1 สี-น้ำเงิน', [1]],
     ['binding words', 'สมุด\nเข้าเล่มแบบห่วงลวดกระดูกงู', [1]],
     ['เย็บมุงหลังคา', 'หนังสือ\nเย็บมุงหลังคา', [1]],
-    ['ปริ้น', 'นามบัตร\nปริ้น 4 สี', [1]],
     ['เข้าเล่มไสกาว', 'หนังสือ\nเข้าเล่มไสกาว', [1]],
     ['เคลือบลามิเนตด้าน', 'นามบัตร\nเคลือบลามิเนตด้าน', [1]],
     ['Spot UV', 'นามบัตร\nเคลือบ Spot UV', [1]],
-    ['coating on its own line below the inner line (the line itself names no part)', 'หนังสือ\nเนื้อใน 100 หน้า\nเคลือบเงา', [2]],
     ['the same size written twice', 'ใบปลิว ขนาด A4\nขนาด A4', [1]],
     ['"N สี ทั้งเล่ม" that filled both colours', 'หนังสือ\nพิมพ์ 4 สี ทั้งเล่ม\nปก อาร์ตการ์ด 260 แกรม\nเนื้อใน ปอนด์ 80 แกรม', [1, 2, 3]],
     ['bullets', 'ใบปลิว\n- ขนาด A4\n• พิมพ์ 4 สี', [1, 2]],
@@ -396,7 +394,7 @@ describe('linesReadFrom — lines that went completely into the fields', () => {
   it.each<[string, string, number[]]>([
     ['a number left over', 'โบรชัวร์\nพิมพ์ 4 สี 2 หน้า', []],
     ['a bare number left over', 'โบรชัวร์\nพิมพ์ 4 สี (2)', []],
-    ['another size that is not the one in the field', 'ใบปลิว\nขนาด A4\nA3', [1]],
+    ['another size that is not the one in the field (and the size above it stays with it)', 'ใบปลิว\nขนาด A4\nA3', []],
     ['two colour names: the colour is in the field, the names are not', 'สมุด\nเนื้อใน พิมพ์ 1 สี-น้ำเงิน\nพิมพ์ 1 สี-แดง', []],
     ['หน้าเดียว left over', 'โบรชัวร์\nพิมพ์ 4 สี หน้าเดียว', []],
     ['a quantity after the paper', 'นามบัตร\nกระดาษอาร์ตการ์ด 300 แกรม จำนวน 200 ใบ', []],
@@ -417,7 +415,7 @@ describe('linesReadFrom — lines that went completely into the fields', () => {
     ['paper outside the sections is not used', 'หนังสือ\nกระดาษปอนด์ 80 แกรม\nปก อาร์ตการ์ด 260 แกรม', [2]],
     ['colour outside the sections is not used', 'หนังสือ\nพิมพ์ 4 สี\nปก พิมพ์ 4 สี\nเนื้อใน พิมพ์ 1 สี', [2, 3]],
     ['a colour note that was not understood', 'สมุด\nเนื้อใน พิมพ์ 1 สี (pantone 286)', []],
-    ['a condition about the binding', 'หนังสือ\nเข้าเล่มไสกาว\nหากไสกาวไม่ได้ให้แจ้ง', [1]],
+    ['a condition on the next line keeps the line it is about', 'หนังสือ\nเข้าเล่มไสกาว\nหากไสกาวไม่ได้ให้แจ้ง', []],
     ['the ภู่ / ไส้ part of a calendar', 'ปฏิทินตั้งโต๊ะ\nไส้ พิมพ์ 4 สี\nกระดาษปอนด์ 100 แกรม', []],
     ['ป้าย is a filler word only in a calendar', 'สติ๊กเกอร์\nป้าย ขนาด A4', []],
     ['สกรีน is not พิมพ์', 'ถุงผ้า\nสกรีน 1 สี', []],
@@ -425,7 +423,7 @@ describe('linesReadFrom — lines that went completely into the fields', () => {
     ['a filler word glued to another word', 'ใบปลิว\nงานพิมพ์ 4 สี', []],
     ['coating written right after เนื้อใน', 'หนังสือ\nเนื้อใน เคลือบเงา', []],
     ['a line with nothing read on it', 'ใบปลิว\nพิมพ์', []],
-    ['too long: lines after the limit are never read', 'ขนาด A4\n' + 'ก '.repeat(1989) + 'กระดาษอาร์ต 230 แกรม\nเคลือบด้าน', [0]],
+    ['too long: part of the text was not read, so no line goes', 'ใบปลิว\nขนาด A4\nพิมพ์ 4 สี\n' + 'หมายเหตุ '.repeat(600) + '\nขนาด A5', []],
   ])('kept: %s', (_name, d, expected) => {
     expect(linesReadFrom(d)).toEqual(expected);
   });
@@ -446,5 +444,156 @@ describe('linesReadFrom — lines that went completely into the fields', () => {
     for (const [, d] of ROWS) {
       if (Object.keys(specFromText(d).fields).length === 0) expect(linesReadFrom(d)).toEqual([]);
     }
+  });
+});
+
+// Independent review of 2026-11-18: every row below was a way to lose information.
+describe('linesReadFrom — lines that must stay (independent review)', () => {
+  it.each<[string, string, number[]]>([
+    // two part words on one line: the values are in one part's fields only
+    ['ปก+เนื้อใน on one line', 'แคตตาล็อคขนาด 19x26 cm\n16 หน้ารวมปก\nปก+เนื้อใน กระดาษอาร์ต 160g พิมพ์ 4 สี\nมุงหลังคา', [3]],
+    ['ปก/เนื้อใน as a heading: the lines under it stay too', 'สมุดประจำตัวผู้ป่วย\nขนาด A5\nปก/เนื้อใน พิมพ์ 4 สี\nกระดาษปอนด์ 70g\nเข้าเล่มเย็บมุงหลังคา', [1, 4]],
+    ['ปก เนื้อใน with a space only', 'วารสาร A4\nปก เนื้อใน กระดาษอาร์ตมัน 120 แกรม\nพิมพ์ 4 สี ทั้งเล่ม\nเย็บมุงหลังคา', [3]],
+    ['เนื้อใน+ปก', 'หนังสือ\nเนื้อใน+ปก พิมพ์ 4 สี', []],
+    ['ปก, เนื้อใน', 'หนังสือ\nปก, เนื้อใน พิมพ์ 4 สี', []],
+    ['coating for both parts', 'หนังสือ\nเคลือบเงา ปก+เนื้อใน', []],
+    // a part label written after the value
+    ['(เนื้อใน) after the coating', 'หนังสือ\nปก อาร์ตการ์ด 260 แกรม พิมพ์ 4 สี 4 หน้า\nเคลือบเงา (เนื้อใน)', []],
+    ['- เนื้อใน after the coating', 'หนังสือ\nเคลือบด้าน - เนื้อใน', []],
+    ['+ ปก after the colour', 'หนังสือ A5\nเนื้อใน 16 หน้า\nพิมพ์ 4 สี + ปก', []],
+    ['(ปก) after the paper', 'หนังสือ\nเนื้อใน 100 หน้า\nกระดาษอาร์ตการ์ด 260 แกรม (ปก)', []],
+    ['(ปก) after the coating', 'หนังสือ A5\nเนื้อใน 16 หน้า กระดาษปอนด์ 80 แกรม\nเคลือบด้าน (ปก)', []],
+    // a checkbox value inside a part: the form cannot say which part
+    ['coating on a line carried under เนื้อใน', 'photobook ขนาด 26x26 ซม.\nพิมพ์ 4 สี ทั้งเล่ม\nเนื้อใน 40 หน้า\nกระดาษอาร์ต 160 แกรม เคลือบด้าน\nปกแข็ง\nเข้าเล่มไสกาว', [1, 5]],
+    ['coating on its own line under เนื้อใน', 'หนังสือ\nเนื้อใน 100 หน้า\nเคลือบเงา', []],
+    ['Spot UV right after เนื้อใน', 'หนังสือ\nเนื้อใน Spot UV', []],
+    ['digital on the cover line', 'หนังสือ\nปกพิมพ์ดิจิตอล 4 สี\nเนื้อในพิมพ์ 1 สี 100 หน้า', []],
+    ['digital on the inner line', 'หนังสือ\nปก พิมพ์ 4 สี เคลือบด้าน 1 หน้า\nเนื้อใน พิมพ์ Digital', []],
+    ['perforation of the inner pages', 'ใบเสร็จ\nปก อาร์ตการ์ด 260 แกรม\nเนื้อใน ปรุ', [1]],
+    ['a size of one part', 'สมุด\nเนื้อใน ขนาด A5\nปก หุ้มจั่วปัง', []],
+    ['binding written on a part line', 'หนังสือ\nปก ไสกาว', []],
+    // a value whose field is doubtful keeps its line
+    ['paper under a ปก line belongs to no part', 'สมุดบันทึก ขนาดเอ 5\nเนื้อใน 80 แผ่น(160หน้า) พิมพ์ 1 สี-น้ำเงิน\nปก พิมพ์ 4 สี\nกระดาษอาร์ทการ์ดหน้าเดียว 350 แกรม\nเข้าเล่มแบบห่วงลวดกระดูกงู', []],
+    ['colour under a ปก line belongs to no part', 'หนังสือ A5\nเนื้อใน กระดาษปอนด์ 80 แกรม 100 หน้า\nปก กระดาษอาร์ตการ์ด 260 แกรม\nพิมพ์ 4 สี\nเคลือบด้าน', []],
+    ['a second product under its own heading', 'การ์ดขอบคุณ ขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 2 หน้า\nซอง\nกระดาษคราฟท์ 120 แกรม\nพิมพ์ 1 สี', []],
+    ['calendar: ป้าย inside the ภู่ line does not end the ภู่ part', 'ปฏิทินแขวน\nขนาดป้าย 15x21 นิ้ว\nภู่ปฏิทิน พิมพ์ 4 สี เพิ่มป้ายโฆษณา\nกระดาษปอนด์ 55 แกรม', [1]],
+    ['calendar: a value and a ภู่ part on one line', 'ปฏิทินแขวน\nขนาด 15x21 นิ้ว ภู่ 7x15 นิ้ว', []],
+    ['print-area size', 'ถุงผ้า\nขนาดพิมพ์ 10x10 ซม.\nสกรีน 1 สี', []],
+    ['พิมพ์ขนาด', 'เสื้อ\nพิมพ์ขนาด A4', []],
+    ['ปริ้น is not a filler word', 'นามบัตร\nปริ้น 4 สี', []],
+    ['ปริ้น Digital', 'สติ๊กเกอร์ฉลาก\nปริ้น Digital A3', []],
+    // the wire colour is not the ink colour
+    ['wire colour after the binding', 'สมุด\nเนื้อใน พิมพ์ 1 สี เข้าเล่มห่วงลวด สีดำ', []],
+    ['wire colour, single sheet', 'สมุดโน้ต A5\nพิมพ์ 1 สี เข้าห่วงกระดูกงู สีเงิน', []],
+    ['a colour word after the coating', 'ถุง\nพิมพ์ 1 สี เคลือบด้าน สีทอง', []],
+    // a filler word that is the only statement of a step
+    ['เข้าเล่ม with no binding named', 'ใบเสร็จรับเงิน A5\nกระดาษคาร์บอน 2 ชั้น\nพิมพ์ 1 สี ปรุ เข้าเล่ม', [1]],
+    ['เข้าเล่ม after the colour', 'บิลเงินสด\nกระดาษปอนด์ 55 แกรม พิมพ์ 1 สี เข้าเล่ม', []],
+    ['เย็บ with nothing after it', 'หนังสือ\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี เย็บ', []],
+    ['ปฏิทิน that is not in the order name', 'งานลูกค้า ABC\nปฏิทิน ขนาด 15x21 นิ้ว\nพิมพ์ 4 สี', [2]],
+    ['พิมพ์ that introduces nothing', 'ใบปลิว\nกระดาษอาร์ต 130 แกรม พิมพ์', []],
+    // a kept line whose meaning depends on a line above or below it
+    ['the เนื้อใน line stays when a line under it stays', 'สมุด Passport \nขนาด 13x9.5 ซม.\nปกกระดาษอาร์ตมัน 230 แกรมเคลือบด้าน\nเนื้อในกระดาษปอนด์ 100\nจำนวน 8 หน้า', [1, 2]],
+    ['page count under เนื้อใน', 'คู่มือการใช้งาน ขนาด A4\nปกพิมพ์ 1 สี-ดำ กระดาษการ์ดฟ้า 150g\nเนื้อใน พิมพ์สีเดียว-ดำ\n25 หน้า พิมพ์หน้าเดียว\nกระดาษปอนด์ 70g\nเข้าเล่มไสกาว', [1, 5]],
+    ['the ปก line stays when a line under it stays', 'สมุด\nเนื้อใน 80 แผ่น(160หน้า)\nกระดาษถนอมสายตา 75 แกรม พิมพ์ 1 สี-น้ำเงิน\nปก อาร์ทการ์ดหน้าเดียว 350 แกรม พิมพ์ 4 สี\nเคลือบลามิเนตด้าน 1 หน้า\nเข้าเล่มแบบห่วงลวดกระดูกงู', [2, 5]],
+    ['front / back headings', 'นามบัตร 9x5.5 ซม.\nด้านหน้า\nพิมพ์ 4 สี\nเคลือบ Spot UV\nด้านหลัง\nพิมพ์ 4 สี', []],
+    ['design 1 / design 2 headings', 'นามบัตร\nกระดาษอาร์ตการ์ด 300 แกรม\nแบบที่ 1\nเคลือบด้าน\nแบบที่ 2\nไม่เคลือบ', []],
+    ['a qualifier on the next line', 'ที่คั่นหนังสือ\nกระดาษอาร์ตการ์ด 300 แกรม\nพิมพ์ 4 สี\nเคลือบด้าน\nทั้ง 2 ด้าน', [1, 2]],
+    ['"front only" on the next line', 'นามบัตร 9x5.5 ซม.\nพิมพ์ 4 สี\nเคลือบด้าน\nSpot UV\nเฉพาะด้านหน้า', [1, 2]],
+    ['an alternative on the next line', 'การ์ด\nเคลือบด้าน\nหรือเคลือบเงา', []],
+    ['another part under its own heading', 'ปฏิทินตั้งโต๊ะ ขนาด 6x8 นิ้ว\nกระดาษอาร์ต 230 แกรม พิมพ์ 4 สี\nฐานปฏิทิน\nกระดาษแข็งหุ้มอาร์ต พิมพ์ 1 สี\nเคลือบด้าน', []],
+    ['a blank line does not hide the heading', 'นามบัตร\nด้านหน้า\n\nพิมพ์ 4 สี', []],
+    // the same value twice on a line = two sides
+    ['4 สี / 4 สี', 'ใบปลิว A4\nพิมพ์ 4 สี / 4 สี', []],
+    ['4 สี, 4 สี', 'ใบปลิว A4\nพิมพ์ 4 สี, 4 สี', []],
+    ['1 สี - 1 สี', 'ใบปลิว A4\nพิมพ์ 1 สี - 1 สี', []],
+    ['coating named twice', 'นามบัตร\nเคลือบด้าน, เคลือบด้าน', []],
+    // symbols that say something
+    ['a question mark', 'นามบัตร\nเคลือบด้าน ?', []],
+    ['(?) after the paper', 'นามบัตร\nกระดาษอาร์ต 260 แกรม (?)', []],
+    ['~ before the size', 'ใบปลิว\nขนาด ~ A4', []],
+    ['a cross', 'หนังสือ\nไสกาว ✗', []],
+    ['a footnote star', 'นามบัตร\nเคลือบด้าน*\n*เฉพาะด้านหน้า', []],
+    ['+ between values', 'ใบปลิว\nกระดาษอาร์ต 130 แกรม + เคลือบด้าน', []],
+    // a part word in the middle of a line is never taken as a mere label
+    ['ปก in the middle of a line', 'หนังสือ\nเคลือบด้าน ปก พิมพ์ 4 สี', []],
+    ['a star after a value is not a bullet', 'นามบัตร\nเคลือบด้าน*', []],
+  ])('%s', (_name, d, expected) => {
+    expect(linesReadFrom(d)).toEqual(expected);
+  });
+
+  it('harmless punctuation between values does not keep a line', () => {
+    expect(linesReadFrom('ใบปลิว\nกระดาษอาร์ต 130 แกรม - เคลือบด้าน')).toEqual([1]);
+    expect(linesReadFrom('ใบปลิว\n* ขนาด A4')).toEqual([1]);
+    expect(linesReadFrom('ใบปลิว\n- กระดาษอาร์ต 130 แกรม, พิมพ์ 4 สี. (เคลือบด้าน)')).toEqual([1]);
+    expect(linesReadFrom('ใบปลิว\nขนาด: A4')).toEqual([1]);
+  });
+
+  it('สีเดียว is the count the field holds', () => {
+    expect(linesReadFrom('แบบฟอร์ม\nพิมพ์สีเดียว\nกระดาษปอนด์ 80 แกรม')).toEqual([1, 2]);
+  });
+
+  it('a line that only mentions ภู่ / ไส้ is not a heading for the line above it', () => {
+    expect(linesReadFrom('ปฏิทินแขวน\nกระดาษอาร์ต 230 แกรม\nเข้าเล่มติดภู่')).toEqual([1]);
+  });
+
+  it('a line carried under ภู่ / ไส้ is not a heading for the ป้าย line after it', () => {
+    expect(linesReadFrom('ปฏิทินตั้งโต๊ะ\nไส้ 7x15 นิ้ว\nกระดาษปอนด์\nป้าย ขนาด 15x21 นิ้ว')).toEqual([3]);
+  });
+
+  it('"พิมพ์ดิจิตอล": the word that introduces the tick goes with it', () => {
+    expect(linesReadFrom('สติ๊กเกอร์\nพิมพ์ดิจิตอล')).toEqual([1]);
+  });
+
+  it('the result is a list of its own: changing it changes nothing later', () => {
+    const long = 'ค'.repeat(5000);
+    linesReadFrom(long).push(7);
+    expect(linesReadFrom(long)).toEqual([]);
+    const d = 'ใบปลิว\nขนาด A4';
+    linesReadFrom(d).push(9);
+    expect(linesReadFrom(d)).toEqual([1]);
+  });
+});
+
+// The same review: values that went into the wrong field. Blank instead.
+describe('specFromText — a doubtful part fills nothing (independent review)', () => {
+  it.each<[string, string, SpecFields]>([
+    ['paper followed by "(ปก)" under an inner line is not the inner paper',
+      'หนังสือ\nเนื้อใน 100 หน้า\nกระดาษอาร์ตการ์ด 260 แกรม (ปก)', {}],
+    ['"+ ปก" after the colour: neither colour is read from that line',
+      'หนังสือ A5\nเนื้อใน 16 หน้า\nพิมพ์ 4 สี + ปก', { size: 'A5' }],
+    ['"- ปก" after paper and colour',
+      'สมุดโน้ต A5\nเนื้อใน 50 แผ่น ไม่พิมพ์\nกระดาษอาร์ตการ์ด 300 แกรม พิมพ์ 4 สี - ปก', { size: 'A5' }],
+    ['coating followed by "(เนื้อใน)" is still a coating; the cover values stand',
+      'หนังสือ\nปก อาร์ตการ์ด 260 แกรม พิมพ์ 4 สี 4 หน้า\nเคลือบเงา (เนื้อใน)',
+      { paperCover: 'อาร์ตการ์ด 260 แกรม', coverColor: '4สี', coatGloss: true }],
+    ['a paper line under a ปก line is not the inner paper',
+      'สมุดบันทึก ขนาดเอ 5\nเนื้อใน 80 แผ่น(160หน้า) พิมพ์ 1 สี-น้ำเงิน\nปก พิมพ์ 4 สี\nกระดาษอาร์ทการ์ดหน้าเดียว 350 แกรม\nเข้าเล่มแบบห่วงลวดกระดูกงู',
+      { size: 'A5', innerColor: '1สี', innerColorNote: 'น้ำเงิน', coverColor: '4สี', spine: true }],
+    ['a colour line under a ปก line is not the inner colour',
+      'หนังสือ A5\nเนื้อใน กระดาษปอนด์ 80 แกรม 100 หน้า\nปก กระดาษอาร์ตการ์ด 260 แกรม\nพิมพ์ 4 สี\nเคลือบด้าน',
+      { size: 'A5', paperInner: 'ปอนด์ 80 แกรม', paperCover: 'อาร์ตการ์ด 260 แกรม', coatMatte: true }],
+    ['เนื้อใน alone on a line heads the lines under it',
+      'หนังสือ\nปก อาร์ตการ์ด 260 แกรม\nเนื้อใน\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี',
+      { paperCover: 'อาร์ตการ์ด 260 แกรม', paperInner: 'ปอนด์ 80 แกรม', innerColor: '1สี' }],
+    ['an inner line after the cover line still carries on',
+      'หนังสือ\nปก อาร์ตการ์ด 260 แกรม\nเนื้อใน 100 หน้า\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี',
+      { paperCover: 'อาร์ตการ์ด 260 แกรม', paperInner: 'ปอนด์ 80 แกรม', innerColor: '1สี' }],
+    ['calendar: ป้าย inside the ภู่ line does not end the ภู่ part',
+      'ปฏิทินแขวน\nขนาดป้าย 15x21 นิ้ว\nภู่ปฏิทิน พิมพ์ 4 สี เพิ่มป้ายโฆษณา\nกระดาษปอนด์ 55 แกรม', { size: '15x21', sizeUnit: 'นิ้ว' }],
+    ['calendar: ป้าย at the start of a line ends the ไส้ part',
+      'ปฏิทินตั้งโต๊ะ\nไส้ 7x15 นิ้ว กระดาษปอนด์\nป้าย ขนาด 15x21 นิ้ว กระดาษอาร์ต 230 แกรม',
+      { size: '15x21', sizeUnit: 'นิ้ว', paperInner: 'อาร์ต 230 แกรม' }],
+    ['the wire colour is not the ink colour',
+      'สมุด\nเนื้อใน พิมพ์ 1 สี เข้าเล่มห่วงลวด สีดำ', { innerColor: '1สี', spine: true }],
+    ['a colour word after the coating is not the ink colour',
+      'ถุง\nพิมพ์ 1 สี เคลือบด้าน สีทอง', { innerColor: '1สี', coatMatte: true }],
+    ['a colour word glued to more text is not a plain colour name',
+      'แบบฟอร์ม\nพิมพ์ 1 สี 1 หน้า สีทองเหลือง', { innerColor: '1สี' }],
+    ['a colour name after a page count is the ink colour (real row 33)',
+      'กระดาษหัวจดหมาย ขนาด เอ 4\nกระดาษปอนด์ 80 แกรม พิมพ์ 1 สี 1 หน้า สีทอง',
+      { size: 'A4', paperInner: 'ปอนด์ 80 แกรม', innerColor: '1สี', innerColorNote: 'ทอง' }],
+  ])('%s', (_name, d, expected) => {
+    expect(specFromText(d).fields).toEqual(expected);
   });
 });
