@@ -10,6 +10,7 @@ import type { DraftRow, DraftStep, DraftUnit, LiveLink, PeakOrderDb } from '@/li
 import { orderCommandArgs, parseOrderCommand } from '@/lib/peak-order/command';
 import { clipEcho, notFoundHint, resolveOrderCommand } from '@/lib/peak-order/resolve';
 import { addDaysISO, bangkokISODate, buildOrderBody, firstLine, planUnits } from '@/lib/peak-order/mapper';
+import { specForUnit } from '@/lib/peak-order/spec-from-text';
 import { decodePostback, type OrderPostback } from '@/lib/peak-order/postback';
 import {
   TEXT,
@@ -607,6 +608,7 @@ async function createUnit(deps: PeakOrderDeps, g: DraftRow, asDraft: boolean, fo
       todayISO: bangkokISODate(deps.now()),
       asDraft,
       force,
+      spec: specForUnit(g.snapshot?.quotation, unit.lineKeys).fields,
     });
     const r = await deps.createOrder(body, { role: 'sales', user: `${g.orderer} (LINE)` });
     // 4. Success → finalize links, record, advance.

@@ -3,6 +3,7 @@ import type { PeakQuotation } from '@/lib/peak/read';
 import { emptyOrderForm } from '@/lib/photobook';
 import { QTY_UNITS } from '@/lib/order-constants';
 import { NO_NAME, addDaysISO, bangkokISODate, buildOrderBody, firstLine, formatQty, planUnits } from '@/lib/peak-order/mapper';
+import type { SpecFields } from '@/lib/peak-order/spec-from-text';
 
 const Q = (lines: Array<[string, string, number | null]>): PeakQuotation => ({
   code: 'QO-20261100072',
@@ -141,5 +142,28 @@ describe('buildOrderBody', () => {
   it('no qtyUnit keeps the form default', () => {
     const b = buildOrderBody({ ...base, choices: { graphic: 'pook', press: '', dateDue: '2026-11-20' } });
     expect(b.qtyUnit).toBe(emptyOrderForm().qtyUnit);
+  });
+  it('spec fields land in the body; an A-size leaves the size unit at the form default', () => {
+    const b = buildOrderBody({
+      ...base,
+      spec: { size: 'A4', paperInner: 'อาร์ตมัน 120 แกรม', innerColor: '4สี', coatMatte: true },
+    });
+    expect(b).toMatchObject({ size: 'A4', paperInner: 'อาร์ตมัน 120 แกรม', innerColor: '4สี', coatMatte: true });
+    expect(b.sizeUnit).toBe(emptyOrderForm().sizeUnit);
+    expect(b.coatGloss).toBe(false);
+    expect(b.paperCover).toBe('');
+  });
+  it('spec cannot override what came from Peak or was chosen in LINE', () => {
+    const hostile = {
+      name: 'x', customer: 'x', qty: '9', qtyUnit: 'ถุง', notes: 'x', orderer: 'x', assignStaff: 'x',
+      forwardPrint: 'x', dateDue: 'x', dateIn: 'x', orderType: 'photobook', peak: 'x',
+    } as unknown as SpecFields;
+    const plain = buildOrderBody(base);
+    const b = buildOrderBody({ ...base, spec: hostile });
+    for (const k of Object.keys(hostile)) expect(b[k], k).toEqual(plain[k]);
+  });
+  it('no spec and an empty spec give the same body as before', () => {
+    expect(buildOrderBody({ ...base, spec: {} })).toEqual(buildOrderBody(base));
+    expect(buildOrderBody({ ...base, spec: undefined })).toEqual(buildOrderBody(base));
   });
 });

@@ -5,6 +5,7 @@
  */
 import type { PeakQuotation } from '@/lib/peak/read';
 import type { CreateOrderBody } from '@/lib/orders-create';
+import type { SpecFields } from '@/lib/peak-order/spec-from-text';
 import { emptyOrderForm } from '@/lib/photobook';
 
 export const NO_NAME = '(ไม่มีชื่อรายการ)';
@@ -109,7 +110,11 @@ export interface UnitChoices {
   dateDue: string;
 }
 
-/** Order body for createOrderFromForm. Never sets `price`. `peak` is read by findOrderByPeakMarker (raw_data->'peak'). */
+/**
+ * Order body for createOrderFromForm. Never sets `price`. `peak` is read by findOrderByPeakMarker (raw_data->'peak').
+ * `spec` = form fields read from the line text (spec-from-text.ts). It is spread first, so everything
+ * that comes from Peak or was chosen in LINE always wins over it.
+ */
 export function buildOrderBody(p: {
   unit: UnitPlan;
   choices: UnitChoices;
@@ -120,9 +125,11 @@ export function buildOrderBody(p: {
   todayISO: string;
   asDraft: boolean;
   force?: boolean;
+  spec?: SpecFields;
 }): CreateOrderBody {
   const body: CreateOrderBody = {
     ...emptyOrderForm(p.orderer),
+    ...p.spec,
     name: p.unit.name,
     customer: p.customerName,
     dateIn: p.todayISO,

@@ -1127,3 +1127,76 @@ describe('fakeDeps default createOrder', () => {
     expect(addDaysISO(TODAY, 3)).toBe('2026-11-17');
   });
 });
+
+// ─── spec fields from the line text (spec 2026-11-18) ───────────────
+
+describe('handlePeakOrderPostback — spec fields from the line text', () => {
+  const CARD = 'นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\nกระดาษอาร์ตมัน 260 แกรม';
+  const FLYER = 'แผ่นพับขนาด A4\nพิมพ์ 4 สี หน้าหลัง\nกระดาษอาร์ตมัน 120 แกรม\nเคลือบด้าน';
+  const QS = quot('QO-202611000007', [{ key: 'L1', description: CARD, quantity: 100 }]);
+  const QM = quot('QO-202611000008', [
+    { key: 'L1', description: CARD, quantity: 100 },
+    { key: 'L2', description: FLYER, quantity: 5000 },
+  ]);
+  const CARD_SPEC = { size: '9x5.5', sizeUnit: 'ซม.', paperInner: 'อาร์ตมัน 260 แกรม', innerColor: '4สี' };
+
+  it('create: size / paper / colour are filled; notes keep the whole line; LINE choices stand', async () => {
+    const f = setup([QS]);
+    await start(f, QS.code);
+    await toConfirm(f);
+    await tap(f, okCreate());
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0]).toMatchObject(CARD_SPEC);
+    expect(f.created[0].notes).toBe(`${CARD}\n\nอ้างอิง Peak: ${QS.code}`);
+    expect(f.created[0]).toMatchObject({ qty: '100', qtyUnit: 'ชิ้น', assignStaff: 'pook', forwardPrint: 'inkjet' });
+    expect(f.created[0].coatMatte).toBe(false);
+  });
+
+  it('dashboard draft: the same fields, status draft', async () => {
+    const f = setup([QS]);
+    await start(f, QS.code);
+    await toConfirm(f);
+    await tap(f, { a: 'ok', draft: 'd1', u: 0, v: 'draft' });
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0].status).toBe('draft');
+    expect(f.created[0]).toMatchObject(CARD_SPEC);
+  });
+
+  it('split: each order gets the spec of its own line', async () => {
+    const f = setup([QM]);
+    await start(f, QM.code);
+    await tap(f, { a: 'mode', draft: 'd1', v: 'split' });
+    await toConfirm(f);
+    await tap(f, okCreate('d1', 0));
+    await tap(f, { a: 'unit', draft: 'd1', u: 1, v: 0 });
+    await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'same' });
+    await tap(f, okCreate('d1', 1));
+    expect(f.created).toHaveLength(2);
+    expect(f.created[0]).toMatchObject(CARD_SPEC);
+    expect(f.created[0].coatMatte).toBe(false);
+    expect(f.created[1]).toMatchObject({ size: 'A4', sizeUnit: 'ซม.', paperInner: 'อาร์ตมัน 120 แกรม', innerColor: '4สี', coatMatte: true });
+  });
+
+  it('merged: several lines in one order — no spec is filled', async () => {
+    const f = setup([QM]);
+    await start(f, QM.code);
+    await tap(f, { a: 'mode', draft: 'd1', v: 'merged' });
+    await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'pook' });
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' });
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+    await tap(f, okCreate());
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0]).toMatchObject({ size: '', paperInner: '', innerColor: '', coatMatte: false });
+    expect(f.created[0].notes).toContain(CARD);
+  });
+
+  it('a unit whose line is gone from the stored snapshot is still created, spec blank', async () => {
+    const f = setup([QS]);
+    await start(f, QS.code);
+    await toConfirm(f);
+    f.db.drafts.get('d1')!.snapshot.quotation.lines = [];
+    await tap(f, okCreate());
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0]).toMatchObject({ size: '', paperInner: '', innerColor: '', name: 'นามบัตรขนาด 9x5.5 ซม.' });
+  });
+});
