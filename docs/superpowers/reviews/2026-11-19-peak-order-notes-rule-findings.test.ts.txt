@@ -1,0 +1,148 @@
+// Independent review of e2e5066 / 42949e8 (HEAD 4535e07). Every test here states the SAFE behaviour
+// ("not sure = leave the field blank / keep the line") and FAILS at HEAD: one failure = one finding.
+//   npx vitest run tests/review/findings-RED.test.ts
+import { describe, it, expect } from 'vitest';
+import { linesReadFrom, specFromText } from '@/lib/peak-order/spec-from-text';
+
+/** These lines (0-based) must stay in the notes. */
+const stays = (text: string, ...lines: number[]): void => {
+  const dropped = linesReadFrom(text);
+  for (const n of lines) expect(dropped, `line ${n} ${JSON.stringify(text.split('\n')[n])} left the notes`).not.toContain(n);
+};
+const fields = (text: string): Record<string, unknown> => specFromText(text).fields as Record<string, unknown>;
+
+// ───────────────────────── CRITICAL: a line leaves and what it said is not held ─────────────────────────
+
+describe('C1 two parts named, one of them glued to a Thai word: the lines under it go to the inner fields only', () => {
+  it('row 8 with "เนื้อในรวมปก 16 หน้า"', () => stays('แคตตาล็อคขนาด 19x26 cm\nเนื้อในรวมปก 16 หน้า\nกระดาษอาร์ต 160g\nพิมพ์ 4 สี\nมุงหลังคา', 2, 3));
+  it('"เนื้อในและปก …"', () => stays('วารสาร A4 16 หน้า\nเนื้อในและปก กระดาษอาร์ตมัน 120 แกรม\nพิมพ์ 4 สี', 2));
+  it('"เนื้อในและปก" alone as a heading', () => stays('วารสาร A4 16 หน้า\nเนื้อในและปก\nกระดาษอาร์ตมัน 120 แกรม\nพิมพ์ 4 สี', 2, 3));
+  it('"ทั้งปกและเนื้อใน …"', () => stays('หนังสือ A5\nทั้งปกและเนื้อใน พิมพ์ 4 สี\nกระดาษอาร์ต 160 แกรม', 2));
+  it('"หน้าปกและเนื้อใน …"', () => stays('วารสาร A4\nหน้าปกและเนื้อใน กระดาษอาร์ตมัน 120 แกรม\nพิมพ์ 4 สี', 2));
+  it('"เนื้อในกับปก …"', () => stays('หนังสือ A5\nเนื้อในกับปก กระดาษอาร์ต 160 แกรม\nพิมพ์ 4 สี\nเย็บมุงหลังคา', 2));
+});
+
+describe('C2 a heading right above a line that begins with ปก / เนื้อใน does not keep it (the neighbour rule is skipped for those lines)', () => {
+  it('row 7 + "ราคานี้ไม่รวม" above "ปกเคลือบด้าน"', () => stays('หนังสือขนาด A4\nเนื้อในปอนด์ 80 แกรม พิมพ์ 1 สี 32 หน้า\nเข้าเล่มไสกาวปกอ่อน\nราคานี้ไม่รวม\nปกเคลือบด้าน', 4));
+  it('design 1 / design 2 above ปก lines', () => stays('สมุดโน้ต\nแบบที่ 1\nปก อาร์ตการ์ด 260 แกรม เคลือบด้าน\nแบบที่ 2\nปก อาร์ตการ์ด 260 แกรม เคลือบ UV', 4));
+  it('"หรือ" above a ปก line', () => stays('หนังสือ A5\nปก อาร์ตการ์ด 260 แกรม เคลือบด้าน\nหรือ\nปก อาร์ตการ์ด 260 แกรม เคลือบ UV', 3));
+  it('"ตัวเลือกเพิ่ม" above an เนื้อใน line', () => stays('หนังสือ A5\nปก อาร์ตการ์ด 260 แกรม พิมพ์ 4 สี 4 หน้า\nตัวเลือกเพิ่ม\nเนื้อใน อาร์ต 120 แกรม พิมพ์ 4 สี', 3));
+});
+
+describe('C3 a heading that carries a value of its own is not treated as a heading', () => {
+  it('row 4 written as front / back', () => stays('ตั๋วขนาด 6x12 ซม.\nกระดาษอาร์ต 260 แกรม\nด้านหน้า พิมพ์ 4 สี\nเคลือบด้าน\nด้านหลัง พิมพ์ 4 สี\nเคลือบ UV', 3, 5));
+  it('row 1 + a second item whose heading has a value (the deferred "ซอง" case, now the lines leave)', () =>
+    stays('นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\nกล่องใส่นามบัตร พิมพ์ 4 สี\nกระดาษอาร์ตมัน 260 แกรม\nเคลือบด้าน', 3, 4));
+  it('envelope', () => stays('การ์ดขอบคุณ ขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 2 หน้า\nซอง พิมพ์ 4 สี 1 หน้า\nกระดาษคราฟท์ 120 แกรม', 3));
+  it('design 1 / design 2 with a value on the heading line', () => stays('นามบัตร\nกระดาษอาร์ตการ์ด 300 แกรม\nแบบที่ 1 พิมพ์ 4 สี\nเคลือบด้าน\nแบบที่ 2 พิมพ์ 4 สี\nเคลือบ UV', 3, 5));
+  it('a continuation line with a value of its own', () => stays('ใบปลิว A4\nพิมพ์ 4 สี\n2 หน้า เคลือบด้าน', 1));
+});
+
+describe('C4 a list under "not included" / "options": the first item stays, the rest leave with their boxes ticked', () => {
+  it('ราคานี้ไม่รวม', () => stays('นามบัตร 9x5.5 ซม.\nพิมพ์ 4 สี 2 หน้า\nราคานี้ไม่รวม\n- เคลือบด้าน\n- Spot UV', 4));
+  it('ไม่เอา:', () => stays('หนังสือ A5\nไม่เอา:\n- ไสกาว\n- เคลือบด้าน', 3));
+  it('ตัวเลือกเพิ่มเติม', () => stays('นามบัตร 9x5.5 ซม.\nกระดาษอาร์ตการ์ด 300 แกรม\nตัวเลือกเพิ่มเติม (ยังไม่รวมในราคา)\n- เคลือบด้าน\n- Spot UV\n- พิมพ์ดิจิตอล', 4, 5));
+});
+
+describe('C5 an unticked "( )" box: the box is ticked in the form and the line leaves', () => {
+  it('( ) มุงหลังคา / ( ) กระดูกงู', () => stays('หนังสือ\n(x) ไสกาว\n( ) มุงหลังคา\n( ) กระดูกงู', 2, 3));
+  it('( ) เคลือบ UV / ( ) Spot UV', () => stays('นามบัตร\nกระดาษอาร์ตการ์ด 300 แกรม\n( ) เคลือบ UV\n( ) Spot UV\n(/) เคลือบด้าน', 2, 3));
+  it('a single ( ) เคลือบด้าน', () => stays('นามบัตร\nกระดาษอาร์ตการ์ด 300 แกรม\n( ) เคลือบด้าน', 2));
+});
+
+describe('C6 a box or a size on its own line under a part heading (only the line that names the part is kept)', () => {
+  it('row 29 + "พิมพ์ดิจิตอล" under the inner lines', () =>
+    stays('คู่มือการใช้งาน ขนาด A4\nปกพิมพ์ 1 สี-ดำ กระดาษการ์ดฟ้า 150g\nเนื้อใน พิมพ์สีเดียว-ดำ 25 หน้า พิมพ์หน้าเดียว\nกระดาษปอนด์ 70g\nพิมพ์ดิจิตอล\nเข้าเล่มไสกาว', 4));
+  it('perforation under เนื้อใน', () => stays('ใบเสร็จ\nปก อาร์ตการ์ด 260 แกรม\nเนื้อใน 50 แผ่น\nปรุ', 3));
+  it('size under เนื้อใน', () => stays('สมุด\nปก หุ้มจั่วปัง\nเนื้อใน 100 แผ่น\nขนาด A5', 3));
+  it('digital right under a ปก line', () => stays('หนังสือ\nปก อาร์ตการ์ด 260 แกรม\nพิมพ์ดิจิตอล\nเนื้อใน ปอนด์ 80 แกรม\nพิมพ์ 1 สี', 2));
+  it('digital under "ปก" alone', () => stays('หนังสือ\nปก\nพิมพ์ดิจิตอล\nเนื้อใน\nพิมพ์ออฟเซ็ท 1 สี', 2));
+  it('coating under ปกหน้า / ปกหลัง', () => stays('แฟ้ม\nปกหน้า\nเคลือบ Spot UV\nปกหลัง\nเคลือบด้าน', 2, 4));
+});
+
+describe('C7 calendar: the ป้าย line leaves and the lines under it then read as the ภู่ / ไส้ part', () => {
+  it('the product test "ไส้ then ป้าย" + one more line', () => stays('ปฏิทินตั้งโต๊ะ\nไส้ 7x15 นิ้ว กระดาษปอนด์\nป้าย ขนาด 15x21 นิ้ว กระดาษอาร์ต 230g\nพิมพ์ 4 สี 2 หน้า', 2));
+  it('row 48 with the ภู่ line first', () =>
+    stays('ปฏิทินแขวน ขนาด 15x21 นิ้ว\nภู่ปฏิทิน ขนาด 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์ 55 แกรม\nป้ายขนาด 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษการ์ดอาร์ตหน้าเดียว 230 แกรม เคลือบเงา\nเข้าหัวเหล็ก', 2));
+});
+
+describe('C8 list numbering glued to a size (unlikely wording)', () => {
+  it('"1.9x5.5 ซม." is not a 1.9 cm size, and stays', () => {
+    const t = 'ใบปลิว\n1.9x5.5 ซม.\n2.พิมพ์ 4 สี';
+    expect(fields(t).size).not.toBe('1.9x5.5');
+    stays(t, 1);
+  });
+});
+
+// ───────────────────────── IMPORTANT: a field holds a wrong value (the line stays) ─────────────────────────
+
+describe('I1 the part is named after the value but not at the very end, or glued to a word: the value goes to the other part', () => {
+  it('"(ปก) พิมพ์ 4 สี": the cover paper is not the inner paper', () =>
+    expect(fields('หนังสือ\nเนื้อใน 100 หน้า\nกระดาษอาร์ตการ์ด 260 แกรม (ปก) พิมพ์ 4 สี').paperInner).toBeUndefined());
+  it('two labelled lines: the papers are not swapped', () =>
+    expect(fields('หนังสือ A5\nกระดาษปอนด์ 80 แกรม (เนื้อใน) พิมพ์ 1 สี\nกระดาษอาร์ตการ์ด 260 แกรม (ปก) เคลือบด้าน').paperInner).not.toBe('อาร์ตการ์ด 260 แกรม'));
+  it('"หน้าปก …" under เนื้อใน', () => {
+    const f = fields('หนังสือ A5\nเนื้อใน 100 หน้า\nหน้าปก กระดาษอาร์ตการ์ด 260 แกรม พิมพ์ 4 สี');
+    expect([f.paperInner, f.innerColor]).toEqual([undefined, undefined]);
+  });
+  it('"… สำหรับปก" under เนื้อใน', () => expect(fields('หนังสือ\nเนื้อใน 100 หน้า\nกระดาษอาร์ตการ์ด 260 แกรม สำหรับปก').paperInner).toBeUndefined());
+  it('row 10 when the inner line has no paper: the endpaper is not the inner paper', () =>
+    expect(fields('สมุด Passport \nขนาด 13x9.5 ซม.\nปกกระดาษอาร์ตมัน 230 แกรมเคลือบด้าน\nเนื้อใน 8 หน้า\nกระดาษเปล่า 70g รองปก 1 แผ่น').paperInner).toBeUndefined());
+  it('NEW at HEAD (blank at 221eb8b): a labelled inner paper is skipped and the next paper becomes the inner paper', () =>
+    expect(fields('หนังสือ A5\nเนื้อใน 100 หน้า\nกระดาษปอนด์ 80 แกรม (เนื้อใน)\nกระดาษอาร์ตการ์ด 260 แกรม').paperInner).toBeUndefined());
+});
+
+describe('I2 a colour count next to another count (spaces around the separator)', () => {
+  it.each(['พิมพ์ 1 - 2 สี', 'พิมพ์ 4 + 1 สี', 'พิมพ์ 4 / 1 สี', 'พิมพ์ 1 หรือ 2 สี', 'พิมพ์ 4 สี/1 สี', 'พิมพ์ 4สี+1สี', 'พิมพ์ 4 สี-1 สี'])('%s', (line) =>
+    expect(fields(`ใบปลิว\n${line}`).innerColor).toBeUndefined());
+});
+
+describe('I3 a second paper / weight after the first weight is cut off', () => {
+  it.each(['กระดาษอาร์ต 230 แกรม - 260 แกรม', 'กระดาษอาร์ต 230 แกรม ถึง 260 แกรม', 'กระดาษอาร์ต 230 แกรม หรือปอนด์ 80 แกรม'])('%s', (line) =>
+    expect(fields(`ใบปลิว\n${line}`).paperInner).not.toBe('อาร์ต 230 แกรม'));
+});
+
+describe('I4 coating ticked where the text does not say so', () => {
+  it('"เคลือบเงา - ด้าน" is a choice', () => expect(fields('ใบปลิว\nเคลือบเงา - ด้าน').coatGloss).toBeUndefined());
+  it.each(['งดเคลือบด้าน', 'ยกเลิกเคลือบด้าน', 'เคลือบด้าน (ยกเลิก)', 'เคลือบด้านนึง', 'เคลือบด้านที่พิมพ์', 'เคลือบด้านไหม'])('%s', (line) =>
+    expect(fields(`ใบปลิว\n${line}`).coatMatte).toBeUndefined());
+});
+
+describe('I5 size', () => {
+  it('thousands separator: "1,200x800 มม." is not 200x800', () => expect(fields('ป้าย\nขนาด 1,200x800 มม.').size).not.toBe('200x800'));
+  it('print-area size (the product test keeps this line, yet the size box is filled)', () => expect(fields('ถุงผ้า\nขนาดพิมพ์ 10x10 ซม.\nสกรีน 1 สี').size).toBeUndefined());
+  it('envelope size when the product has none', () => expect(fields('การ์ดเชิญ พิมพ์ 4 สี\nพร้อมซองขนาด 6.5x9 นิ้ว').size).toBeUndefined());
+  it('foil block size when the product has none', () => expect(fields('นามบัตร\nปั๊มฟอยล์ทอง ขนาดบล็อก 3x3 ซม.\nกระดาษอาร์ตการ์ด 300 แกรม').size).toBeUndefined());
+});
+
+describe('I6 "N สี" anywhere on a ปก / เนื้อใน line is taken as the ink count', () => {
+  it('foil colours on the cover line', () => {
+    const f = fields('สมุด\nปก ปั๊มฟอยล์ 2 สี (ทอง เงิน)\nเนื้อใน พิมพ์ 1 สี');
+    expect([f.coverColor, f.coverColorNote]).toEqual([undefined, undefined]);
+  });
+  it('cloth colours', () => expect(fields('สมุด\nปก ผ้าไหม 2 สี').coverColor).toBeUndefined());
+});
+
+describe('I7 Thai "อาร์ตเวิร์ค" is read as art paper (the English "artwork" case is tested in the product) — and the line leaves', () => {
+  it('ปก อาร์ตเวิร์คเดิม', () => {
+    const t = 'หนังสือ\nปก อาร์ตเวิร์คเดิม พิมพ์ 4 สี\nเนื้อใน อาร์ตเวิร์คลูกค้า';
+    expect([fields(t).paperCover, fields(t).paperInner]).toEqual([undefined, undefined]);
+    stays(t, 1, 2);
+  });
+});
+
+describe('I8 change 3 of e2e5066 ("ป้าย" ends the ภู่ part only at the start of a line) blanks the shop\'s own wording', () => {
+  it('row 11 with the ภู่ part first: "ขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี" (filled at 221eb8b, nothing at HEAD)', () =>
+    expect(fields('ปฏิทินแขวน\nภู่ปฏิทิน ขนาด 7x15 นิ้ว\nพิมพ์ 4สี กระดาษปอนด์\nขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษอาร์ต 230 แกรม เคลือบเงา\nเข้าหัวเหล็กปฏิทิน')).toMatchObject({ size: '15x21', sizeUnit: 'นิ้ว' }));
+});
+
+// ───────────────────────── MINOR ─────────────────────────
+
+describe('M1 time of one read on crafted text (4,000 characters, one line)', () => {
+  it('"กระดาษ" x222 + 2,668 digits reads in under 200 ms', () => {
+    const t = `${'กระดาษ'.repeat(222)}${'1'.repeat(2668)}`;
+    const t0 = performance.now();
+    specFromText(t);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+});

@@ -5,7 +5,7 @@
  */
 import type { PeakQuotation } from '@/lib/peak/read';
 import type { CreateOrderBody } from '@/lib/orders-create';
-import { linesReadFrom, type SpecFields } from '@/lib/peak-order/spec-from-text';
+import type { SpecFields } from '@/lib/peak-order/spec-from-text';
 import { emptyOrderForm } from '@/lib/photobook';
 
 export const NO_NAME = '(ไม่มีชื่อรายการ)';
@@ -50,9 +50,9 @@ export function firstLine(description: string): string {
 }
 
 /**
- * The line text for an order's notes once its spec is in the form fields (spec §13):
- * without the `read` lines (linesReadFrom — nothing on them but values that are in a field)
- * and without the first line when it is the order's `name` as written (the name field holds it).
+ * The line text for an order's notes (spec §13): without the first line when it is the order's
+ * `name` as written (the name field holds it), and without the `read` lines.
+ * Order creation passes no `read` lines (unitNotes, spec §13.7).
  * Kept lines are untouched; blank lines left behind do not pile up. Nothing dropped = the text as it is.
  */
 export function notesBody(description: string, read: readonly number[], name: string): string {
@@ -131,17 +131,21 @@ export function planUnits(q: PeakQuotation, mode: 'single' | 'merged' | 'split',
 }
 
 /**
- * The notes an order is created with (spec §13). A unit that is exactly one quotation line:
- * the line text without what went into the form fields (notesBody), plus the Peak reference.
- * A merged unit, a missing snapshot or a line that is gone: the notes as planned (the full text).
- * Read from the same stored text, by the same rules, as the fields (specForUnit) — a line
- * leaves the notes only when its values are in the fields of that same order.
+ * The notes an order is created with (spec §13.7). A unit that is exactly one quotation line:
+ * the line text without its first line when that line is the order's name (notesBody), plus the
+ * Peak reference. A merged unit, a missing snapshot or a line that is gone: the notes as planned
+ * (the full text).
+ *
+ * Every other line stays, also when all it says is in a form field. Dropping those lines
+ * (linesReadFrom) was live for one day and is off by the owner's decision (2026-11-19): what a
+ * line means depends on the lines around it — a heading, a second item, "not included" — and the
+ * keyword rules cannot see that. The notes are where a wrongly filled field can be checked.
  */
 export function unitNotes(q: PeakQuotation | null | undefined, unit: UnitPlan, code: string): string {
   if (!q || !Array.isArray(q.lines) || unit.lineKeys.length !== 1) return unit.notes;
   const line = q.lines.find((l) => l?.key === unit.lineKeys[0]);
   if (!line || typeof line.description !== 'string') return unit.notes;
-  return withRef(notesBody(line.description, linesReadFrom(line.description), unit.name), code);
+  return withRef(notesBody(line.description, [], unit.name), code);
 }
 
 export interface UnitChoices {

@@ -237,7 +237,7 @@ describe('notesBody + linesReadFrom agree on line numbers', () => {
   });
 });
 
-// Spec §13: what order creation writes into the notes.
+// Spec §13.7: what order creation writes into the notes — every line under the name line.
 describe('unitNotes — notes of a unit at creation', () => {
   const CARD = 'นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\nกระดาษอาร์ตมัน 260 แกรม';
   const TICKET = 'ตั๋วขนาด 6x12 ซม.\nกระดาษอาร์ต 260 แกรม\nเคลือบด้าน';
@@ -245,11 +245,31 @@ describe('unitNotes — notes of a unit at creation', () => {
   const REF = 'อ้างอิง Peak: QO-20261100072';
   const [ua, ub] = planUnits(q, 'split');
 
-  it('one line: without the name line and the lines that went into fields; the Peak reference stays', () => {
-    expect(unitNotes(q, ua, q.code)).toBe(`พิมพ์ 4 สี 1 หน้า\n\n${REF}`);
+  it('one line: without the name line; every spec line stays as written; the Peak reference stays', () => {
+    expect(unitNotes(q, ua, q.code)).toBe(`พิมพ์ 4 สี 1 หน้า\nกระดาษอาร์ตมัน 260 แกรม\n\n${REF}`);
   });
-  it('everything on the line is in a field: only the Peak reference is left', () => {
-    expect(unitNotes(q, ub, q.code)).toBe(REF);
+  it('lines whose values are all in a field stay too', () => {
+    expect(unitNotes(q, ub, q.code)).toBe(`กระดาษอาร์ต 260 แกรม\nเคลือบด้าน\n\n${REF}`);
+  });
+  it('a line that is only the name: only the Peak reference is left', () => {
+    const one = Q([['a', 'ไวนิลขนาด 1x2 เมตร', 1]]);
+    expect(unitNotes(one, planUnits(one, 'single')[0], one.code)).toBe(REF);
+  });
+  // One text from each of the 8 ways the second independent review (2026-11-19) made a spec line
+  // leave the notes while what it said was in no field, or in the wrong one.
+  it.each<[string, string]>([
+    ['two parts named with a Thai joiner', 'แคตตาล็อคขนาด 19x26 cm\nเนื้อในรวมปก 16 หน้า\nกระดาษอาร์ต 160g\nพิมพ์ 4 สี\nมุงหลังคา'],
+    ['a line above a ปก line says "not included"', 'หนังสือขนาด A4\nเนื้อในปอนด์ 80 แกรม พิมพ์ 1 สี 32 หน้า\nเข้าเล่มไสกาวปกอ่อน\nราคานี้ไม่รวม\nปกเคลือบด้าน'],
+    ['headings that carry a value', 'ตั๋วขนาด 6x12 ซม.\nกระดาษอาร์ต 260 แกรม\nด้านหน้า พิมพ์ 4 สี\nเคลือบด้าน\nด้านหลัง พิมพ์ 4 สี\nเคลือบ UV'],
+    ['a second item in the same text', 'นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\nกล่องใส่นามบัตร พิมพ์ 4 สี\nกระดาษอาร์ตมัน 260 แกรม\nเคลือบด้าน'],
+    ['a list under "not included"', 'นามบัตร 9x5.5 ซม.\nพิมพ์ 4 สี 2 หน้า\nราคานี้ไม่รวม\n- เคลือบด้าน\n- Spot UV'],
+    ['unticked boxes', 'หนังสือ\n(x) ไสกาว\n( ) มุงหลังคา\n( ) กระดูกงู'],
+    ['a coating on its own line under a part heading', 'แฟ้ม\nปกหน้า\nเคลือบ Spot UV\nปกหลัง\nเคลือบด้าน'],
+    ['calendar: the ป้าย line between the ไส้ line and its own colour line', 'ปฏิทินตั้งโต๊ะ\nไส้ 7x15 นิ้ว กระดาษปอนด์\nป้าย ขนาด 15x21 นิ้ว กระดาษอาร์ต 230g\nพิมพ์ 4 สี 2 หน้า'],
+  ])('no spec line leaves — %s', (_name, d) => {
+    const one = Q([['a', d, 1]]);
+    const under = d.split('\n').slice(1).join('\n');
+    expect(unitNotes(one, planUnits(one, 'single')[0], one.code)).toBe(`${under}\n\n${REF}`);
   });
   it('merged unit: the notes as planned (every line in full)', () => {
     const [m] = planUnits(q, 'merged');
@@ -267,6 +287,6 @@ describe('unitNotes — notes of a unit at creation', () => {
     expect(ua.notes).toBe(`${CARD}\n\n${REF}`);
   });
   it('a unit whose name is not the first line (edited name) keeps that line', () => {
-    expect(unitNotes(q, { ...ua, name: 'ชื่ออื่น' }, q.code)).toBe(`นามบัตรขนาด 9x5.5 ซม.\nพิมพ์ 4 สี 1 หน้า\n\n${REF}`);
+    expect(unitNotes(q, { ...ua, name: 'ชื่ออื่น' }, q.code)).toBe(`${CARD}\n\n${REF}`);
   });
 });

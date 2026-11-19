@@ -706,9 +706,13 @@ export function specFromText(description: unknown): SpecFromText {
 }
 
 /**
- * The lines of the text (0-based, split on line breaks) that the order's notes may leave out
- * (spec §13): every word on the line is a value `specFromText` put in a field, written as the
- * field holds it — and no line next to it needs it to be understood. Any input; never throws.
+ * The lines of the text (0-based, split on line breaks) on which every word is a value
+ * `specFromText` put in a field, written as the field holds it, with no bare line next to it
+ * (spec §13). Any input; never throws.
+ *
+ * NOT used when an order is created (spec §13.7, owner's decision 2026-11-19). Two independent
+ * reviews each found 8 kinds of text — one step from real quotation lines — where dropping these
+ * lines from the notes lost what they said. Do not wire it back into the notes on tests alone.
  */
 export function linesReadFrom(description: unknown): number[] {
   if (typeof description !== 'string' || description === '') return [];
