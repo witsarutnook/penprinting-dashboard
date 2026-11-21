@@ -50,21 +50,18 @@ export function firstLine(description: string): string {
 }
 
 /**
- * The line text for an order's notes (spec §13): without the first line when it is the order's
- * `name` as written (the name field holds it), and without the `read` lines.
- * Order creation passes no `read` lines (unitNotes, spec §13.7).
+ * The line text for an order's notes (spec §13.7): without the first line when it is the order's
+ * `name` as written (the name field holds it). No other line ever leaves.
  * Kept lines are untouched; blank lines left behind do not pile up. Nothing dropped = the text as it is.
  */
-export function notesBody(description: string, read: readonly number[], name: string): string {
+export function notesBody(description: string, name: string): string {
   const text = String(description ?? '');
   const lines = text.split(/\r\n|\r|\n/);
-  const drop = new Set(read.filter((n) => Number.isInteger(n) && n >= 0 && n < lines.length));
   const first = lines.findIndex((l) => bare(l) !== '');
-  if (first >= 0 && bare(lines[first]) === name) drop.add(first);
-  if (drop.size === 0) return text;
+  if (first < 0 || bare(lines[first]) !== name) return text;
   const kept: string[] = [];
   lines.forEach((line, n) => {
-    if (drop.has(n)) return;
+    if (n === first) return;
     const blank = line.trim() === '';
     if (blank && (kept.length === 0 || kept[kept.length - 1].trim() === '')) return;
     kept.push(line);
@@ -136,16 +133,17 @@ export function planUnits(q: PeakQuotation, mode: 'single' | 'merged' | 'split',
  * Peak reference. A merged unit, a missing snapshot or a line that is gone: the notes as planned
  * (the full text).
  *
- * Every other line stays, also when all it says is in a form field. Dropping those lines
- * (linesReadFrom) was live for one day and is off by the owner's decision (2026-11-19): what a
- * line means depends on the lines around it — a heading, a second item, "not included" — and the
- * keyword rules cannot see that. The notes are where a wrongly filled field can be checked.
+ * Every other line stays, also when all it says is in a form field. Dropping those lines was
+ * live for one day (2026-11-18 → 19) and was taken out by the owner's decision; its code was
+ * deleted on 2026-11-21 (spec §13.7 has the reasons and what a new attempt must pass first):
+ * what a line means depends on the lines around it — a heading, a second item, "not included" —
+ * and the keyword rules cannot see that. The notes are where a wrongly filled field can be checked.
  */
 export function unitNotes(q: PeakQuotation | null | undefined, unit: UnitPlan, code: string): string {
   if (!q || !Array.isArray(q.lines) || unit.lineKeys.length !== 1) return unit.notes;
   const line = q.lines.find((l) => l?.key === unit.lineKeys[0]);
   if (!line || typeof line.description !== 'string') return unit.notes;
-  return withRef(notesBody(line.description, [], unit.name), code);
+  return withRef(notesBody(line.description, unit.name), code);
 }
 
 export interface UnitChoices {

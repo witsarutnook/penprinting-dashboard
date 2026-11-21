@@ -3,7 +3,7 @@ import type { PeakQuotation } from '@/lib/peak/read';
 import { emptyOrderForm } from '@/lib/photobook';
 import { QTY_UNITS } from '@/lib/order-constants';
 import { NO_NAME, addDaysISO, bangkokISODate, buildOrderBody, firstLine, formatQty, notesBody, planUnits, unitNotes } from '@/lib/peak-order/mapper';
-import { linesReadFrom, type SpecFields } from '@/lib/peak-order/spec-from-text';
+import type { SpecFields } from '@/lib/peak-order/spec-from-text';
 
 const Q = (lines: Array<[string, string, number | null]>): PeakQuotation => ({
   code: 'QO-20261100072',
@@ -174,66 +174,46 @@ describe('buildOrderBody', () => {
   });
 });
 
-// Spec §13: once the spec is in the form fields, the notes need not repeat it.
+// Spec §13.7: the notes keep every line of the text except the line that is the order's name.
 describe('notesBody — the line text for the notes', () => {
   const REAL =
     'ปฏิทินแขวน ขนาด 15x21 นิ้ว\nปฏิทินขนาดป้าย 15x21 นิ้ว พิมพ์ 4 สี\nกระดาษการ์ดอาร์ตหน้าเดียว 230 แกรม เคลือบเงา\nภู่ปฏิทิน ขนาด 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์ 55 แกรม\nเข้าหัวเหล็ก';
 
-  it("คุณนุ๊ก's first real order: the read lines and the name line go; the rest stays as written", () => {
-    expect(notesBody(REAL, [1, 2], firstLine(REAL))).toBe(
-      'ภู่ปฏิทิน ขนาด 7x15 นิ้ว พิมพ์ 4 สี กระดาษปอนด์ 55 แกรม\nเข้าหัวเหล็ก',
-    );
+  it("คุณนุ๊ก's first real order: only the name line goes; every line under it stays as written", () => {
+    expect(notesBody(REAL, firstLine(REAL))).toBe(REAL.split('\n').slice(1).join('\n'));
   });
   it('nothing to drop -> the text exactly as it is', () => {
     const d = '  ก \r\n\r\n\r\n ข ';
-    expect(notesBody(d, [], 'อื่น')).toBe(d);
+    expect(notesBody(d, 'อื่น')).toBe(d);
   });
   it('the first line stays when it is not the whole name (a clipped name)', () => {
     const d = `${'ก'.repeat(300)}\nขนาด A4`;
-    expect(notesBody(d, [], firstLine(d))).toBe(d);
-    expect(notesBody(d, [1], firstLine(d))).toBe('ก'.repeat(300));
+    expect(notesBody(d, firstLine(d))).toBe(d);
   });
   it('the name is compared without the bullet; leading blank lines do not count', () => {
-    expect(notesBody('\n  \n- สมุดโน้ต\n- 80 แผ่น', [], 'สมุดโน้ต')).toBe('- 80 แผ่น');
+    expect(notesBody('\n  \n- สมุดโน้ต\n- 80 แผ่น', 'สมุดโน้ต')).toBe('- 80 แผ่น');
   });
   it('only the first line can be the name', () => {
-    expect(notesBody('ก\nข\nก', [], 'ก')).toBe('ข\nก');
-    expect(notesBody('ข\nก', [], 'ก')).toBe('ข\nก');
+    expect(notesBody('ก\nข\nก', 'ก')).toBe('ข\nก');
+    expect(notesBody('ข\nก', 'ก')).toBe('ข\nก');
   });
   it('a name that is not in the text drops nothing', () => {
-    expect(notesBody('ก\nข', [], NO_NAME)).toBe('ก\nข');
-    expect(notesBody('', [], NO_NAME)).toBe('');
+    expect(notesBody('ก\nข', NO_NAME)).toBe('ก\nข');
+    expect(notesBody('', NO_NAME)).toBe('');
   });
-  it('everything dropped -> empty', () => {
-    expect(notesBody('ใบปลิว\nขนาด A4', [1], 'ใบปลิว')).toBe('');
+  it('a text that is only the name line -> empty', () => {
+    expect(notesBody('ใบปลิว', 'ใบปลิว')).toBe('');
+    expect(notesBody('\n- ใบปลิว\n\n  \n', 'ใบปลิว')).toBe('');
   });
-  it('blank lines left around a dropped line do not pile up or lead / trail', () => {
-    expect(notesBody('ก\n\nข\n \nค', [2], 'x')).toBe('ก\n\nค');
-    expect(notesBody('ข\n\nก\n\n', [0], 'x')).toBe('ก');
-    expect(notesBody('ก\n\nข', [2], 'x')).toBe('ก');
+  it('blank lines left behind by the name line do not pile up or lead / trail', () => {
+    expect(notesBody('ชื่อ\n\nก\n\n \nข\n\n', 'ชื่อ')).toBe('ก\n\nข');
+    expect(notesBody('\n\nชื่อ\n\n\nก', 'ชื่อ')).toBe('ก');
   });
   it('kept lines keep their own spaces and bullets', () => {
-    expect(notesBody('ชื่อ\n  - ปั๊มฟอยล์ทอง  \nขนาด A4', [2], 'ชื่อ')).toBe('  - ปั๊มฟอยล์ทอง  ');
+    expect(notesBody('ชื่อ\n  - ปั๊มฟอยล์ทอง  \nขนาด A4', 'ชื่อ')).toBe('  - ปั๊มฟอยล์ทอง  \nขนาด A4');
   });
-  it('CRLF text', () => {
-    expect(notesBody('ชื่อ\r\nขนาด A4\r\nปั๊มฟอยล์\r\nเข้าหัวเหล็ก', [1], 'ชื่อ')).toBe('ปั๊มฟอยล์\nเข้าหัวเหล็ก');
-  });
-  it('line numbers that are not lines of the text are ignored', () => {
-    expect(notesBody('ก\n\n\nข', [5, -1, 1.5, Number.NaN], 'x')).toBe('ก\n\n\nข');
-  });
-});
-
-// The two functions number lines separately: they must agree on every kind of line break.
-describe('notesBody + linesReadFrom agree on line numbers', () => {
-  const notes = (d: string): string => notesBody(d, linesReadFrom(d), firstLine(d));
-  it.each<[string, string, string]>([
-    ['LF', 'ตั๋ว\nพิมพ์ 4 สี 1 หน้า\nกระดาษอาร์ต 260 แกรม\nเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
-    ['CRLF', 'ตั๋ว\r\nพิมพ์ 4 สี 1 หน้า\r\nกระดาษอาร์ต 260 แกรม\r\nเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
-    ['lone CR', 'ตั๋ว\rพิมพ์ 4 สี 1 หน้า\rกระดาษอาร์ต 260 แกรม\rเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
-    ['mixed breaks and a tab', 'ตั๋ว\r\nพิมพ์ 4 สี 1 หน้า\rกระดาษ\tอาร์ต 260 แกรม\nเคลือบด้าน', 'พิมพ์ 4 สี 1 หน้า'],
-    ['blank lines between', 'ตั๋ว\n\nพิมพ์ 4 สี 1 หน้า\n\nกระดาษอาร์ต 260 แกรม\n\nเคลือบด้าน\n', 'พิมพ์ 4 สี 1 หน้า'],
-  ])('%s', (_name, d, expected) => {
-    expect(notes(d)).toBe(expected);
+  it('CRLF and lone CR text', () => {
+    expect(notesBody('ชื่อ\r\nขนาด A4\r\nปั๊มฟอยล์\rเข้าหัวเหล็ก', 'ชื่อ')).toBe('ขนาด A4\nปั๊มฟอยล์\nเข้าหัวเหล็ก');
   });
 });
 
