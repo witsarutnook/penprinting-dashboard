@@ -591,9 +591,47 @@ export interface UpdateOrderInput {
   rawData?: Record<string, unknown> | null;
 }
 
+/** A plain JSON object, or null. */
+function asObject(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** The `raw_data.peak` value of a row as an object, or null when there is none (or it is not one).
+ *  Read the way lib/peak-order/restore-guard.ts reads it: a driver may hand jsonb back as text. */
+function storedPeakMarker(value: unknown): Record<string, unknown> | null {
+  let v = value;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  return asObject(v);
+}
+
+/** `snapshot` with the order's own Peak marker and no other: a `peak` key in the snapshot is dropped,
+ *  the stored marker (if any) is put in. A cleared snapshot still keeps the marker. */
+function withPeakMarker(
+  snapshot: Record<string, unknown> | null,
+  peak: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (snapshot == null) return peak ? { peak } : null;
+  const rest = { ...snapshot };
+  delete rest.peak;
+  return peak ? { ...rest, peak } : rest;
+}
+
 /** Phase 2 — single UPDATE on orders with merge-into-raw.
  *  Mirrors updateJobInPostgres for the orders table. Returns found:false
- *  when the row is missing (caller surfaces a 409). */
+ *  when the row is missing (caller surfaces a 409).
+ *
+ *  The Peak marker (`raw_data.peak`, written when `/order` opens a quotation line —
+ *  lib/peak-order/mapper.ts) belongs to the server. The edit form does not hold it, so the
+ *  snapshot an edit sends never has it: this function keeps the stored marker in `details`,
+ *  `raw_data` and the `raw` copy, and never takes one from the caller. Without it the restore
+ *  guard (lib/peak-order/restore-guard.ts) lets a cancelled job come back next to the order
+ *  that replaced it (found 2026-11-21: #202611104 and #202611108 lost theirs on the first edit). */
 export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('updateOrder', 'POSTGRES_URL env var missing');
@@ -603,11 +641,13 @@ export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ 
     throw new PostgresWriteError('updateOrder', 'Invalid order id');
   }
 
-  const cur = await sql<{ raw: AnyRow | null }>`SELECT raw FROM orders WHERE id = ${idNum}::bigint LIMIT 1`;
+  const cur = await sql<{ raw: AnyRow | null; peak: unknown }>`
+    SELECT raw, raw_data->'peak' AS peak FROM orders WHERE id = ${idNum}::bigint LIMIT 1`;
   if (cur.rows.length === 0) {
     return { ok: true, found: false };
   }
   const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
+  const peak = storedPeakMarker(cur.rows[0]?.peak);
 
   const merged: AnyRow = { ...oldRaw, id: idNum };
   if (input.name !== undefined) merged.name = String(input.name);
@@ -619,8 +659,12 @@ export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ 
   if (input.assignStaff !== undefined) merged.assignStaff = String(input.assignStaff);
   if (input.orderer !== undefined) merged.orderer = String(input.orderer);
   if (input.status !== undefined) merged.status = String(input.status);
-  if (input.details !== undefined) merged.details = input.details;
-  if (input.rawData !== undefined) merged.rawData = input.rawData;
+  // The marker goes into what is written whether or not the caller sent a snapshot: without
+  // one the columns are rebuilt from the `raw` copy, which may not hold it.
+  if (input.details !== undefined) merged.details = withPeakMarker(input.details, peak);
+  else if (peak) merged.details = withPeakMarker(asObject(merged.details), peak);
+  if (input.rawData !== undefined) merged.rawData = withPeakMarker(input.rawData, peak);
+  else if (peak) merged.rawData = withPeakMarker(asObject(merged.rawData), peak);
 
   const name = String(merged.name || '');
   const customer = merged.customer != null ? String(merged.customer) : null;

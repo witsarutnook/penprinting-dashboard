@@ -776,6 +776,111 @@ describe('updateOrderInPostgres', () => {
     expect(upd!.text).toContain('name =');
     expect(upd!.text).toContain('date_due =');
   });
+
+  // Bug found 2026-11-21: an order opened by /order carries raw_data.peak (the restore guard and
+  // the /order takeover read it). The edit form does not hold that key, and the edit wrote the
+  // form snapshot over raw_data — #202611104 and #202611108 lost their marker on the first edit.
+  // The marker belongs to the server: an edit keeps the stored one and never takes one from the caller.
+  describe('the Peak marker of an order opened by /order', () => {
+    const MARKER = { code: 'QO-20261100143', lineKeys: ['line-a', 'line-b'], draftId: 'draft-1' };
+    const FORGED = { code: 'QO-29990000001', lineKeys: ['line-x'], draftId: 'forged' };
+    const FORM = { name: 'กล่องใส่ passport', notes: 'อ้างอิง Peak: QO-20261100143', pin: '5496', coatMatte: true };
+
+    /** The JSON bound to `column` in the UPDATE of orders. */
+    const written = (column: 'raw_data' | 'details' | 'raw'): Record<string, unknown> | null => {
+      const upd = findCallContaining('UPDATE orders SET');
+      expect(upd, 'must UPDATE orders').toBeDefined();
+      const slot = new RegExp(`\\b${column} = \\$(\\d+)::jsonb`).exec(upd!.text);
+      expect(slot, `${column} must be a bound jsonb parameter`).not.toBeNull();
+      const value = upd!.values[Number(slot![1]) - 1];
+      return value == null ? null : (JSON.parse(String(value)) as Record<string, unknown>);
+    };
+    const stored = (peak: unknown) => {
+      queueResult({
+        rows: [{ raw: { id: 202611108, name: 'กล่องใส่ passport', rawData: { ...FORM, peak: MARKER }, details: { ...FORM, peak: MARKER } }, peak }],
+        rowCount: 1,
+      });
+      queueResult({ rowCount: 1 });
+    };
+
+    it('an edit keeps the marker: raw_data, details and the raw copy all still carry it', async () => {
+      stored(MARKER);
+      await updateOrderInPostgres({ id: 202611108, name: 'กล่องใส่ passport', details: { ...FORM }, rawData: { ...FORM } });
+      expect(written('raw_data')).toEqual({ ...FORM, peak: MARKER });
+      expect(written('details')).toEqual({ ...FORM, peak: MARKER });
+      expect(written('raw')?.rawData).toEqual({ ...FORM, peak: MARKER });
+      expect(written('raw')?.details).toEqual({ ...FORM, peak: MARKER });
+    });
+
+    it('the marker it keeps is the one read from the row: the read asks for raw_data->peak', async () => {
+      stored(MARKER);
+      await updateOrderInPostgres({ id: 202611108, rawData: { ...FORM } });
+      const read = sqlCalls[0];
+      expect(read.text).toContain("raw_data->'peak' AS peak FROM orders WHERE id = $1");
+      expect(read.values).toEqual([202611108]);
+    });
+
+    it('an order without a marker gets none: a marker sent by the caller is dropped', async () => {
+      stored(null);
+      await updateOrderInPostgres({ id: 202611108, details: { ...FORM, peak: FORGED }, rawData: { ...FORM, peak: FORGED } });
+      expect(written('raw_data')).toEqual(FORM);
+      expect(written('details')).toEqual(FORM);
+      expect(written('raw')?.rawData).toEqual(FORM);
+    });
+
+    it('the stored marker wins over one sent by the caller', async () => {
+      stored(MARKER);
+      await updateOrderInPostgres({ id: 202611108, details: { ...FORM, peak: FORGED }, rawData: { ...FORM, peak: FORGED } });
+      expect(written('raw_data')?.peak).toEqual(MARKER);
+      expect(written('details')?.peak).toEqual(MARKER);
+    });
+
+    it('a marker the driver hands back as JSON text is written as an object', async () => {
+      stored(JSON.stringify(MARKER));
+      await updateOrderInPostgres({ id: 202611108, rawData: { ...FORM } });
+      expect(written('raw_data')?.peak).toEqual(MARKER);
+    });
+
+    // Independent review 2026-11-21: with no snapshot from the caller the columns are rebuilt
+    // from the `raw` copy — if that copy has no marker, raw_data would be written without it.
+    it('an update that sends no snapshot still writes the stored marker into raw_data', async () => {
+      queueResult({
+        rows: [{ raw: { id: 202611108, name: 'เก่า', rawData: { ...FORM }, details: { ...FORM } }, peak: MARKER }],
+        rowCount: 1,
+      });
+      queueResult({ rowCount: 1 });
+      await updateOrderInPostgres({ id: 202611108, name: 'ใหม่' });
+      expect(written('raw_data')).toEqual({ ...FORM, peak: MARKER });
+      expect(written('details')).toEqual({ ...FORM, peak: MARKER });
+      expect(written('raw')?.rawData).toEqual({ ...FORM, peak: MARKER });
+    });
+
+    it('an update that sends no snapshot of an order without a marker writes the snapshot as it was', async () => {
+      queueResult({
+        rows: [{ raw: { id: 202611109, name: 'เก่า', rawData: { ...FORM }, details: { ...FORM } }, peak: null }],
+        rowCount: 1,
+      });
+      queueResult({ rowCount: 1 });
+      await updateOrderInPostgres({ id: 202611109, name: 'ใหม่' });
+      expect(written('raw_data')).toEqual(FORM);
+      expect(written('details')).toEqual(FORM);
+    });
+
+    it('clearing the snapshot does not clear the marker', async () => {
+      stored(MARKER);
+      await updateOrderInPostgres({ id: 202611108, details: null, rawData: null });
+      expect(written('raw_data')).toEqual({ peak: MARKER });
+    });
+
+    it('a stored value that is not a marker object is not carried over', async () => {
+      for (const junk of ['not json', 42, [], true]) {
+        resetMockPostgres();
+        stored(junk);
+        await updateOrderInPostgres({ id: 202611108, rawData: { ...FORM } });
+        expect(written('raw_data'), String(junk)).toEqual(FORM);
+      }
+    });
+  });
 });
 
 describe('promoteDraftInPostgres', () => {

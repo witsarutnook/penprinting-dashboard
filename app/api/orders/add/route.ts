@@ -20,6 +20,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
+  // The Peak marker ("/order opened this quotation line as this order") is written only by
+  // the LINE /order flow, which calls createOrderFromForm directly. A web client never sets
+  // one — the same rule updateOrderInPostgres keeps on edit (lib/postgres-write.ts).
+  if (body && typeof body === 'object') delete body.peak;
+
   const r = await createOrderFromForm(body, session);
   if (r.ok) {
     return NextResponse.json({

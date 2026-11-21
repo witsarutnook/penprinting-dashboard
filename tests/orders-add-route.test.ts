@@ -141,8 +141,18 @@ describe('POST /api/orders/add — success', () => {
   });
 
   it('preserves unknown extra keys in the snapshot', async () => {
-    await call({ ...BASE, peak: { code: 'QO-1' } });
-    expect(createMock.mock.calls[0][0].order.rawData.peak).toEqual({ code: 'QO-1' });
+    await call({ ...BASE, somethingNew: { a: 1 } });
+    expect(createMock.mock.calls[0][0].order.rawData.somethingNew).toEqual({ a: 1 });
+  });
+
+  // The Peak marker says "/order opened this quotation line as this order". Only the LINE
+  // flow writes it (it calls createOrderFromForm directly — pinned in orders-create.test.ts).
+  it('a Peak marker sent by a web client never reaches the snapshot', async () => {
+    const { status } = await call({ ...BASE, peak: { code: 'QO-1', lineKeys: ['x'], draftId: 'd' } });
+    expect(status).toBe(200);
+    const arg = createMock.mock.calls[0][0];
+    expect('peak' in arg.order.rawData).toBe(false);
+    expect('peak' in arg.order.details).toBe(false);
   });
 
   it('writes one createOrder audit row', async () => {

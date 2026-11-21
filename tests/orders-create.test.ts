@@ -62,6 +62,16 @@ describe('createOrderFromForm result arms', () => {
     expect(r).toMatchObject({ ok: true, draft: true, jobId: null });
   });
 
+  // The LINE /order flow calls this directly with the marker of the quotation line it opens.
+  // (The web route drops a `peak` key before it gets here — orders-add-route.test.ts.)
+  it('keeps the Peak marker it is given, in both copies of the snapshot', async () => {
+    const peak = { code: 'QO-20261100111', lineKeys: ['line-a'], draftId: 'draft-1' };
+    await createOrderFromForm({ ...BASE, peak }, ACTOR);
+    const arg = createMock.mock.calls[0][0];
+    expect(arg.order.rawData.peak).toEqual(peak);
+    expect(arg.order.details.peak).toEqual(peak);
+  });
+
   it('validation -> kind validation, status 400', async () => {
     const r = await createOrderFromForm({ ...BASE, name: '' }, ACTOR);
     expect(r).toMatchObject({ ok: false, kind: 'validation', status: 400 });
