@@ -94,6 +94,7 @@ npm run build            # before push
 | [lib/archive-search.ts](lib/archive-search.ts) | `/archive` all-years search (normalize / escape / `searchArchiveOrders` / `archiveRowState`) |
 | [lib/order-lock.ts](lib/order-lock.ts) | Edit-lock shipped/cancelled (`orderLockReason` / `orderLockMessage`) — ใช้ร่วมโดย `/orders/[id]/edit` + `/api/orders/update` (2026-09-05) |
 | [lib/orders-create.ts](lib/orders-create.ts) | `createOrderFromForm` — ตรรกะสร้างออเดอร์ (ใช้ร่วมโดย `/api/orders/add` + `/order` LINE) |
+| [lib/postgres-write.ts](lib/postgres-write.ts) `updateOrderInPostgres` | จุดเดียวที่เขียน snapshot ของใบ (`raw_data` / `details` / สำเนาใน `raw`) — **เครื่องหมาย Peak (`raw_data.peak`) เป็นของเซิร์ฟเวอร์**: เก็บค่าที่อยู่ในแถวเสมอ ไม่รับจากผู้เรียก; `/api/orders/add` ทิ้ง `peak` จาก body (2026-11-21 · PATTERNS §12.6). key ของเซิร์ฟเวอร์ตัวใหม่ใน JSON ก้อนนี้ต้องเก็บที่ฟังก์ชันนี้ด้วย ไม่งั้นหายตอนแก้ไขใบ |
 | [lib/peak/token-store.ts](lib/peak/token-store.ts) | token Peak เข้ารหัส + single-flight refresh (PATTERNS §12.1) |
 | [lib/peak/mcp-client.ts](lib/peak/mcp-client.ts) · [read.ts](lib/peak/read.ts) | Peak MCP client + ทูลอ่าน 3 ตัว (`get_quotation`/`list_quotation`/`search_contacts`) |
 | [lib/peak-order/db.ts](lib/peak-order/db.ts) · [handler.ts](lib/peak-order/handler.ts) | gate/claim ร่าง `/order` + state machine (PATTERNS §12.2) |
