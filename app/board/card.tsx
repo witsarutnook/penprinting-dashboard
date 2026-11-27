@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import {
   type BoardJob,
   type Dept,
@@ -13,6 +14,7 @@ import {
   coworkPrintStaffIds,
 } from '@/lib/board';
 import { computeFromType, getVisibleTargets, RESTRICTED_TARGETS } from '@/lib/forward';
+import { BOARD_RETURN_KEY, orderEditHref } from '@/lib/order-edit-nav';
 import { buildSpecSections } from '@/lib/spec-format';
 import { broadcastWrite } from '@/lib/auto-sync';
 import { displayDate } from '@/lib/jobs';
@@ -22,13 +24,11 @@ import { useConfirm } from '@/components/confirm-provider';
 import { useToast } from '@/components/toast-provider';
 import { usePendingMutations } from '@/components/board/pending-mutations';
 
-// Lazy-load admin-only edit modals — saves ~50KB First Load JS for staff
-// (who never open these). Chunks only fetch when the user clicks ✏️.
-// ssr:false because dialogs need DOM access on mount.
-const OrderForm = dynamic(
-  () => import('./order-form').then((m) => ({ default: m.OrderForm })),
-  { ssr: false },
-);
+// Lazy-load the admin-only job edit modal — keeps it out of First Load JS for
+// staff (who never open it). The chunk only fetches when the user clicks ✏️.
+// ssr:false because the dialog needs DOM access on mount.
+// (The ORDER edit form is not opened here: "แก้ใบสั่ง" goes to the full edit
+// page — see startEditOrder.)
 const JobForm = dynamic(
   () => import('./job-form').then((m) => ({ default: m.JobForm })),
   { ssr: false },
@@ -101,9 +101,9 @@ function CardImpl({
   // fetches firing immediately, all of them blocked by the rate-limiter
   // anyway). Mount-on-open: zero audit fetches, zero history-tab chunk
   // download, until the user clicks a card.
+  const router = useRouter();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [editOrderOpen, setEditOrderOpen] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [coworkOpen, setCoworkOpen] = useState(false);
   const { mode: bulkMode, selected, toggleJob } = useBulkMode();
@@ -161,9 +161,18 @@ function CardImpl({
     dialogRef.current?.close();
     setEditOpen(true);
   }
+  /** "แก้ใบสั่ง" → the full edit page, which loads the whole order. The card holds a slim order
+   *  (no spec, no PIN — lib/board-delta.ts), and the form it used to open in place with it wiped
+   *  the PIN and could save a blank spec when its spec fetch failed (audit 2026-11-27, H1 + M4). */
   function startEditOrder() {
+    if (!job.orderId) return;
     dialogRef.current?.close();
-    setEditOrderOpen(true);
+    // Remember the board as it is now (its dept / staff / search filters live in the URL): the
+    // edit page comes back here when done. Best effort — without it, it goes to the plain board.
+    try {
+      window.sessionStorage.setItem(BOARD_RETURN_KEY, window.location.pathname + window.location.search);
+    } catch { /* storage blocked — fine */ }
+    router.push(orderEditHref(job.orderId, 'board'));
   }
 
   // Mount-then-show: when detailsOpen flips to true, React mounts the
@@ -531,14 +540,6 @@ function CardImpl({
           clicks ✏️. Subsequent opens reuse the cached chunk. */}
       {editOpen && (
         <JobForm initial={job} open={editOpen} onClose={() => setEditOpen(false)} />
-      )}
-      {editOrderOpen && job.order && (
-        <OrderForm
-          open={editOrderOpen}
-          onClose={() => setEditOrderOpen(false)}
-          defaultOrderer={job.order.orderer}
-          initial={job.order}
-        />
       )}
     </>
   );

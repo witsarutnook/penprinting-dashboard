@@ -6,6 +6,7 @@ import { loadOrder, loadOrderLockState, loadRecentOrdersSlim, type RecentOrderSl
 import {
   orderLockReason, orderLockMessage, orderLockLabel, orderEditPageTitle, type OrderLockReason,
 } from '@/lib/order-lock';
+import { orderEditReturnPath } from '@/lib/order-edit-nav';
 import { OrderNotFoundError } from '@/lib/postgres-errors';
 import { COOKIE_NAME, verifySession } from '@/lib/auth';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -37,8 +38,14 @@ export async function generateMetadata(
   }
 }
 
-export default async function EditOrderPage(props: { params: Promise<{ id: string }> }) {
+export default async function EditOrderPage(props: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const params = await props.params;
+  // `?from=board` (the board card's "แก้ใบสั่ง" button) → back to the board when done.
+  const returnTo = orderEditReturnPath((await props.searchParams)?.from);
+  const backLabel = returnTo === '/board' ? 'บอร์ดงาน' : 'ใบสั่งงาน';
   const cookieStore = await cookies();
   const session = await verifySession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect(`/login?next=/orders/${params.id}/edit`);
@@ -194,12 +201,12 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
       <header className="border-b border-stone-100 bg-white">
         <div className="px-4 sm:px-6 py-4 max-w-7xl mx-auto flex items-center gap-3">
           <Link
-            href="/orders"
+            href={returnTo}
             className="text-stone-500 hover:text-stone-900 inline-flex items-center gap-1 text-sm"
-            aria-label="กลับไปหน้ารายการใบสั่งงาน"
+            aria-label={returnTo === '/board' ? 'กลับไปหน้าบอร์ดงาน' : 'กลับไปหน้ารายการใบสั่งงาน'}
           >
             <IconArrowLeft size={16} />
-            ใบสั่งงาน
+            {backLabel}
           </Link>
           <span className="text-stone-300">·</span>
           <h1 className="text-xl font-bold text-stone-900">
@@ -217,6 +224,7 @@ export default async function EditOrderPage(props: { params: Promise<{ id: strin
             defaultOrderer={session.user}
             isDraft={isDraft}
             recentOrders={recentOrders}
+            returnTo={returnTo}
           />
         )}
       </div>
