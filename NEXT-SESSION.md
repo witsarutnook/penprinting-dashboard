@@ -2,7 +2,7 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
-> **Session 2026-11-27 เย็น (Mac) — 🔧 ปิด H1 (PIN หาย) + M3 (cookie ไป Sentry) + M4 (ฟอร์มแก้ไขจากการ์ด) · ตัวออก PIN ใหม่ live — POST รออนุมัติ**
+> **Session 2026-11-27 เย็น (Mac) — 🔧 ปิด H1 (PIN หาย) + M3 (cookie ไป Sentry) + M4 (ฟอร์มแก้ไขจากการ์ด) · ออก PIN ใหม่ 3 ใบแล้ว · ตัวออก PIN ลบแล้ว**
 >
 > **คำสั่งของคุณนุ๊ก**: "แก้ H1 เลย" → "ทำ 2-4 ต่อด้วย log in sentry แล้ว" → "รวมข้อ 4 ไว้ได้เลย" (ข้อ 2 = ออก PIN ใหม่ให้ใบที่ยังไม่ส่ง · ข้อ 3 = ปุ่มบนการ์ด · ข้อ 4 = เช็ค Sentry; ผมแก้ M3 เกินที่สั่งเพราะยืนยันว่ารั่วจริง แล้วคุณนุ๊กอนุมัติให้รวม)
 >
@@ -17,11 +17,12 @@
 > - ✅ ปุ่มบนการ์ด: #202611143 → หน้าแก้ไขแสดงสเปกครบ → "ยกเลิกแก้ไข" → กลับ `/board?dept=graphic` · ไม่มีแถวประวัติใหม่ของใบ (ไม่ได้บันทึกอะไร)
 > - ✅ Sentry: span ของ deployment ใหม่ (08:00:15–16Z) ไม่มี cookie attribute, request ที่เก็บไม่มี `cookies`; span ของ deployment เก่า (07:49Z) มี — attribute อื่นยังครบ
 > - ✅ GET ของตัวออก PIN: `eligibleIds` = **#202611097 · #202611143 · #202611151** · ไม่เข้าเงื่อนไข: ส่งแล้ว 23 · ยกเลิก 3 · ร่าง 2 · อื่น 0
+> - ✅ **POST ออก PIN ใหม่ (15:09, คุณนุ๊กอนุมัติ "รันเลย 3 ใบ")**: ออกครบ 3 ใบ · แต่ละใบมี PIN 4 หลัก, ส่วนอื่นของ `rawData` เหมือนเดิม (จำนวน key 56 + hash ก่อน/หลังตรงกัน) · GET หลังรัน `nothingLeft: true` · แถวประวัติ `reissueOrderPin` ใบละ 1 แถว · ไม่ได้ดึงค่า PIN เข้ามาใน session → **endpoint + lib + เทสต์ลบแล้ว** (PATTERNS §2.5; โค้ดอยู่ใน git ที่ `40cd9d2`)
 >
 > **ยังไม่ได้ยืนยัน**: H1 ด้วยการแก้ไขใบจริงบน production (ทดสอบไม่ได้โดยไม่เขียนข้อมูล — การแก้ไขครั้งถัดไปของทีมคือหลักฐาน) · `javascript:` ใน `?next=` ของหน้า login (M7) · Vercel ส่งต่อ cookie ไปทาง `/monitoring` หรือไม่ · Skew Protection เปิดอยู่หรือไม่
 >
 > ## ⏳ รอคุณนุ๊ก (รายการปัจจุบัน — แทนที่รายการของ entry บ่าย)
-> 1. **อนุมัติ POST ออก PIN ใหม่ 3 ใบ** (#202611097 "บิลร้านแม่และเด็ก" · #202611143 "ใบสัญญา Miracle Car" · #202611151 "หนังสือ Prix") — รันตอนที่ไม่มีใครแก้ไข 3 ใบนี้อยู่ · PIN ใหม่ดูได้ที่ `/orders/<id>/tracking-card` · **ถ้าลูกค้าได้การ์ดติดตามงานไปแล้ว ต้องส่งใบใหม่** (PIN เดิมใช้ไม่ได้อยู่แล้ว) · หลังรัน: Claude ลบ endpoint + lib + เทสต์ (PATTERNS §2.5)
+> 1. **ส่งการ์ดติดตามงานใบใหม่ให้ลูกค้า 3 ราย (ถ้าเคยส่งไปแล้ว)** — #202611097 "บิลร้านแม่และเด็ก" · #202611143 "ใบสัญญา Miracle Car" · #202611151 "หนังสือ Prix" ได้ PIN ใหม่แล้ว (ดูที่ `/orders/<id>/tracking-card`); PIN เดิมใช้ไม่ได้
 > 2. **หมุน `DASHBOARD_AUTH_SECRET`** (Vercel env, Sensitive → redeploy) — ทำให้ค่า cookie ล็อกอิน 20,800 รายการที่อยู่ใน Sentry แล้วใช้ไม่ได้; ทุกคนต้อง login ใหม่ 1 ครั้ง. ควรทำเมื่อสะดวก (เลือกเวลาที่ทีมไม่ได้ทำงานค้างหน้าจอ)
 > 3. **reload บอร์ดที่เปิดค้าง** (รวมจอ TV) — แท็บที่เปิดก่อน deploy ยังมีฟอร์มแก้ไขแบบเก่า (PIN ปลอดภัยแล้วเพราะแก้ที่เซิร์ฟเวอร์ แต่ช่อง "สเปกว่างถูกบันทึก" ยังมีในแท็บเก่า)
 > 4. **M7 หน้า login** — `?next=` ไม่ถูกตรวจ (มีมาก่อน): ให้ Claude แก้ไหม (เล็ก ~5 บรรทัด + เทสต์)
@@ -30,7 +31,9 @@
 >
 > **Lessons**: (1) **"มีกรณีพิเศษอยู่แล้ว" ไม่ใช่หลักฐานว่ากรณีพิเศษนั้นทำงาน** — `pin` ถูกยกมาจากสิ่งที่ client ส่งกลับ ไม่ใช่จากแถว; ทางเข้าที่ถือใบไม่ครบทำให้มันพังเงียบ 5 เดือน. key ของเซิร์ฟเวอร์ต้องอ่านจากแถวที่จุดเขียน ไม่ใช่จากสิ่งที่ผู้เรียกส่งกลับ · (2) **ตัวอ่านที่เลือก `rawData` ก่อน `details`** ทำให้ "สร้าง `{pin}` จากความว่าง" เป็นการทำสเปกหาย — ผู้ตรวจอิสระเจอทั้งในตัวซ่อมและในจุดเขียน; ก่อนเขียน key ลง JSON ที่มีสำเนาหลายที่ ต้องรู้ว่าตัวอ่านเลือกสำเนาไหนก่อน · (3) **การปิดค่าตามชื่อของ SDK ไม่ใช่การป้องกัน** — cookie ที่ชื่อไม่เข้าคำในรายการถูกส่งทั้งค่า; ตัดตามตำแหน่ง (ทุก cookie) ไม่ตามชื่อ และยืนยันด้วย span ก่อน/หลัง deploy เทียบ deployment id · (4) เทสต์ที่ fetch 50 ครั้งจากหน้าเดียวไม่ได้ span ใหม่เลย เพราะ sampling ตาม trace ของหน้า — ดู span ของการโหลดหน้าแทน · (5) ผมรัน `vercel env ls` ทั้งที่ CLI หลุด login → เด้งหน้า device login ใส่คุณนุ๊ก (จดเป็น memory แล้ว)
 >
-> **Commits**: [`4954ef9`](https://github.com/witsarutnook/penprinting-dashboard/commit/4954ef9) H1 · [`224d38a`](https://github.com/witsarutnook/penprinting-dashboard/commit/224d38a) ปุ่มบนการ์ด · [`bb70221`](https://github.com/witsarutnook/penprinting-dashboard/commit/bb70221) Sentry · [`40cd9d2`](https://github.com/witsarutnook/penprinting-dashboard/commit/40cd9d2) ตัวออก PIN · [`ef42a06`](https://github.com/witsarutnook/penprinting-dashboard/commit/ef42a06) กลับบอร์ดด้วย replace · + เอกสาร (ดู `git log`)
+> **Tests**: 1762 → 1816 (ระหว่างที่ตัวออก PIN ยังอยู่) → **1795** หลังลบ · type-check / lint / build ผ่าน
+>
+> **Commits**: [`4954ef9`](https://github.com/witsarutnook/penprinting-dashboard/commit/4954ef9) H1 · [`224d38a`](https://github.com/witsarutnook/penprinting-dashboard/commit/224d38a) ปุ่มบนการ์ด · [`bb70221`](https://github.com/witsarutnook/penprinting-dashboard/commit/bb70221) Sentry · [`40cd9d2`](https://github.com/witsarutnook/penprinting-dashboard/commit/40cd9d2) ตัวออก PIN · [`ef42a06`](https://github.com/witsarutnook/penprinting-dashboard/commit/ef42a06) กลับบอร์ดด้วย replace · [`174c22f`](https://github.com/witsarutnook/penprinting-dashboard/commit/174c22f) ลบตัวออก PIN · + เอกสาร (ดู `git log`)
 >
 > **Session 2026-11-27 บ่าย (Mac) — 🔎 Audit รอบเต็มครั้งแรกของ `/order`: 0 Critical · 1 High · 6 Medium · 18 Low — ยังไม่ได้แก้ข้อใด รอคุณนุ๊กเลือกขอบเขต**
 >
