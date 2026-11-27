@@ -404,6 +404,16 @@ function schedule() {
 
 ---
 
+### 6.5 สิ่งที่ส่งออกไป error tracker: ตัดตามตำแหน่ง ไม่ตามชื่อ + ยืนยันด้วยของที่ปลายทางเก็บจริง ([lib/sentry-scrub.ts](lib/sentry-scrub.ts)) (2026-11-27, audit M3)
+- **ปัญหา**: `@sentry/nextjs` 10 ใส่ header ของ request ลง root span ของทุก request ที่ถูกสุ่ม (attribute ต่อ cookie: `http.request.header.cookie.<ชื่อ>`) และปิดค่าเฉพาะ cookie ที่ **ชื่อ** มีคำในรายการของ SDK (auth, session, token, …). `pp_dashboard_v6` ไม่เข้าคำใด → ค่า cookie ล็อกอิน 30 วันถูกส่งทั้งค่า (20,800 spans เมื่อพบ) และอยู่ใน `request.cookies` ของ error event ด้วย. `sendDefaultPii: false` (ค่า default) ไม่ได้กันเรื่องนี้
+- **กฎ**:
+  1. ตัดตาม **ตำแหน่ง** (ทุก cookie, header Authorization, body ของ request) ใน hook ของ SDK เอง (`beforeSend` + `beforeSendTransaction`) — ไม่พึ่งการตั้งชื่อ cookie ให้ "ดูเป็นความลับ". hook ต้องคืน event เสมอ (คืน null = event หาย)
+  2. **ยืนยันจากของที่ปลายทางเก็บจริง ไม่ใช่จากโค้ด**: เปิด span/event ในเครื่องมือนั้นดูชื่อ attribute ทั้งหมด (ให้สคริปต์ปิดค่าก่อนแสดง — ไม่ดึงค่าความลับเข้ามา) · หลังแก้ เทียบ span ของ deployment เก่ากับใหม่ด้วย attribute ที่บอก deployment (`x_vercel_deployment_url`) — ต้องเห็นทั้ง "ของเก่ามี" และ "ของใหม่ไม่มี แต่ attribute อื่นยังอยู่"
+  3. อัปเกรด SDK = เช็คซ้ำ: SDK รุ่นใหม่เปลี่ยนสิ่งที่เก็บโดย default ได้ (header ลง span เป็นของรุ่น 10); span streaming (`traceLifecycle: 'stream'`) ไม่ผ่าน `beforeSendTransaction`
+  4. sampling ตาม trace ของหน้า: fetch ซ้ำ ๆ จากหน้าเดียวไม่ได้ span ใหม่ถ้าหน้าไม่ถูกสุ่ม — ใช้ span ของการโหลดหน้าเป็นตัวอย่างหลัง deploy
+- **ของที่ส่งไปแล้ว**: อยู่ที่ปลายทางจนหมดอายุการเก็บ — ทำให้ใช้ไม่ได้ด้วยการหมุน secret ที่ใช้เซ็น (`DASHBOARD_AUTH_SECRET`)
+- **ไฟล์**: [lib/sentry-scrub.ts](lib/sentry-scrub.ts) · `sentry.server.config.ts` · `sentry.edge.config.ts` · เทสต์ `tests/sentry-scrub.test.ts` (รวมเทสต์ว่า init ทั้งสองตัวต่อ hook จริง)
+
 ## 7. Strangler migration patterns (cross-project)
 
 ### 7.1 Shared BroadcastChannel name
@@ -530,7 +540,7 @@ const mockOrder: Order = {
 3. เขียนสั้น: pattern + reason + example file path
 4. ถ้าเป็น cross-project pattern → เพิ่มที่ workspace `CLAUDE.md` ด้วย
 
-_อัปเดตล่าสุด: 2026-11-27 — added §12.6 (key ของเซิร์ฟเวอร์ใน JSON ที่ฟอร์มเขียนทับ) + bullet ใน §2.5 (control บนข้อมูลจริงก่อนเขียน)_
+_อัปเดตล่าสุด: 2026-11-27 (เย็น) — §12.6 ข้อ 7–9 (PIN: ไล่ทุก key + ทุกทางเข้า · ตัวอ่านเลือกสำเนาไหนก่อน · นิยาม "มี key" ที่เดียว) + §6.5 (สิ่งที่ส่งออกไป error tracker); ก่อนหน้า: 2026-11-27 — added §12.6 (key ของเซิร์ฟเวอร์ใน JSON ที่ฟอร์มเขียนทับ) + bullet ใน §2.5 (control บนข้อมูลจริงก่อนเขียน)_
 
 ## 11. Eval harness สำหรับ LLM flow (2026-10-24, `eval/pp-customer/`)
 
@@ -667,4 +677,7 @@ _อัปเดตล่าสุด: 2026-11-27 — added §12.6 (key ขอ�
   4. checklist smoke ของ feature ที่อาศัย key แบบนี้ต้องมีขั้น "แก้ไขผ่านเว็บก่อน" แล้วค่อยทำขั้นที่อ่าน key
   5. ตัวซ่อม: แหล่งข้อมูลต้องเป็นบันทึกที่ไม่ถูกเขียนทับ (`peak_order_drafts.units[].result`) ไม่ใช่ตารางที่ตามสถานะปัจจุบัน (`peak_order_links` ย้ายไปใบใหม่เมื่อรายการถูกเปิดซ้ำ — ผู้ตรวจอิสระรอบแรกพิสูจน์ว่าได้เครื่องหมายแคบกว่าเดิม) + control บนข้อมูลจริงก่อนเขียน (§2.5)
   6. SQL ที่เทสต์ mock ไว้ → แยกข้อความ SQL เป็นไฟล์ค่าคงที่ที่ไม่มี import แล้วรันของจริงบน Postgres ในเครื่อง (PGlite ใน scratchpad ไม่แตะ repo)
-- **ไฟล์**: [lib/postgres-write.ts](lib/postgres-write.ts) (`withPeakMarker` / `storedPeakMarker`) · [app/api/orders/add/route.ts](app/api/orders/add/route.ts) · เทสต์ `tests/postgres-write.test.ts` + `tests/orders-add-route.test.ts`. ตัวซ่อม (รันแล้ว 2026-11-27, ลบแล้ว [`4e7e071`](https://github.com/witsarutnook/penprinting-dashboard/commit/4e7e071)): โค้ดอยู่ใน git ที่ `9a54dcd`
+  7. **ไล่ key ของเซิร์ฟเวอร์ทุกตัวในก้อนเดียวกัน และทุกทางเข้าของฟอร์ม — ไม่ใช่แค่ key ที่เพิ่งพัง (2026-11-27, audit H1)**: `pin` ที่ข้อ "สัญญาณ" ข้างบนยกเป็นตัวอย่าง พังเองมา 5 เดือน — route ยก PIN จาก **สิ่งที่ client ส่งกลับ** (`srcOrder.rawData`) ไม่ใช่จากแถว และฟอร์มที่เปิดจากการ์ดบนบอร์ดถือใบ slim ที่ไม่มีมัน → เขียน `pin: ""` (production 19 ใบ). "มีกรณีพิเศษอยู่แล้ว" ไม่ใช่หลักฐานว่ากรณีพิเศษนั้นทำงาน: ถามว่า **ค่ามาจากแถว หรือมาจากผู้เรียก** และไล่ทุกทางเข้า (ใบเต็ม / ใบ slim / สั่งซ้ำ / template). Census ที่จับได้: ค่าเป็น `""` (ไม่ใช่ key หาย) + มีแถว `updateOrder`
+  8. **ก่อนเขียน key ลง JSON ที่มีสำเนาหลายที่ ต้องรู้ว่าตัวอ่านเลือกสำเนาไหนก่อน**: ตัวอ่านทุกตัวของใบ (print / tracking-card / `/api/orders/raw` / edit / new) ใช้ `rawData` เมื่อมันเป็น object แล้วค่อย `details` → `{pin}` ที่สร้างจากความว่างใน `rawData` จะ **บังสเปกที่อยู่ใน `details`**. กฎที่ใช้: key ของเซิร์ฟเวอร์ใส่ลง snapshot **ที่มีอยู่**; ไม่มีเลย = ให้ `details` ถือ ไม่สร้าง `rawData`. ตัวซ่อมข้อมูลก็เหมือนกัน: บังคับให้ทุกที่ที่จะเขียน **เป็น object อยู่แล้ว** (ไม่ใช่ "object หรือว่าง") แถวที่ไม่ตรงรูป = รายงานว่าไม่เข้าเงื่อนไข ไม่แตะ (ผู้ตรวจอิสระเจอทั้งสองจุดก่อน push)
+  9. **นิยาม "มี key" ต้องมีที่เดียว หรือเป็นข้อความเดียวกัน**: จุดเขียน (`btrim` ใน SQL + `.trim()` ใน JS) กับตัวซ่อม (`NO_PIN`) ต้องตอบตรงกันว่าแถวไหนมี PIN — ต่างกัน = ใบที่จุดเขียนมองว่าไม่มี แต่ตัวซ่อมมองว่ามี จะค้างไม่มี PIN ตลอด
+- **ไฟล์**: [lib/postgres-write.ts](lib/postgres-write.ts) (`storedPeakMarker` / `storedPin` / `withoutServerKeys` / `withStoredMarker`) · [app/api/orders/add/route.ts](app/api/orders/add/route.ts) · เทสต์ `tests/postgres-write.test.ts` + `tests/orders-update-pin.test.ts` (route + ฟังก์ชันเขียนจริงบน SQL mock) + `tests/orders-add-route.test.ts`. ตัวซ่อม (รันแล้ว 2026-11-27, ลบแล้ว [`4e7e071`](https://github.com/witsarutnook/penprinting-dashboard/commit/4e7e071)): โค้ดอยู่ใน git ที่ `9a54dcd`

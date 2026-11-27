@@ -373,6 +373,15 @@ Pages NOT in the action's path list keep their warm 60s ISR cache → instant na
 
 > WP version history (v5.0 → v5.11) อยู่ใน [`monitoring.md` §10](../production-monitoring/monitoring.md). entries below are v2-specific milestones.
 
+### 🔧 PIN ของใบเป็นของเซิร์ฟเวอร์ · ปุ่ม "แก้ใบสั่ง" บนการ์ด → หน้าแก้ไขเต็ม · ไม่มี cookie ออกไป Sentry (2026-11-27, tests 1762→1816)
+- **ที่มา**: audit รอบเต็มครั้งแรกของ `/order` (penprinting-auditor 3 ตัว, 2026-11-27 บ่าย): 0 Critical · 1 High · 6 Medium · 18 Low — รายการเต็มใน [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) "Audit round 2026-11-27". ข้อ High ไม่ใช่ของ `/order`
+- **H1 — PIN หายเมื่อแก้ใบจากการ์ดบนบอร์ด** ([`4954ef9`](https://github.com/witsarutnook/penprinting-dashboard/commit/4954ef9)): `/board` ถือใบแบบ slim (ไม่มี `rawData`/`details`) → ฟอร์มส่ง `srcOrder` ที่ไม่มี PIN → route (ทางข้ามการอ่าน) เขียน `pin: ""` ทับ. มีมาตั้งแต่ `af45644` (2026-07-04); production 19 ใบ. **แก้:** `updateOrderInPostgres` เป็นเจ้าของ PIN แบบเดียวกับเครื่องหมาย Peak — อ่านจากแถว ใส่ลงทุก snapshot ที่มีอยู่ ไม่รับจากผู้เรียก (PATTERNS §12.6)
+- **ปุ่ม "แก้ใบสั่ง" บนการ์ด** ([`224d38a`](https://github.com/witsarutnook/penprinting-dashboard/commit/224d38a) + [`ef42a06`](https://github.com/witsarutnook/penprinting-dashboard/commit/ef42a06)): เลิกเปิดฟอร์มในที่ด้วยใบ slim (3 ปัญหาบนทางเดียว: เครื่องหมาย Peak 11/21 · PIN · สเปกว่างถูกบันทึกเมื่อดึงสเปกล้ม) → ไป `/orders/<id>/edit?from=board` แล้วกลับบอร์ดพร้อมตัวกรองเดิม ([lib/order-edit-nav.ts](lib/order-edit-nav.ts))
+- **Sentry** ([`bb70221`](https://github.com/witsarutnook/penprinting-dashboard/commit/bb70221)): SDK 10.56 ใส่ header ของ request ลง span ทุกตัวที่ถูกสุ่ม และปิดค่า cookie ตาม "ชื่อ" เท่านั้น → `pp_dashboard_v6` ถูกส่งทั้งค่า (20,800 spans). [lib/sentry-scrub.ts](lib/sentry-scrub.ts) ตัด cookie ทุกตัว + Authorization + body ออกจากทุก event ของ server/edge. ยืนยันด้วย span ก่อน/หลัง deploy
+- **ตัวออก PIN ใหม่แบบใช้ครั้งเดียว** ([`40cd9d2`](https://github.com/witsarutnook/penprinting-dashboard/commit/40cd9d2)): `GET/POST /api/admin/orders/reissue-pins` — GET บน production = 3 ใบที่ยังค้างผลิต; **POST รออนุมัติ** (ณ เวลาที่เขียน). ลบทิ้งหลังรัน
+- **การตรวจ**: ผู้ตรวจอิสระ 2 รอบก่อน push — รอบแรกเจอ Medium 1 + Low 6 (แก้), รอบสองไม่เหลือเกิน Low. SQL จริงรันบน PGlite นอกชุดเทสต์. smoke run 45962269216 เขียว
+- **ค้าง**: หมุน `DASHBOARD_AUTH_SECRET` (คุณนุ๊ก) · M1/M2/M5/M6/M7 + Low 21 ของรอบ audit
+
 ### 🩹 `/order`: แก้ไขใบผ่านเว็บทำเครื่องหมาย Peak หาย — แก้ + เติมคืน 3 ใบ + ลบตัวเติมคืน (2026-11-21 → 2026-11-27, tests 1751→1788→1762)
 - **อาการ** (พบ 21 พ.ย. ตอนเช็คใบจริงจาก `/order`): #202611104 และ #202611108 ไม่มี `raw_data.peak` ทั้งสองใบถูกแก้ไขผ่านเว็บ · ใบจาก `/order` 4 ใบที่ไม่เคยถูกแก้ยังมีครบ
 - **สาเหตุ**: `POST /api/orders/update` เขียน snapshot ของฟอร์มแก้ไขทับ `raw_data` / `details` / สำเนาใน `raw` — ยก PIN มาจากแถวเดิม แต่ไม่ยกเครื่องหมาย (ฟอร์มไม่ถือ key นี้)

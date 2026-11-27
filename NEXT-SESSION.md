@@ -2,6 +2,36 @@
 
 > **อ่านไฟล์นี้ + [dashboard-v2.md](dashboard-v2.md) + [PATTERNS.md](PATTERNS.md) + [AUDIT-BACKLOG.md](AUDIT-BACKLOG.md) + [Tech-Roadmap-Status.md](../Tech-Roadmap-Status.md) + [migration-plan-apps-script-shrink.md](migration-plan-apps-script-shrink.md) ก่อนเริ่ม**
 >
+> **Session 2026-11-27 เย็น (Mac) — 🔧 ปิด H1 (PIN หาย) + M3 (cookie ไป Sentry) + M4 (ฟอร์มแก้ไขจากการ์ด) · ตัวออก PIN ใหม่ live — POST รออนุมัติ**
+>
+> **คำสั่งของคุณนุ๊ก**: "แก้ H1 เลย" → "ทำ 2-4 ต่อด้วย log in sentry แล้ว" → "รวมข้อ 4 ไว้ได้เลย" (ข้อ 2 = ออก PIN ใหม่ให้ใบที่ยังไม่ส่ง · ข้อ 3 = ปุ่มบนการ์ด · ข้อ 4 = เช็ค Sentry; ผมแก้ M3 เกินที่สั่งเพราะยืนยันว่ารั่วจริง แล้วคุณนุ๊กอนุมัติให้รวม)
+>
+> **สิ่งที่ทำ (TDD RED-first ทุกชิ้น · tests 1762 → 1816 · ผู้ตรวจอิสระ 2 รอบก่อน push)**
+> - **H1** [`4954ef9`](https://github.com/witsarutnook/penprinting-dashboard/commit/4954ef9) — PIN เป็นของเซิร์ฟเวอร์: `updateOrderInPostgres` อ่าน PIN ที่เก็บอยู่มากับแถว ใส่ลงทุก snapshot ที่มีอยู่ ทิ้ง `pin` ที่ผู้เรียกส่งมา; `/api/orders/update` เลิกคิด PIN จาก `srcOrder`
+> - **ข้อ 3 / M4** [`224d38a`](https://github.com/witsarutnook/penprinting-dashboard/commit/224d38a) + [`ef42a06`](https://github.com/witsarutnook/penprinting-dashboard/commit/ef42a06) — ปุ่ม "แก้ใบสั่ง" บนการ์ด → `/orders/<id>/edit?from=board` (โหลดใบเต็ม) แล้วกลับบอร์ดพร้อมตัวกรองเดิม; ฟอร์มในที่ (ใบ slim) ถูกถอดออกจากการ์ด
+> - **ข้อ 4 / M3** [`bb70221`](https://github.com/witsarutnook/penprinting-dashboard/commit/bb70221) — `lib/sentry-scrub.ts`: ไม่มี cookie / header Authorization / body ของ request ออกจากเซิร์ฟเวอร์ไป Sentry (server + edge)
+> - **ข้อ 2** [`40cd9d2`](https://github.com/witsarutnook/penprinting-dashboard/commit/40cd9d2) — ตัวออก PIN ใหม่แบบใช้ครั้งเดียว `GET/POST /api/admin/orders/reissue-pins` (`lib/order-pin-reissue.ts` + `-sql.ts`)
+> - ผู้ตรวจอิสระรอบแรกเจอ Medium 1 (ตัวออก PIN ยอมให้ snapshot ที่ไม่มีอยู่ → `{pin}` จะบังสเปกใน `details`) + Low 6 → แก้ก่อน push; รอบสอง (ฟังก์ชันจริง × 10,875 รูปแบบ input เทียบ `c06a0ea` · SQL จริง × 64 รูปแบบแถวบน PGlite · SDK Sentry ตัวจริง): ไม่เหลือเกิน Low
+>
+> **ยืนยันแล้วบน production** (smoke run [45962269216](https://github.com/witsarutnook/penprinting-dashboard/actions/runs/45962269216) เขียว, headSha `ef42a06`)
+> - ✅ ปุ่มบนการ์ด: #202611143 → หน้าแก้ไขแสดงสเปกครบ → "ยกเลิกแก้ไข" → กลับ `/board?dept=graphic` · ไม่มีแถวประวัติใหม่ของใบ (ไม่ได้บันทึกอะไร)
+> - ✅ Sentry: span ของ deployment ใหม่ (08:00:15–16Z) ไม่มี cookie attribute, request ที่เก็บไม่มี `cookies`; span ของ deployment เก่า (07:49Z) มี — attribute อื่นยังครบ
+> - ✅ GET ของตัวออก PIN: `eligibleIds` = **#202611097 · #202611143 · #202611151** · ไม่เข้าเงื่อนไข: ส่งแล้ว 23 · ยกเลิก 3 · ร่าง 2 · อื่น 0
+>
+> **ยังไม่ได้ยืนยัน**: H1 ด้วยการแก้ไขใบจริงบน production (ทดสอบไม่ได้โดยไม่เขียนข้อมูล — การแก้ไขครั้งถัดไปของทีมคือหลักฐาน) · `javascript:` ใน `?next=` ของหน้า login (M7) · Vercel ส่งต่อ cookie ไปทาง `/monitoring` หรือไม่ · Skew Protection เปิดอยู่หรือไม่
+>
+> ## ⏳ รอคุณนุ๊ก (รายการปัจจุบัน — แทนที่รายการของ entry บ่าย)
+> 1. **อนุมัติ POST ออก PIN ใหม่ 3 ใบ** (#202611097 "บิลร้านแม่และเด็ก" · #202611143 "ใบสัญญา Miracle Car" · #202611151 "หนังสือ Prix") — รันตอนที่ไม่มีใครแก้ไข 3 ใบนี้อยู่ · PIN ใหม่ดูได้ที่ `/orders/<id>/tracking-card` · **ถ้าลูกค้าได้การ์ดติดตามงานไปแล้ว ต้องส่งใบใหม่** (PIN เดิมใช้ไม่ได้อยู่แล้ว) · หลังรัน: Claude ลบ endpoint + lib + เทสต์ (PATTERNS §2.5)
+> 2. **หมุน `DASHBOARD_AUTH_SECRET`** (Vercel env, Sensitive → redeploy) — ทำให้ค่า cookie ล็อกอิน 20,800 รายการที่อยู่ใน Sentry แล้วใช้ไม่ได้; ทุกคนต้อง login ใหม่ 1 ครั้ง. ควรทำเมื่อสะดวก (เลือกเวลาที่ทีมไม่ได้ทำงานค้างหน้าจอ)
+> 3. **reload บอร์ดที่เปิดค้าง** (รวมจอ TV) — แท็บที่เปิดก่อน deploy ยังมีฟอร์มแก้ไขแบบเก่า (PIN ปลอดภัยแล้วเพราะแก้ที่เซิร์ฟเวอร์ แต่ช่อง "สเปกว่างถูกบันทึก" ยังมีในแท็บเก่า)
+> 4. **M7 หน้า login** — `?next=` ไม่ถูกตรวจ (มีมาก่อน): ให้ Claude แก้ไหม (เล็ก ~5 บรรทัด + เทสต์)
+> 5. ขอบเขตที่เหลือของรอบ audit: M1 (ทางฟื้นร่างค้าง `creating`) · M2 (บันทึก token ล้มครั้งเดียว) · M5 (หมายเหตุหลายบรรทัด) · L14 (ซ่อนแถว `peak = {…}`) — ยังไม่ได้ทำ
+> 6. รายการเดิมของเช้านี้ (เทียบ #202611120 กับ Peak · smoke 2 ข้อของ `/order` · QO-20261100111 · เก็บกวาด) ยังค้างครบ — ดู entry "เช้า" ด้านล่าง
+>
+> **Lessons**: (1) **"มีกรณีพิเศษอยู่แล้ว" ไม่ใช่หลักฐานว่ากรณีพิเศษนั้นทำงาน** — `pin` ถูกยกมาจากสิ่งที่ client ส่งกลับ ไม่ใช่จากแถว; ทางเข้าที่ถือใบไม่ครบทำให้มันพังเงียบ 5 เดือน. key ของเซิร์ฟเวอร์ต้องอ่านจากแถวที่จุดเขียน ไม่ใช่จากสิ่งที่ผู้เรียกส่งกลับ · (2) **ตัวอ่านที่เลือก `rawData` ก่อน `details`** ทำให้ "สร้าง `{pin}` จากความว่าง" เป็นการทำสเปกหาย — ผู้ตรวจอิสระเจอทั้งในตัวซ่อมและในจุดเขียน; ก่อนเขียน key ลง JSON ที่มีสำเนาหลายที่ ต้องรู้ว่าตัวอ่านเลือกสำเนาไหนก่อน · (3) **การปิดค่าตามชื่อของ SDK ไม่ใช่การป้องกัน** — cookie ที่ชื่อไม่เข้าคำในรายการถูกส่งทั้งค่า; ตัดตามตำแหน่ง (ทุก cookie) ไม่ตามชื่อ และยืนยันด้วย span ก่อน/หลัง deploy เทียบ deployment id · (4) เทสต์ที่ fetch 50 ครั้งจากหน้าเดียวไม่ได้ span ใหม่เลย เพราะ sampling ตาม trace ของหน้า — ดู span ของการโหลดหน้าแทน · (5) ผมรัน `vercel env ls` ทั้งที่ CLI หลุด login → เด้งหน้า device login ใส่คุณนุ๊ก (จดเป็น memory แล้ว)
+>
+> **Commits**: [`4954ef9`](https://github.com/witsarutnook/penprinting-dashboard/commit/4954ef9) H1 · [`224d38a`](https://github.com/witsarutnook/penprinting-dashboard/commit/224d38a) ปุ่มบนการ์ด · [`bb70221`](https://github.com/witsarutnook/penprinting-dashboard/commit/bb70221) Sentry · [`40cd9d2`](https://github.com/witsarutnook/penprinting-dashboard/commit/40cd9d2) ตัวออก PIN · [`ef42a06`](https://github.com/witsarutnook/penprinting-dashboard/commit/ef42a06) กลับบอร์ดด้วย replace · + เอกสาร (ดู `git log`)
+>
 > **Session 2026-11-27 บ่าย (Mac) — 🔎 Audit รอบเต็มครั้งแรกของ `/order`: 0 Critical · 1 High · 6 Medium · 18 Low — ยังไม่ได้แก้ข้อใด รอคุณนุ๊กเลือกขอบเขต**
 >
 > **สิ่งที่ทำ** (คุณนุ๊กสั่ง "ทำทาง B ต่อเลย" หลังปิดงานเครื่องหมาย Peak ตอนเช้า)
@@ -17,7 +47,7 @@
 >
 > **ยังไม่ได้ยืนยัน**: event จริงใน Sentry (M3) · สาเหตุของ 10 ใบ เม.ย. ที่ PIN ว่าง (#202604001–011) · Neon ยังเก็บ point-in-time ย้อนถึงวันที่ PIN หายหรือไม่ · 19 ใบนั้นยังค้างผลิตกี่ใบ · M4/M5/L14 ไม่ได้เปิดดูในเบราว์เซอร์ · 16 ข้อที่ขึ้นกับพฤติกรรมจริงของ Peak/LINE (รายการอยู่ท้ายหัวข้อ Low ของรอบนี้)
 >
-> ## ⏳ รอคุณนุ๊กตัดสิน (ของรอบ audit นี้ — รายการเดิมของเช้านี้อยู่ใน entry ถัดไป ยังค้างครบ)
+> ## ⏳ รอคุณนุ๊กตัดสิน — ของ entry บ่าย (ตอบแล้ว 2026-11-27 เย็น: ข้อ 1 = แก้ H1 · ข้อ 2–4 = ทำ · รายการปัจจุบันอยู่ใน entry บนสุด)
 > 1. **ขอบเขตการแก้** — ผมแนะนำ H1 ก่อน (TDD: เซิร์ฟเวอร์เป็นเจ้าของ PIN ที่ `updateOrderInPostgres` แบบเดียวกับเครื่องหมาย Peak) แล้ว M1 + M4 + M5 + L14 (เล็ก ชัด) · M2/M3 ตามมา · M6 + L15/L16 นับของจริงก่อน
 > 2. **19 ใบที่ PIN หาย** — ออก PIN ใหม่ให้ใบที่ยังไม่ส่ง? (เป็นการเขียน production → ต้องอนุมัติ + GET dry run ก่อนตามบทเรียนเช้านี้)
 > 3. **ทาง slim ของฟอร์มแก้ไขจากการ์ด** — เก็บไว้แล้วอุดทีละจุด หรือให้ปุ่มบนการ์ดพาไป `/orders/[id]/edit` (H1 + M4 + บั๊กเครื่องหมาย = 3 ปัญหาบนทางเดียวกัน → กฎ 3+ fixes)
