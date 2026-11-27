@@ -29,7 +29,8 @@ export function OrderEditClient({
 
   /** Done or abandoned. From the board: to the board URL the card stored when its button was
    *  pressed (filters and all). Not `router.back()` — the previous history entry is not always
-   *  the board (a login page in between, a pasted link). */
+   *  the board (a login page in between, a pasted link). `replace`, so the browser's Back on the
+   *  board does not reopen this form. */
   function leave() {
     if (returnTo !== '/board') {
       router.push(returnTo);
@@ -39,7 +40,7 @@ export function OrderEditClient({
     try {
       saved = window.sessionStorage.getItem(BOARD_RETURN_KEY);
     } catch { /* storage blocked — the plain board */ }
-    router.push(boardReturnPath(saved));
+    router.replace(boardReturnPath(saved));
   }
 
   return (
