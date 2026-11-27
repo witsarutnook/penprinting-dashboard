@@ -2,10 +2,13 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
+import { safeNextPath } from '@/lib/safe-next-path';
 
 export function LoginForm() {
   const searchParams = useSearchParams();
-  const next = searchParams.get('next') || '/analytics';
+  // Only a path of this site: `next` comes from the URL and is navigated to with
+  // window.location.href below (another site or a `javascript:` value → the default page).
+  const next = safeNextPath(searchParams.get('next'));
 
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
