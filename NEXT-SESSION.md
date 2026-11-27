@@ -19,6 +19,8 @@
 > - ✅ GET ของตัวออก PIN: `eligibleIds` = **#202611097 · #202611143 · #202611151** · ไม่เข้าเงื่อนไข: ส่งแล้ว 23 · ยกเลิก 3 · ร่าง 2 · อื่น 0
 > - ✅ **POST ออก PIN ใหม่ (15:09, คุณนุ๊กอนุมัติ "รันเลย 3 ใบ")**: ออกครบ 3 ใบ · แต่ละใบมี PIN 4 หลัก, ส่วนอื่นของ `rawData` เหมือนเดิม (จำนวน key 56 + hash ก่อน/หลังตรงกัน) · GET หลังรัน `nothingLeft: true` · แถวประวัติ `reissueOrderPin` ใบละ 1 แถว · ไม่ได้ดึงค่า PIN เข้ามาใน session → **endpoint + lib + เทสต์ลบแล้ว** (PATTERNS §2.5; โค้ดอยู่ใน git ที่ `40cd9d2`)
 >
+> - ✅ **หลังลบตัวออก PIN** (smoke run [45963991749](https://github.com/witsarutnook/penprinting-dashboard/actions/runs/45963991749) เขียว, headSha `928a7ff`; run ของ commit เอกสารก่อนหน้า 45963615813 เขียว): `/api/admin/orders/reissue-pins` ตอบ 404 ทั้ง GET และ POST ด้วย session ที่ login (route ข้างเคียง `/api/admin/peak/staff` ตอบ 405 = ไม่ใช่ 404 จาก auth) · 3 ใบยังมี PIN 4 หลัก · ไม่เหลือใบที่ค้างผลิตและ PIN ว่าง
+>
 > **ยังไม่ได้ยืนยัน**: H1 ด้วยการแก้ไขใบจริงบน production (ทดสอบไม่ได้โดยไม่เขียนข้อมูล — การแก้ไขครั้งถัดไปของทีมคือหลักฐาน) · `javascript:` ใน `?next=` ของหน้า login (M7) · Vercel ส่งต่อ cookie ไปทาง `/monitoring` หรือไม่ · Skew Protection เปิดอยู่หรือไม่
 >
 > ## ⏳ รอคุณนุ๊ก (รายการปัจจุบัน — แทนที่รายการของ entry บ่าย)
