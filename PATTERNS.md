@@ -229,6 +229,16 @@ export async function loadAllWithAudit() { return fetch(`${url}?action=loadAll&t
 - **ตัวซ่อมที่ *ออกค่าใหม่* (ไม่มีค่าเดิมให้เทียบ) — `reissue-pins` (2026-11-27, รันแล้ว + ลบแล้ว)**: ไม่มี control แบบ "สร้างค่าของแถวที่ยังดีแล้วเทียบ" ให้ใช้ → ใช้ 4 อย่างแทน: (1) นิยาม "เข้าเงื่อนไข" **ข้อความเดียว** ฝังทั้งใน SELECT ของ dry run และ WHERE ของ UPDATE; (2) POST รับ **รายการ id ที่เจ้าของงานเห็นใน dry run** — ใบที่โผล่มาใหม่ระหว่างนั้นไม่ถูกเขียน (บทเรียน "คาด 2 เจอ 3" ของเช้าวันเดียวกัน); (3) ทุกที่ที่ UPDATE จะเขียนต้อง **เป็น object อยู่แล้ว** — ไม่สร้างจากความว่าง (§12.6 ข้อ 8); (4) ก่อน/หลังรัน เก็บ hash ของทุก key ที่ไม่ใช่ key ที่ซ่อม แล้วเทียบ — พิสูจน์ว่าแตะเฉพาะที่ตั้งใจ. ค่าที่ออกใหม่ไม่ใส่ใน response/แถวประวัติ (อ่านจากหน้าของใบ). แถวประวัติเขียน **ต่อใบพร้อม targetId** จะอ่านกลับได้ทาง `/api/audit?orderId=` (ตัวซ่อมของเช้าวันเดียวกันเขียนแถวเดียวไม่มี target → ยืนยันไม่ได้)
 - **Read-only census variant (2026-10-21, audit L14)**: ก่อนตัดสิน follow-up เรื่อง data shape/parser drift ที่ไม่เคยนับข้อมูลจริง → endpoint แบบเดียวกันแต่ **GET = ผลลัพธ์เดียว ไม่มี apply/params** (`date-shape-census`): นับ distinct shape ที่ไม่ canonical + ≤5 sample (id+value) ต่อ class **ทั้งคอลัมน์ TEXT และ `raw` JSONB ที่แอป render จริง** (dashboard อ่าน `SELECT raw` ไม่ใช่คอลัมน์) + mismatch count, และให้ endpoint **คำนวณ drift ระหว่าง reader ทุกตัวบนเซิร์ฟเวอร์เลย** (host TZ = Vercel UTC = สภาพจริงของ /track + LINE) — ผลจริง: shape ที่คาดว่าเป็นปัญหา (quoted/`…Z`/comma) = 0 แถว, ที่ drift จริง = `Date.toString()` ×455 ที่ display ถูกแต่ compute path อ่าน host-local → ตัดสิน L13 ด้วยตัวเลข. หลังแก้ seam → **re-run census บน prod ยืนยัน drift 0 ก่อน retire** (เทสต์พิสูจน์ logic, census พิสูจน์ข้อมูล). Table/column names มาจาก pinned list, regex bind เป็น parameter. Retired หลังบันทึกลง AUDIT-BACKLOG (same-day)
 
+### 2.6 ปลายทางที่มาจาก URL (`?next=`): ตรวจแล้ว **คืนค่าตามที่รับมา** — ห้ามคืนค่าที่ parser จัดรูปใหม่ ([lib/safe-next-path.ts](lib/safe-next-path.ts)) (2026-11-27, audit M7)
+- **ปัญหา**: หน้า login ทำ `window.location.href = next` โดย `next` มาจาก `?next=` ตรง ๆ → ลิงก์ที่ถูกแต่งพาผู้ใช้ออกเว็บอื่นหลังกรอกรหัสผ่าน; ค่า `javascript:` จะรันใน origin ของเรา
+- **กฎ**:
+  1. รับเฉพาะ path ของเว็บเรา: ขึ้นต้นด้วย `/` ตัวเดียว · ไม่มี backslash (เบราว์เซอร์อ่าน `/\` เป็น `//`) · ไม่มีอักขระควบคุม (เบราว์เซอร์ตัดแท็บ/ขึ้นบรรทัดใหม่ทิ้งก่อนอ่าน → `/<tab>/x.com` = `//x.com`) · resolve กับ origin สมมติแล้วยังอยู่ origin นั้น
+  2. **คืนค่า input เดิม ไม่ใช่ `url.pathname`** — parser พับ dot segment: `/.//example.com` อยู่บน origin เรา แต่ `pathname` ของมันคือ `//example.com`. ร่างแรกคืนค่าที่จัดรูปแล้ว = เปิดช่องเอง. และปฏิเสธเมื่อ pathname ที่ได้ขึ้นต้นด้วย `//`
+  3. หน้าเท่านั้น: segment แรก (ถอด `%` + ตัวเล็ก จาก path ที่ parser ได้) เป็น `api` / `_next` / `login` = ไม่รับ — route ของ admin บางตัวเขียนข้อมูลบน GET
+  4. เทสต์เป็น **คุณสมบัติบน corpus**: ทุกค่าที่ฟังก์ชันคืนต้อง resolve กับหน้าจริงแล้วอยู่บน origin เรา และเท่ากับ input หรือค่า default เท่านั้น. corpus ต้องมีอักขระนอก ASCII (fullwidth slash, zero-width) — ไม่งั้นเวอร์ชันที่ normalize แบบ NFKC ผ่านเทสต์
+  5. ตัวตรวจแบบนี้ให้คนนอกลองเจาะ + รันฟังก์ชันจริงในเบราว์เซอร์จริงบน origin จริง (parser ที่ตรวจต้องเป็นตัวเดียวกับที่นำทาง)
+- **ไฟล์**: [lib/safe-next-path.ts](lib/safe-next-path.ts) · [app/login/form.tsx](app/login/form.tsx) · เทสต์ `tests/safe-next-path.test.ts`
+
 ---
 
 ## 3. Frontend state patterns
@@ -541,7 +551,7 @@ const mockOrder: Order = {
 3. เขียนสั้น: pattern + reason + example file path
 4. ถ้าเป็น cross-project pattern → เพิ่มที่ workspace `CLAUDE.md` ด้วย
 
-_อัปเดตล่าสุด: 2026-11-27 (เย็น) — §12.6 ข้อ 7–9 (PIN: ไล่ทุก key + ทุกทางเข้า · ตัวอ่านเลือกสำเนาไหนก่อน · นิยาม "มี key" ที่เดียว) + §6.5 (สิ่งที่ส่งออกไป error tracker); ก่อนหน้า: 2026-11-27 — added §12.6 (key ของเซิร์ฟเวอร์ใน JSON ที่ฟอร์มเขียนทับ) + bullet ใน §2.5 (control บนข้อมูลจริงก่อนเขียน)_
+_อัปเดตล่าสุด: 2026-11-27 (ค่ำ) — §2.6 (ปลายทางจาก URL: คืนค่าตามที่รับมา); เย็น: §12.6 ข้อ 7–9 (PIN: ไล่ทุก key + ทุกทางเข้า · ตัวอ่านเลือกสำเนาไหนก่อน · นิยาม "มี key" ที่เดียว) + §6.5 (สิ่งที่ส่งออกไป error tracker); ก่อนหน้า: 2026-11-27 — added §12.6 (key ของเซิร์ฟเวอร์ใน JSON ที่ฟอร์มเขียนทับ) + bullet ใน §2.5 (control บนข้อมูลจริงก่อนเขียน)_
 
 ## 11. Eval harness สำหรับ LLM flow (2026-10-24, `eval/pp-customer/`)
 
