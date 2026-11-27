@@ -15,14 +15,14 @@ import {
 
 export const maxDuration = 30;
 
+/** The header fields of the order as the client's page loaded them. No spec snapshot: nothing
+ *  here is read from it (the PIN used to be — see `formSnapshot` below). */
 interface SrcOrderSnapshot {
   name?: string;
   dateDue?: string;
   dateIn?: string;
   price?: string | number;
   status?: string;
-  rawData?: Record<string, unknown> | null;
-  details?: Record<string, unknown> | null;
 }
 
 /** Update an existing order — admin only. Sales can create new orders
@@ -170,15 +170,11 @@ export async function POST(req: Request) {
   const nameChanged = oldName !== name;
   const dueChanged = oldDateDue !== dateDue;
 
-  const existingRaw = (existing.rawData && typeof existing.rawData === 'object'
-    ? existing.rawData
-    : {}) as Record<string, unknown>;
-  const existingDetails = (existing.details && typeof existing.details === 'object'
-    ? existing.details
-    : {}) as Record<string, unknown>;
-  const pin = String(existingRaw.pin || existingDetails.pin || '');
-
-  const formSnapshot: Record<string, unknown> = { ...body, pin, orderType };
+  // The PIN is not put in here: it belongs to the row, and updateOrderInPostgres keeps the stored
+  // one (and the Peak marker) whatever this snapshot holds. It used to be taken from `existing`,
+  // which on the read-skip path is the client's snapshot — and the form opened from a board card
+  // holds a slim order without one, so that edit wrote pin "" (audit 2026-11-27, H1).
+  const formSnapshot: Record<string, unknown> = { ...body, orderType };
   // Same dedupe as add — keep only `photobook` field (auditor M14)
   if (isPB) formSnapshot.photobook = photobookItems;
   delete formSnapshot.photobookItems;

@@ -399,10 +399,13 @@ export function OrderForm({
     if (force) body.force = true;
     if (isEdit && initial) {
       body.id = initial.id;
-      // Pass the existing-order snapshot so the server can skip
-      // `loadAllFresh()` (saves ~600ms on every edit). Server uses
-      // `srcOrder.rawData.pin` to preserve PIN, and the (oldName, oldDateDue)
-      // pair to decide whether a cascade-rename loadAllFresh is needed.
+      // Pass the existing-order snapshot so the server can skip its read
+      // (saves ~600ms on every edit): the (oldName, oldDateDue) pair decides
+      // whether a cascade-rename read is needed.
+      // `rawData` / `details` are no longer read by the server (2026-11-27:
+      // the PIN is kept from the row itself — it used to come from here, and
+      // a slim `initial` from a board card had none). Still sent so a rollback
+      // to an older deployment keeps the PIN; drop them once the fix has soaked.
       body.srcOrder = {
         name: initial.name,
         dateDue: initial.dateDue,

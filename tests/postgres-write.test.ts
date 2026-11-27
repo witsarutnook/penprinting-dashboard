@@ -753,6 +753,16 @@ describe('appendAuditBatchToPostgres', () => {
 describe('updateOrderInPostgres', () => {
   beforeEach(() => resetMockPostgres());
 
+  /** The JSON bound to `column` in the UPDATE of orders. */
+  const written = (column: 'raw_data' | 'details' | 'raw'): Record<string, unknown> | null => {
+    const upd = findCallContaining('UPDATE orders SET');
+    expect(upd, 'must UPDATE orders').toBeDefined();
+    const slot = new RegExp(`\\b${column} = \\$(\\d+)::jsonb`).exec(upd!.text);
+    expect(slot, `${column} must be a bound jsonb parameter`).not.toBeNull();
+    const value = upd!.values[Number(slot![1]) - 1];
+    return value == null ? null : (JSON.parse(String(value)) as Record<string, unknown>);
+  };
+
   it('returns found:false when order missing', async () => {
     queueResult({ rows: [], rowCount: 0 });
     const r = await updateOrderInPostgres({ id: 999, name: 'x' });
@@ -786,18 +796,10 @@ describe('updateOrderInPostgres', () => {
     const FORGED = { code: 'QO-29990000001', lineKeys: ['line-x'], draftId: 'forged' };
     const FORM = { name: 'กล่องใส่ passport', notes: 'อ้างอิง Peak: QO-20261100143', pin: '5496', coatMatte: true };
 
-    /** The JSON bound to `column` in the UPDATE of orders. */
-    const written = (column: 'raw_data' | 'details' | 'raw'): Record<string, unknown> | null => {
-      const upd = findCallContaining('UPDATE orders SET');
-      expect(upd, 'must UPDATE orders').toBeDefined();
-      const slot = new RegExp(`\\b${column} = \\$(\\d+)::jsonb`).exec(upd!.text);
-      expect(slot, `${column} must be a bound jsonb parameter`).not.toBeNull();
-      const value = upd!.values[Number(slot![1]) - 1];
-      return value == null ? null : (JSON.parse(String(value)) as Record<string, unknown>);
-    };
+    // The row of a real order holds its PIN too (read back as `pin`, see the PIN tests below).
     const stored = (peak: unknown) => {
       queueResult({
-        rows: [{ raw: { id: 202611108, name: 'กล่องใส่ passport', rawData: { ...FORM, peak: MARKER }, details: { ...FORM, peak: MARKER } }, peak }],
+        rows: [{ raw: { id: 202611108, name: 'กล่องใส่ passport', rawData: { ...FORM, peak: MARKER }, details: { ...FORM, peak: MARKER } }, peak, pin: '5496' }],
         rowCount: 1,
       });
       queueResult({ rowCount: 1 });
@@ -869,7 +871,7 @@ describe('updateOrderInPostgres', () => {
     it('clearing the snapshot does not clear the marker', async () => {
       stored(MARKER);
       await updateOrderInPostgres({ id: 202611108, details: null, rawData: null });
-      expect(written('raw_data')).toEqual({ peak: MARKER });
+      expect(written('raw_data')).toEqual({ pin: '5496', peak: MARKER }); // the PIN stays too
     });
 
     it('a stored value that is not a marker object is not carried over', async () => {
@@ -879,6 +881,133 @@ describe('updateOrderInPostgres', () => {
         await updateOrderInPostgres({ id: 202611108, rawData: { ...FORM } });
         expect(written('raw_data'), String(junk)).toEqual(FORM);
       }
+    });
+  });
+
+  // Audit 2026-11-27 (H1-board-edit-wipes-pin): the PIN is the other server-owned key in the same
+  // JSON. The edit route worked it out from the snapshot the client sent back, and the form opened
+  // from a board card holds a slim order without one — so that edit wrote pin "" (19 orders on
+  // production, Jul–Nov 2026; their customers get "PIN ไม่ถูกต้อง" on /track). Same rule as the
+  // marker: an edit keeps the PIN stored in the row and never takes one from the caller.
+  describe('the PIN of an order', () => {
+    const SPEC = { name: 'ใบปลิว A5', notes: 'พิมพ์ 4 สี 2 หน้า', coatMatte: true };
+    const MARKER = { code: 'QO-20261100157', lineKeys: ['line-a'], draftId: 'draft-7' };
+
+    /** The row as the read hands it back: `pin` is the stored PIN, the snapshot is what the copies hold. */
+    const storedRow = (
+      pin: unknown,
+      snapshot: Record<string, unknown> | null = { ...SPEC, pin: '5496' },
+      peak: unknown = null,
+    ) => {
+      queueResult({
+        rows: [{ raw: { id: 202611151, name: 'ใบปลิว A5', rawData: snapshot, details: snapshot }, pin, peak }],
+        rowCount: 1,
+      });
+      queueResult({ rowCount: 1 });
+    };
+
+    it('an edit that sends an empty PIN keeps the stored one: raw_data, details and the raw copy', async () => {
+      storedRow('5496');
+      await updateOrderInPostgres({ id: 202611151, details: { ...SPEC, pin: '' }, rawData: { ...SPEC, pin: '' } });
+      expect(written('raw_data')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('details')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('raw')?.rawData).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('raw')?.details).toEqual({ ...SPEC, pin: '5496' });
+    });
+
+    it('an edit whose snapshot has no PIN key keeps the stored one', async () => {
+      storedRow('5496');
+      await updateOrderInPostgres({ id: 202611151, details: { ...SPEC }, rawData: { ...SPEC } });
+      expect(written('raw_data')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('details')).toEqual({ ...SPEC, pin: '5496' });
+    });
+
+    it('the stored PIN wins over one sent by the caller', async () => {
+      storedRow('5496');
+      await updateOrderInPostgres({ id: 202611151, details: { ...SPEC, pin: '0000' }, rawData: { ...SPEC, pin: '0000' } });
+      expect(written('raw_data')?.pin).toBe('5496');
+      expect(written('details')?.pin).toBe('5496');
+      expect((written('raw')?.rawData as Record<string, unknown>).pin).toBe('5496');
+    });
+
+    it('an order without a stored PIN gets none: a PIN sent by the caller is dropped', async () => {
+      for (const none of [null, undefined, '', '   ']) {
+        resetMockPostgres();
+        storedRow(none, { ...SPEC });
+        await updateOrderInPostgres({ id: 202611151, details: { ...SPEC, pin: '0000' }, rawData: { ...SPEC, pin: '0000' } });
+        expect(written('raw_data'), JSON.stringify(none)).toEqual(SPEC);
+        expect(written('details'), JSON.stringify(none)).toEqual(SPEC);
+      }
+    });
+
+    it('the PIN it keeps is read from the row: the columns first, then the raw copy, empty text skipped', async () => {
+      storedRow('5496');
+      await updateOrderInPostgres({ id: 202611151, rawData: { ...SPEC } });
+      const read = sqlCalls[0];
+      // btrim: a blank PIN in one place must not hide a real one in the next (independent review
+      // 2026-11-27) — and it is the same "has a PIN" the one-shot reissue uses.
+      expect(read.text).toContain(
+        "COALESCE(NULLIF(btrim(raw_data->>'pin'), ''), NULLIF(btrim(details->>'pin'), ''), NULLIF(btrim(raw #>> '{rawData,pin}'), ''), NULLIF(btrim(raw #>> '{details,pin}'), '')) AS pin",
+      );
+      expect(read.text).toContain('FROM orders WHERE id = $1');
+      expect(read.values).toEqual([202611151]);
+    });
+
+    // The raw copy can fall behind the columns (cancelOrderInPostgres rewrites it from an earlier
+    // read): with no snapshot from the caller the columns are rebuilt from that copy.
+    it('an update that sends no snapshot writes the stored PIN into a copy that lost it', async () => {
+      storedRow('5496', { ...SPEC, pin: '' });
+      await updateOrderInPostgres({ id: 202611151, name: 'ใบปลิว A5 (แก้ชื่อ)' });
+      expect(written('raw_data')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('details')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('raw')?.rawData).toEqual({ ...SPEC, pin: '5496' });
+    });
+
+    // Independent review 2026-11-27: every reader takes `rawData` when it is an object and only
+    // then `details`. A `{pin}` made out of nothing in rawData would stand in front of a spec that
+    // lives in details — so the PIN goes into the snapshots that exist, and when none does it is
+    // `details` that is made to hold it, never `rawData`.
+    it('clearing the snapshot does not clear the PIN: details holds it, no rawData is made', async () => {
+      storedRow('5496');
+      await updateOrderInPostgres({ id: 202611151, details: null, rawData: null });
+      expect(written('details')).toEqual({ pin: '5496' });
+      expect(written('raw_data')).toBeNull();
+      expect(written('raw')?.details).toEqual({ pin: '5496' });
+      expect(written('raw')?.rawData).toBeNull();
+    });
+
+    it('a caller that clears rawData only: the PIN stays in details and no rawData is made', async () => {
+      storedRow('5496');
+      await updateOrderInPostgres({ id: 202611151, details: { ...SPEC }, rawData: null });
+      expect(written('details')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('raw_data')).toBeNull();
+    });
+
+    it('an update that sends no snapshot, on an order whose spec sits only in details: no rawData is made', async () => {
+      queueResult({
+        rows: [{ raw: { id: 202604010, name: 'งานเก่า', details: { ...SPEC, pin: '5496' } }, pin: '5496', peak: null }],
+        rowCount: 1,
+      });
+      queueResult({ rowCount: 1 });
+      await updateOrderInPostgres({ id: 202604010, name: 'งานเก่า (แก้ชื่อ)' });
+      expect(written('details')).toEqual({ ...SPEC, pin: '5496' });
+      expect(written('raw_data')).toBeNull();
+      expect(written('raw')).not.toHaveProperty('rawData');
+    });
+
+    it('an order opened by /order keeps both its PIN and its marker', async () => {
+      storedRow('5496', { ...SPEC, pin: '5496', peak: MARKER }, MARKER);
+      await updateOrderInPostgres({ id: 202611151, details: { ...SPEC, pin: '' }, rawData: { ...SPEC, pin: '' } });
+      expect(written('raw_data')).toEqual({ ...SPEC, pin: '5496', peak: MARKER });
+      expect(written('details')).toEqual({ ...SPEC, pin: '5496', peak: MARKER });
+    });
+
+    it('clearing the snapshot of an order opened by /order keeps both', async () => {
+      storedRow('5496', { ...SPEC, pin: '5496', peak: MARKER }, MARKER);
+      await updateOrderInPostgres({ id: 202611151, details: null, rawData: null });
+      // The marker is put back into both (as before), so both exist and both hold the PIN.
+      expect(written('raw_data')).toEqual({ pin: '5496', peak: MARKER });
+      expect(written('details')).toEqual({ pin: '5496', peak: MARKER });
     });
   });
 });

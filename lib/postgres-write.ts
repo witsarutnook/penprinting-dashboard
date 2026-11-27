@@ -610,28 +610,43 @@ function storedPeakMarker(value: unknown): Record<string, unknown> | null {
   return asObject(v);
 }
 
-/** `snapshot` with the order's own Peak marker and no other: a `peak` key in the snapshot is dropped,
- *  the stored marker (if any) is put in. A cleared snapshot still keeps the marker. */
-function withPeakMarker(
+/** The PIN a row holds, or null when it has none (blank text is not a PIN). */
+function storedPin(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/** A snapshot sent by a caller, without the keys only the server may set (`peak`, `pin`). */
+function withoutServerKeys(snapshot: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (snapshot == null) return null;
+  const rest = { ...snapshot };
+  delete rest.peak;
+  delete rest.pin;
+  return rest;
+}
+
+/** `snapshot` with the order's own stored Peak marker put in. A cleared snapshot still keeps it;
+ *  with none stored the snapshot is written as it is. */
+function withStoredMarker(
   snapshot: Record<string, unknown> | null,
   peak: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
-  if (snapshot == null) return peak ? { peak } : null;
-  const rest = { ...snapshot };
-  delete rest.peak;
-  return peak ? { ...rest, peak } : rest;
+  return peak ? { ...(snapshot ?? {}), peak } : snapshot;
 }
 
 /** Phase 2 — single UPDATE on orders with merge-into-raw.
  *  Mirrors updateJobInPostgres for the orders table. Returns found:false
  *  when the row is missing (caller surfaces a 409).
  *
- *  The Peak marker (`raw_data.peak`, written when `/order` opens a quotation line —
- *  lib/peak-order/mapper.ts) belongs to the server. The edit form does not hold it, so the
- *  snapshot an edit sends never has it: this function keeps the stored marker in `details`,
- *  `raw_data` and the `raw` copy, and never takes one from the caller. Without it the restore
- *  guard (lib/peak-order/restore-guard.ts) lets a cancelled job come back next to the order
- *  that replaced it (found 2026-11-21: #202611104 and #202611108 lost theirs on the first edit). */
+ *  Two keys of the snapshot belong to the server, and the edit form holds neither:
+ *  - the Peak marker (`raw_data.peak`, written when `/order` opens a quotation line —
+ *    lib/peak-order/mapper.ts). Without it the restore guard (lib/peak-order/restore-guard.ts)
+ *    lets a cancelled job come back next to the order that replaced it (found 2026-11-21:
+ *    #202611104 and #202611108 lost theirs on the first edit).
+ *  - the PIN (`raw_data.pin`, made once in lib/orders-create.ts). Without it /track answers
+ *    "PIN ไม่ถูกต้อง" (found 2026-11-27: an edit from a board card, which holds a slim order,
+ *    wrote pin "" on 19 orders).
+ *  This function keeps the stored ones in `details`, `raw_data` and the `raw` copy, and never
+ *  takes either from the caller. */
 export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ ok: true; found: boolean }> {
   if (!isPostgresConfigured()) {
     throw new PostgresWriteError('updateOrder', 'POSTGRES_URL env var missing');
@@ -641,13 +656,19 @@ export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ 
     throw new PostgresWriteError('updateOrder', 'Invalid order id');
   }
 
-  const cur = await sql<{ raw: AnyRow | null; peak: unknown }>`
-    SELECT raw, raw_data->'peak' AS peak FROM orders WHERE id = ${idNum}::bigint LIMIT 1`;
+  // The PIN is looked for in the columns first, then in the `raw` copy (the copy can fall behind).
+  // btrim: a blank PIN in one place must not hide a real one in the next.
+  const cur = await sql<{ raw: AnyRow | null; pin: unknown; peak: unknown }>`
+    SELECT raw,
+           COALESCE(NULLIF(btrim(raw_data->>'pin'), ''), NULLIF(btrim(details->>'pin'), ''),
+                    NULLIF(btrim(raw #>> '{rawData,pin}'), ''), NULLIF(btrim(raw #>> '{details,pin}'), '')) AS pin,
+           raw_data->'peak' AS peak FROM orders WHERE id = ${idNum}::bigint LIMIT 1`;
   if (cur.rows.length === 0) {
     return { ok: true, found: false };
   }
   const oldRaw = (cur.rows[0]?.raw && typeof cur.rows[0].raw === 'object') ? cur.rows[0].raw : {};
   const peak = storedPeakMarker(cur.rows[0]?.peak);
+  const pin = storedPin(cur.rows[0]?.pin);
 
   const merged: AnyRow = { ...oldRaw, id: idNum };
   if (input.name !== undefined) merged.name = String(input.name);
@@ -659,12 +680,22 @@ export async function updateOrderInPostgres(input: UpdateOrderInput): Promise<{ 
   if (input.assignStaff !== undefined) merged.assignStaff = String(input.assignStaff);
   if (input.orderer !== undefined) merged.orderer = String(input.orderer);
   if (input.status !== undefined) merged.status = String(input.status);
-  // The marker goes into what is written whether or not the caller sent a snapshot: without
-  // one the columns are rebuilt from the `raw` copy, which may not hold it.
-  if (input.details !== undefined) merged.details = withPeakMarker(input.details, peak);
-  else if (peak) merged.details = withPeakMarker(asObject(merged.details), peak);
-  if (input.rawData !== undefined) merged.rawData = withPeakMarker(input.rawData, peak);
-  else if (peak) merged.rawData = withPeakMarker(asObject(merged.rawData), peak);
+  // The snapshots that get written: the caller's without the server's keys, or — when it sent
+  // none — the `raw` copy, which is what the columns are rebuilt from and may not hold them.
+  // The stored marker goes into both in either case.
+  if (input.details !== undefined) merged.details = withStoredMarker(withoutServerKeys(input.details), peak);
+  else if (peak) merged.details = withStoredMarker(asObject(merged.details), peak);
+  if (input.rawData !== undefined) merged.rawData = withStoredMarker(withoutServerKeys(input.rawData), peak);
+  else if (peak) merged.rawData = withStoredMarker(asObject(merged.rawData), peak);
+  // The stored PIN goes into every snapshot that exists. When none does, `details` is made to
+  // hold it — never `rawData`: every reader takes rawData when it is an object, and a `{pin}`
+  // made out of nothing there would stand in front of a spec that lives in details.
+  if (pin) {
+    const details = asObject(merged.details);
+    const rawData = asObject(merged.rawData);
+    if (details || !rawData) merged.details = { ...(details ?? {}), pin };
+    if (rawData) merged.rawData = { ...rawData, pin };
+  }
 
   const name = String(merged.name || '');
   const customer = merged.customer != null ? String(merged.customer) : null;
