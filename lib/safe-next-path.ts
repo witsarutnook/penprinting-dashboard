@@ -11,6 +11,19 @@
 const BASE = 'https://next.invalid';
 const MAX_LENGTH = 2000;
 
+/** First path segments that are not pages of the site. */
+const NOT_A_PAGE = new Set(['api', '_next', 'login']);
+
+/** The first segment of a pathname, percent-decoded and lower-cased (`/%41PI/x` → `api`). */
+function firstSegment(pathname: string): string {
+  const raw = pathname.split('/')[1] ?? '';
+  try {
+    return decodeURIComponent(raw).toLowerCase();
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
 /** True when `s` holds a control character (tab, newline, NUL, DEL …). A browser drops tab and
  *  newline from a URL before reading it, so `/<tab>/example.com` is read as `//example.com`. */
 function hasControlChar(s: string): boolean {
@@ -42,6 +55,10 @@ export function safeNextPath(next: unknown, fallback = '/analytics'): string {
   // `/.//example.com` is on our origin, but the parser folds the dot segment away and the path
   // it is left with is `//example.com`. Nothing of ours looks like that: refuse it.
   if (url.pathname.startsWith('//')) return fallback;
+  // Only a page. Middleware sends the page the visitor asked for; an API route (some admin ones
+  // write on GET), a build asset or the login page itself is never that. Judged on the path the
+  // parser ends up with, so `/x/../api/…` and `/%61pi/…` do not get round it.
+  if (NOT_A_PAGE.has(firstSegment(url.pathname))) return fallback;
   // The value as it was given — never the parser's re-serialised path (that is how
   // `//example.com` above would have got out).
   return next;

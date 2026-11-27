@@ -100,6 +100,60 @@ describe('safeNextPath', () => {
     }
   });
 
+  // Independent review (2026-11-27, after the first commit): no bypass found, but the corpus above
+  // is all ASCII — a version that normalised the value (NFKC turns the fullwidth slash U+FF0F into
+  // "/") or dropped zero-width characters stayed green and sent the browser to example.com.
+  // Look-alikes are fine AS GIVEN (the browser percent-encodes them into a path of this site);
+  // the value must come back untouched.
+  it('look-alike slashes and invisible characters come back exactly as given', () => {
+    const SITE = 'https://dashboard.penprinting.co';
+    const FULLWIDTH_SLASH = String.fromCharCode(0xff0f);
+    const FULLWIDTH_BACKSLASH = String.fromCharCode(0xff3c);
+    const FULLWIDTH_DOT = String.fromCharCode(0xff0e);
+    const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
+    const LINE_SEPARATOR = String.fromCharCode(0x2028);
+    const NBSP = String.fromCharCode(0xa0);
+    for (const ch of [FULLWIDTH_SLASH, FULLWIDTH_BACKSLASH, FULLWIDTH_DOT, ZERO_WIDTH_SPACE, LINE_SEPARATOR, NBSP]) {
+      for (const input of [`/${ch}example.com`, `/${ch}/example.com`, `/${ch}${ch}/example.com`, `/.${ch}/example.com`]) {
+        const label = `U+${ch.charCodeAt(0).toString(16)} ${input.length}`;
+        const out = safeNextPath(input);
+        expect(out, label).toBe(input);
+        expect(new URL(out, `${SITE}/login`).origin, label).toBe(SITE);
+      }
+    }
+  });
+
+  // Same review: any path of the site was accepted, API routes included — and some admin routes
+  // write on GET (`/api/admin/seed-id-counters?min=…` lifts the job-id counter). A login link
+  // must not end in one. Middleware only ever sends pages.
+  it('only a page: an API route, a build asset or the login page itself is not a place to go', () => {
+    for (const notAPage of [
+      '/api/admin/seed-id-counters?min=999999999999',
+      '/api/admin/db-migrate',
+      '/api',
+      '/api/',
+      '/api?x=1',
+      '/API/admin/db-migrate',
+      '/%61pi/admin/db-migrate',
+      '/%41PI/admin/db-migrate',
+      '/x/../api/admin/db-migrate',
+      '/./api/admin/db-migrate',
+      '/_next/static/chunks/main.js',
+      '/login',
+      '/login?next=/board',
+      '/login/',
+      '/LOGIN',
+    ]) {
+      expect(safeNextPath(notAPage), notAPage).toBe('/analytics');
+    }
+  });
+
+  it('a page whose name merely starts like one of those is still a page', () => {
+    for (const page of ['/apiary', '/api-docs', '/login-help', '/_nextstep', '/orders/api', '/board?next=/api/x']) {
+      expect(safeNextPath(page), page).toBe(page);
+    }
+  });
+
   it('a script or data URL is never the place to go', () => {
     for (const evil of [
       'javascript:alert(1)',
