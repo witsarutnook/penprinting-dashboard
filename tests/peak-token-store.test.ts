@@ -213,23 +213,144 @@ describe('getPeakAccessToken', () => {
     expect(queries.some(isErrorRecord)).toBe(false);
   });
 
-  it('persist failure after a successful refresh -> PeakAuthError + error record attempt', async () => {
-    const r = row({ access_expires_at: new Date(NOW - 60_000) });
-    handler = (q) => {
-      if (isSelect(q)) return { rows: [r] };
-      if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: r.refresh_token_enc }] };
-      if (isSaveTokens(q)) return Promise.reject(new Error('db down'));
-      return { rows: [{ id: 'peak' }] };
-    };
-    const refresh = vi.fn(async () => tokenSet());
-    const err = await getPeakAccessToken({}, { refresh, sleep: noSleep, nowMs }).catch((e) => e);
-    expect(err).toBeInstanceOf(PeakAuthError);
-    expect(String(err.message)).not.toContain(NEW_AT);
-    expect(String(err.message)).not.toContain(NEW_RT);
-    const rec = queries.find(isErrorRecord);
-    expect(rec).toBeDefined();
-    expect(rec!.values).toContain('token refresh succeeded but persisting the new token failed');
-    expectNoPlaintextParams();
+  // Audit 2026-11-27 (M2-refresh-save-single-attempt). Peak rotates the refresh token on every
+  // refresh: once it has answered, the old one is spent and the returned set is the ONLY copy of
+  // the new one. The save used to be tried once — one failed write threw the set away, and every
+  // later refresh sent the spent token until an admin reconnected by hand. It is now tried up to
+  // three times (inside the 30 s lease) before giving up.
+  describe('storing a freshly rotated token', () => {
+    const expired = () => row({ access_expires_at: new Date(NOW - 60_000) });
+    /** Lock won; the save rejects for the first `failures` attempts, then succeeds. */
+    function saveFailsFirst(failures: number) {
+      const r = expired();
+      let saves = 0;
+      handler = (q) => {
+        if (isSelect(q)) return { rows: [r] };
+        if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: r.refresh_token_enc }] };
+        if (isSaveTokens(q)) return ++saves <= failures ? Promise.reject(new Error('db down')) : { rows: [{ id: 'peak' }] };
+        return { rows: [{ id: 'peak' }] };
+      };
+    }
+    /** What each save attempt WRITES: [access, refresh] — the first two parameters (the last two are the guard). */
+    const savedRefreshTokens = () =>
+      queries.filter(isSaveTokens).map((q) => q.values.slice(0, 2).map((v) => decryptSecret(String(v))));
+
+    it('the save fails once, then works: the new token is kept — no error, no reconnect needed', async () => {
+      saveFailsFirst(1);
+      const refresh = vi.fn(async () => tokenSet());
+      const sleep = vi.fn(async () => {});
+      await expect(getPeakAccessToken({}, { refresh, sleep, nowMs })).resolves.toBe(NEW_AT);
+      expect(queries.filter(isSaveTokens)).toHaveLength(2);
+      expect(queries.some(isErrorRecord)).toBe(false);
+      expect(sleep).toHaveBeenCalledTimes(1);
+      expectNoPlaintextParams();
+    });
+
+    it('the save fails twice, the third works', async () => {
+      saveFailsFirst(2);
+      const sleep = vi.fn(async () => {});
+      await expect(getPeakAccessToken({}, { refresh: vi.fn(async () => tokenSet()), sleep, nowMs })).resolves.toBe(NEW_AT);
+      expect(queries.filter(isSaveTokens)).toHaveLength(3);
+      expect(queries.some(isErrorRecord)).toBe(false);
+      expect(sleep).toHaveBeenCalledTimes(2);
+    });
+
+    it('Peak is asked once: every attempt stores the same new pair, the spent token is never sent again', async () => {
+      saveFailsFirst(2);
+      const refresh = vi.fn(async () => tokenSet());
+      await getPeakAccessToken({}, { refresh, sleep: noSleep, nowMs });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      const attempts = savedRefreshTokens();
+      expect(attempts).toHaveLength(3);
+      for (const stored of attempts) {
+        expect(stored).toEqual([NEW_AT, NEW_RT]);
+      }
+    });
+
+    it('the waits between attempts are short enough to stay inside the 30 s lease', async () => {
+      saveFailsFirst(2);
+      const sleep = vi.fn(async (_ms: number) => {});
+      await getPeakAccessToken({}, { refresh: vi.fn(async () => tokenSet()), sleep, nowMs });
+      const waited = sleep.mock.calls.reduce((sum, [ms]) => sum + ms, 0);
+      expect(waited).toBeGreaterThan(0);
+      expect(waited).toBeLessThanOrEqual(5_000);
+    });
+
+    // Independent review 2026-11-28: a retry must not be a blind second write. If attempt 1 did
+    // commit (and only its answer was lost) the lease is free again; another refresh can rotate
+    // the token before the retry runs, and a blind retry would put the older pair back — the next
+    // refresh would then be refused. Every attempt writes only while the row still holds the
+    // refresh token this refresh started from (compare-and-swap).
+    it('every attempt is a compare-and-swap on the refresh token read with the lease', async () => {
+      const r = expired();
+      let saves = 0;
+      handler = (q) => {
+        if (isSelect(q)) return { rows: [r] };
+        if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: r.refresh_token_enc }] };
+        if (isSaveTokens(q)) return ++saves <= 2 ? Promise.reject(new Error('db down')) : { rows: [{ id: 'peak' }] };
+        return { rows: [{ id: 'peak' }] };
+      };
+      await getPeakAccessToken({}, { refresh: vi.fn(async () => tokenSet()), sleep: noSleep, nowMs });
+      const attempts = queries.filter(isSaveTokens);
+      expect(attempts).toHaveLength(3);
+      for (const q of attempts) {
+        expect(q.text.replace(/\s+/g, ' ')).toContain("WHERE id = 'peak' AND (?::text IS NULL OR refresh_token_enc = ?) RETURNING id");
+        // the guard = the ciphertext the lease handed back, not a re-encryption
+        expect(q.values.slice(-2)).toEqual([r.refresh_token_enc, r.refresh_token_enc]);
+        // access first, refresh second — and the same scope every time
+        expect(decryptSecret(String(q.values[0]))).toBe(NEW_AT);
+        expect(decryptSecret(String(q.values[1]))).toBe(NEW_RT);
+        expect(q.values[3]).toBe('mcp:read');
+      }
+      // the lease is not given up between attempts (only a save releases it)
+      expect(queries.filter(isLockClear)).toHaveLength(0);
+    });
+
+    it('the retry finds a different token in the row (attempt 1 had landed, or a newer pair is stored): nothing is overwritten, no error', async () => {
+      const r = expired();
+      let saves = 0;
+      handler = (q) => {
+        if (isSelect(q)) return { rows: [r] };
+        if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: r.refresh_token_enc }] };
+        if (isSaveTokens(q)) return ++saves === 1 ? Promise.reject(new Error('connection reset')) : { rows: [] };
+        return { rows: [{ id: 'peak' }] };
+      };
+      const refresh = vi.fn(async () => tokenSet());
+      await expect(getPeakAccessToken({}, { refresh, sleep: noSleep, nowMs })).resolves.toBe(NEW_AT);
+      expect(queries.filter(isSaveTokens)).toHaveLength(2); // no third attempt
+      expect(queries.some(isErrorRecord)).toBe(false);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('an admin reconnected while Peak was answering (the row holds another token): the new grant is left alone, no error', async () => {
+      const r = expired();
+      handler = (q) => {
+        if (isSelect(q)) return { rows: [r] };
+        if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: r.refresh_token_enc }] };
+        if (isSaveTokens(q)) return { rows: [] }; // compare-and-swap found another refresh token
+        return { rows: [{ id: 'peak' }] };
+      };
+      await expect(getPeakAccessToken({}, { refresh: vi.fn(async () => tokenSet()), sleep: noSleep, nowMs })).resolves.toBe(NEW_AT);
+      expect(queries.filter(isSaveTokens)).toHaveLength(1);
+      expect(queries.some(isErrorRecord)).toBe(false);
+    });
+
+    it('the save fails every time -> three attempts, then PeakAuthError + error record', async () => {
+      saveFailsFirst(99);
+      const refresh = vi.fn(async () => tokenSet());
+      const err = await getPeakAccessToken({}, { refresh, sleep: noSleep, nowMs }).catch((e) => e);
+      expect(err).toBeInstanceOf(PeakAuthError);
+      expect(String(err.message)).not.toContain(NEW_AT);
+      expect(String(err.message)).not.toContain(NEW_RT);
+      expect(queries.filter(isSaveTokens)).toHaveLength(3);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      const rec = queries.find(isErrorRecord);
+      expect(rec).toBeDefined();
+      expect(rec!.values).toContain('token refresh succeeded but persisting the new token failed');
+      // the error is recorded after the last attempt, not between attempts
+      expect(queries.indexOf(rec!)).toBeGreaterThan(queries.lastIndexOf(queries.filter(isSaveTokens).at(-1)!));
+      expectNoPlaintextParams();
+    });
   });
 
   it('persist failure + error record failure -> still PeakAuthError', async () => {
@@ -317,6 +438,13 @@ describe('savePeakTokens', () => {
   it('throws when no peak_oauth row exists (client not registered)', async () => {
     handler = () => ({ rows: [] });
     await expect(savePeakTokens(tokenSet())).rejects.toThrow();
+  });
+
+  it('is unconditional (the OAuth callback stores a brand-new grant): the guard parameters are null', async () => {
+    handler = () => ({ rows: [{ id: 'peak' }] });
+    await savePeakTokens(tokenSet());
+    const q = queries.find(isSaveTokens)!;
+    expect(q.values.slice(-2)).toEqual([null, null]);
   });
 });
 

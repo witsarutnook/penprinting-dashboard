@@ -48,6 +48,9 @@ interface PeakOauthRow {
 const MIN_REMAINING_MS = 5 * 60_000;
 const POLL_TRIES = 10;
 const POLL_MS = 500;
+/** Waits before the 2nd and 3rd attempt to store a freshly rotated token (3 attempts in all) —
+ *  far inside the 30 s refresh lease. */
+const SAVE_RETRY_WAITS_MS = [250, 750];
 const DEFAULT_EXPIRES_SEC = 3600;
 const MAX_ERROR_LEN = 500;
 
@@ -89,8 +92,12 @@ export async function savePeakClient(clientId: string): Promise<void> {
       updated_at = NOW()`;
 }
 
-/** Encrypt + store a token set, release the refresh lease, clear the last error. */
-export async function savePeakTokens(t: PeakTokenSet): Promise<void> {
+/**
+ * Encrypt + store a token set, release the refresh lease, clear the last error.
+ * With `ifRefreshEnc`, only while the row still holds that refresh-token ciphertext
+ * (compare-and-swap). Returns false, writing nothing, when no row matched.
+ */
+async function writePeakTokens(t: PeakTokenSet, ifRefreshEnc: string | null): Promise<boolean> {
   const accessEnc = encryptSecret(t.accessToken);
   const refreshEnc = encryptSecret(t.refreshToken);
   // Peak may omit / garble expires_in → treat non-positive or non-finite as 1h
@@ -108,9 +115,14 @@ export async function savePeakTokens(t: PeakTokenSet): Promise<void> {
       last_error = NULL,
       last_error_at = NULL,
       updated_at = NOW()
-    WHERE id = 'peak'
+    WHERE id = 'peak' AND (${ifRefreshEnc}::text IS NULL OR refresh_token_enc = ${ifRefreshEnc})
     RETURNING id`;
-  if (res.rows.length === 0) {
+  return res.rows.length > 0;
+}
+
+/** Store a brand-new grant (the OAuth callback), whatever the row holds. */
+export async function savePeakTokens(t: PeakTokenSet): Promise<void> {
+  if (!(await writePeakTokens(t, null))) {
     throw new Error('peak_oauth row missing — register the Peak client first');
   }
 }
@@ -154,11 +166,14 @@ export async function getPeakAccessToken(
   if (won) {
     // 4. Lock won
     let next: PeakTokenSet;
+    /** The refresh token this refresh starts from, as stored — what the save below swaps out. */
+    let leasedRefreshEnc: string;
     try {
       if (!won.refresh_token_enc) throw new PeakNotConnectedError('Peak is not connected');
+      leasedRefreshEnc = won.refresh_token_enc;
       next = await refresh({
         clientId: won.client_id,
-        refreshToken: decryptSecret(won.refresh_token_enc),
+        refreshToken: decryptSecret(leasedRefreshEnc),
       });
     } catch (err) {
       if (err instanceof PeakAuthError) {
@@ -171,10 +186,28 @@ export async function getPeakAccessToken(
       await clearLock();
       throw err;
     }
-    try {
-      await savePeakTokens(next);
-    } catch {
-      // The old refresh token is already spent: the connection is at risk.
+    // The old refresh token is spent the moment Peak answered: `next` is the only copy of the
+    // new one. One failed write must not throw it away (audit 2026-11-27, M2 — it used to, and
+    // every later refresh then sent the spent token until an admin reconnected by hand). Try
+    // again, inside the lease.
+    //
+    // Every attempt is a compare-and-swap on the refresh token this refresh started from
+    // (independent review 2026-11-28): a write whose answer was lost may have landed and freed
+    // the lease, and by the time of the retry a newer pair can be in the row (another refresh, or
+    // an admin who reconnected) — a blind retry would put the older pair back. No row matched =
+    // the row has moved on; our pair is not needed, and nothing is wrong.
+    let settled = false;
+    for (let attempt = 0; !settled; attempt++) {
+      try {
+        await writePeakTokens(next, leasedRefreshEnc);
+        settled = true;
+      } catch {
+        if (attempt >= SAVE_RETRY_WAITS_MS.length) break;
+        await sleep(SAVE_RETRY_WAITS_MS[attempt]);
+      }
+    }
+    if (!settled) {
+      // Every attempt failed: the connection is lost until an admin reconnects.
       try {
         await recordPeakError('token refresh succeeded but persisting the new token failed');
       } catch {
