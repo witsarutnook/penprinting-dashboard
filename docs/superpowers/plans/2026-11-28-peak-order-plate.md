@@ -57,7 +57,7 @@ export function plateFields(press: string, plate: unknown): PlateFields | null;
 export function plateSummary(press: string, plate: unknown): string;
 ```
 
-- [ ] **Step 1: failing tests** — `tests/peak-order-plate.test.ts`:
+- [x] **Step 1: failing tests** — `tests/peak-order-plate.test.ts`:
   - `it.each` over the spec table: `['sm74','new'] → { plateNew: true, plateSize: ['ตัด 3'] }`, `['sm74','old']`, `['mo5','new'|'old'] → ['ตัด 4']`, `['mo', …] → ['ตัด 4']`, `['hamada', …] → ['ตัด 5']`, `['inkjet','copyprint'|'inkjet'|'digital']` → that one flag, `plateSize: []`; every result `toEqual` the full six-key object (all other flags `false`).
   - `plateFields('', undefined)` and `plateFields('', 'new')` → Print Digital only.
   - null cases: `('outsource', anything)`, `('sm74', undefined | 'copyprint' | 'digital' | 7)`, `('inkjet', 'new' | undefined)`, `('nobody', 'new')`.
@@ -65,10 +65,10 @@ export function plateSummary(press: string, plate: unknown): string;
   - every size the table can write is in `PLATE_SIZES`.
   - Review Focus 5: the set of press ids the table has a row for equals `STAFF.print.map((s) => s.id)`.
   - `plateSummary`: `('mo','new') → 'ตัด 4 · เพลทใหม่'`, `('inkjet','copyprint') → 'Copyprint'`, `('', undefined) → 'Print Digital'`, `('outsource', undefined) → ''`, `('sm74', undefined) → ''`.
-- [ ] **Step 2:** `npx vitest run tests/peak-order-plate.test.ts` → FAIL (module missing).
-- [ ] **Step 3:** implement; the table is one `Record<string, …>` keyed by press id and is the only place sizes and options are written. `order-form.tsx` imports `PLATE_SIZES` from `lib/photobook`.
-- [ ] **Step 4:** same command → PASS; `npm run type-check`.
-- [ ] **Step 5:** commit `feat(peak-order): press → PLATE rules table`.
+- [x] **Step 2:** `npx vitest run tests/peak-order-plate.test.ts` → FAIL (module missing).
+- [x] **Step 3:** implement; the table is one `Record<string, …>` keyed by press id and is the only place sizes and options are written. `order-form.tsx` imports `PLATE_SIZES` from `lib/photobook`.
+- [x] **Step 4:** same command → PASS; `npm run type-check`.
+- [x] **Step 5:** commit `feat(peak-order): press → PLATE rules table`.
 
 ### Task 2: Codec, mapper, spec summary
 
@@ -89,14 +89,14 @@ export interface UnitChoices { qtyUnit?: string; graphic: string; press: string;
 export function withoutPrintMethod(spec: SpecFromText): SpecFromText;
 ```
 
-- [ ] **Step 1: failing tests**
+- [x] **Step 1: failing tests**
   - postback: round trip for each of the five answers; decode returns null for `po1|plate|d1|0|`, `…|0|NEW`, `…|0|ตัด 4`, a fifth field, a bad `u`.
   - mapper `buildOrderBody`: offset + `new` + `spec: { digital: true, size: 'A4' }` → `plateNew: true, plateSize: ['ตัด 4'], digital: false, size: 'A4'`; press `''` → `digital: true`; `outsource` + `spec.digital` → `digital: true`, `plateNew: false`, `plateSize: []`; offset press without `plate` → all PLATE fields as `emptyOrderForm` has them (and `digital` from spec kept).
   - `withoutPrintMethod`: digital-only spec → `{ fields: {}, summary: '' }`; a real corpus line that reads Digital with other fields → fields equal minus `digital`, summary equal minus its last ` · Digital`; a spec without digital → the same object; a paper name containing the word Digital is untouched when `digital` was not read.
-- [ ] **Step 2:** run the three files → the new cases FAIL.
-- [ ] **Step 3:** implement. `withoutPrintMethod` lives next to `summarise` and shares its label and separator constants (Digital is always the last part).
-- [ ] **Step 4:** the three files PASS; `npm run type-check`.
-- [ ] **Step 5:** commit `feat(peak-order): plate postback, PLATE fields in the order body`.
+- [x] **Step 2:** run the three files → the new cases FAIL.
+- [x] **Step 3:** implement. `withoutPrintMethod` lives next to `summarise` and shares its label and separator constants (Digital is always the last part).
+- [x] **Step 4:** the three files PASS; `npm run type-check`.
+- [x] **Step 5:** commit `feat(peak-order): plate postback, PLATE fields in the order body`.
 
 ### Task 3: Cards
 
@@ -107,9 +107,9 @@ export function withoutPrintMethod(spec: SpecFromText): SpecFromText;
 - Body: `draftHeader(d, p, false)`, then `ส่งต่อพิมพ์: <press name>` + ` · <size>` when the question has one, then the prompt `เพลท:` (offset) or `ประเภทงานพิมพ์:` (แป๋). Buttons: one per option, label `PLATE_LABEL`, data `{ a: 'plate', draft, u, v }`, then `ยกเลิก`. Alt text line `ตัวเลือก: … / ยกเลิก`. Card title `เพลท / การพิมพ์`.
 - `summaryCard`: the press line gets ` · ${plateSummary(press, plate)}` when non-empty; the "สเปกที่อ่านได้" line uses `withoutPrintMethod(spec)` when `plateFields(press, plate)` is non-null.
 
-- [ ] **Step 1: failing tests** — `plateCard` for `mo` (decoded postbacks = new, old, cancel; text contains `MO (วล) · ตัด 4` and `เพลท:`), for `inkjet` (three options + cancel, no `ตัด`); the existing `invariants(c)` on both; the "every card" loop at `tests/peak-order-flex.test.ts:442` includes `plateCard`. `summaryCard`: `ส่งต่อพิมพ์ MO (วล) · ตัด 4 · เพลทใหม่`; press `''` → `ยังไม่ระบุ · Print Digital`; offset without answer → the press name alone (Review Focus 2); a line reading Digital + offset/new → no `Digital` in text or flex; the same line + `outsource` → `Digital` present (Review Focus 3).
-- [ ] **Step 2:** run → FAIL. **Step 3:** implement. **Step 4:** PASS.
-- [ ] **Step 5:** commit `feat(peak-order): plate card, PLATE on the summary card`.
+- [x] **Step 1: failing tests** — `plateCard` for `mo` (decoded postbacks = new, old, cancel; text contains `MO (วล) · ตัด 4` and `เพลท:`), for `inkjet` (three options + cancel, no `ตัด`); the existing `invariants(c)` on both; the "every card" loop at `tests/peak-order-flex.test.ts:442` includes `plateCard`. `summaryCard`: `ส่งต่อพิมพ์ MO (วล) · ตัด 4 · เพลทใหม่`; press `''` → `ยังไม่ระบุ · Print Digital`; offset without answer → the press name alone (Review Focus 2); a line reading Digital + offset/new → no `Digital` in text or flex; the same line + `outsource` → `Digital` present (Review Focus 3).
+- [x] **Step 2:** run → FAIL. **Step 3:** implement. **Step 4:** PASS.
+- [x] **Step 5:** commit `feat(peak-order): plate card, PLATE on the summary card`.
 
 ### Task 4: The step
 
@@ -118,12 +118,12 @@ export function withoutPrintMethod(spec: SpecFromText): SpecFromText;
 **Interfaces — Consumes:** Tasks 1–3.
 
 - `STEP_OF.plate = 'plate'`.
-- `press`: valid press → `plateQuestion(press)` non-null → gate to `plate`, reply `plateCard`; null → gate to `date` as today. The stored choices never carry a `plate` from before.
+- `press`: valid press → `plateQuestion(press)` non-null → gate to `plate`, reply `plateCard`; null → gate to `date` as today. (A `plate` left over from before cannot matter: the plate step overwrites it, and `plateFields` ignores an answer the press does not offer.)
 - `plate`: `plateQuestion(unit.choices.press ?? '')` must offer `p.v`, else return null (no gate); gate to `date` with `plate: p.v`, reply `dateCard`.
 - `gfx` / `same`: copies `plate` when the source has one.
 - `createUnit`: passes `plate: c.plate` in `choices`.
 
-- [ ] **Step 1: failing tests** (new `describe('handlePeakOrderPostback — plate')`):
+- [x] **Step 1: failing tests** (new `describe('handlePeakOrderPostback — plate')`):
   - offset walk: press `mo` → step `plate`, reply `plateCard(draft)`; plate `new` → step `date`, choices `{ …, press: 'mo', plate: 'new' }`, reply `dateCard`; create → body `plateNew: true`, `plateSize: ['ตัด 4']`, `forwardPrint: 'mo'`.
   - แป๋ walk with `inkjet` → body `inkjet: true`, `digital: false`, `copyprint: false`.
   - press `none` (graphic chosen) and `outsource` → straight to `date`; bodies: `digital: true` / every PLATE field empty.
@@ -133,13 +133,13 @@ export function withoutPrintMethod(spec: SpecFromText): SpecFromText;
   - Review Focus 3: line text with "พิมพ์ดิจิตอล": `mo` + `old` → body `digital: false`, `plateOld: true`, summary card without Digital; `outsource` → body `digital: true`.
   - Review Focus 4: split draft, unit 0 = `mo` + `new` created; unit 1 "เหมือนใบก่อน" → choices carry `plate: 'new'`, body `plateNew: true`, `plateSize: ['ตัด 4']`; a source with press `''` copies no `plate` and the body is Print Digital.
   - `x` (cancel) at step `plate` cancels the draft.
-- [ ] **Step 2:** run the file → new cases FAIL; existing cases that walk an offset / แป๋ press past `press` fail until they tap the plate step — update each to tap it (no assertion weakened).
-- [ ] **Step 3:** implement. **Step 4:** the file PASSES.
-- [ ] **Step 5:** `npm test`, `npm run type-check`, `npm run lint`, `npm run build` → all pass. Commit `feat(peak-order): ask the plate after the press, fill PLATE on the order`.
+- [x] **Step 2:** run the file → new cases FAIL; existing cases that walk an offset / แป๋ press past `press` fail until they tap the plate step — update each to tap it (no assertion weakened).
+- [x] **Step 3:** implement. **Step 4:** the file PASSES.
+- [x] **Step 5:** `npm test`, `npm run type-check`, `npm run lint`, `npm run build` → all pass. Commit `feat(peak-order): ask the plate after the press, fill PLATE on the order`.
 
 ### Task 5: Review, docs, ship
 
-- [ ] Independent review of the whole diff (state machine + mapper) before pushing; fix what it finds test-first.
+- [x] Independent review of the whole diff (state machine + mapper) before pushing; fix what it finds test-first. — 2026-11-28: no functional defect; 1 Medium + 2 Low were test gaps (the step list vs its type, the dashboard-draft / forced-create paths, cut-from-the-end), all closed with a test that kills the mutant the review named. `DraftStep` is now derived from `DRAFT_STEPS`.
 - [ ] Docs: spec status, `dashboard-v2.md` §10, `PATTERNS.md` §12, `CLAUDE.md` source-of-truth row for `lib/peak-order/plate.ts`, `NEXT-SESSION.md`.
 - [ ] Push; post-deploy smoke run for that commit is green.
 - [ ] Left for the owner's team: first real `/order` with an offset press — the new card appears, the order's PLATE section is filled.

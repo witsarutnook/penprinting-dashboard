@@ -427,4 +427,16 @@ describe('withoutPrintMethod — the spec for an order whose PLATE fields were c
   it('the empty spec stays the empty spec', () => {
     expect(withoutPrintMethod(EMPTY_SPEC)).toBe(EMPTY_SPEC);
   });
+
+  it('only the LAST part is the print method: the same words earlier in the summary stay', () => {
+    // a paper name that itself holds the separator and the word (found by the independent review)
+    const spec = specFromText('ใบปลิว\nกระดาษอาร์ต · Digital 150 แกรม\nพิมพ์ดิจิตอล');
+    expect(spec.fields.digital).toBe(true);
+    expect(spec.summary.split(' · Digital').length).toBeGreaterThan(2); // the words appear twice
+    const out = withoutPrintMethod(spec);
+    expect(out.summary).toBe(spec.summary.slice(0, -' · Digital'.length));
+    expect(out.summary).toContain('Digital 150 แกรม');
+    const made = { fields: { paperInner: 'อาร์ต · Digital 150 แกรม', digital: true }, summary: 'อาร์ต · Digital 150 แกรม · Digital' };
+    expect(withoutPrintMethod(made).summary).toBe('อาร์ต · Digital 150 แกรม');
+  });
 });

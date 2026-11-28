@@ -209,6 +209,13 @@ describe('buildOrderBody', () => {
       expect(plateOf(withChoices('sm74', undefined, { digital: true }))).toEqual({ ...EMPTY, digital: true });
       expect(withChoices('sm74')).toEqual(buildOrderBody({ ...base, choices: { graphic: 'pook', press: 'sm74', dateDue: '2026-11-20' } }));
     });
+    it('a dashboard draft and a forced create get the same PLATE fields', () => {
+      const choices = { graphic: 'pook', press: 'mo', plate: 'old', dateDue: '2026-11-20' };
+      const want = { ...EMPTY, plateOld: true, plateSize: ['ตัด 4'] };
+      expect(plateOf(buildOrderBody({ ...base, choices, asDraft: true }))).toEqual(want);
+      expect(plateOf(buildOrderBody({ ...base, choices, force: true }))).toEqual(want);
+      expect(plateOf(buildOrderBody({ ...base, choices, asDraft: true, force: true }))).toEqual(want);
+    });
     it('the answer itself is not a form field: the body has no "plate" key', () => {
       expect('plate' in withChoices('mo', 'new')).toBe(false);
     });

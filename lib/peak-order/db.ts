@@ -26,18 +26,26 @@ import type { UnitChoices, UnitPlan } from '@/lib/peak-order/mapper';
  * BIGINT order ids come back as strings and are mapped to numbers.
  */
 
-export type DraftStep =
-  | 'mode'
-  | 'unit'
-  | 'graphic'
-  | 'press'
-  | 'plate' // only after a press that has a plate question (lib/peak-order/plate.ts)
-  | 'date'
-  | 'confirm'
-  | 'dup'
-  | 'creating'
-  | 'done'
-  | 'cancelled';
+/**
+ * Every step a draft can be at. The TYPE is derived from this list, and the row mapping reads a
+ * stored step through it (anything else reads as 'cancelled') — so a step the handler can write
+ * is always one the mapping can read back.
+ */
+export const DRAFT_STEPS = [
+  'mode',
+  'unit',
+  'graphic',
+  'press',
+  'plate', // only after a press that has a plate question (lib/peak-order/plate.ts)
+  'date',
+  'confirm',
+  'dup',
+  'creating',
+  'done',
+  'cancelled',
+] as const;
+
+export type DraftStep = (typeof DRAFT_STEPS)[number];
 
 export interface DraftUnit extends UnitPlan {
   choices: Partial<UnitChoices>;
@@ -116,20 +124,6 @@ export interface PeakOrderDb {
 }
 
 // ─── row mapping ───────────────────────────────────────────────────
-
-const DRAFT_STEPS: readonly DraftStep[] = [
-  'mode',
-  'unit',
-  'graphic',
-  'press',
-  'plate',
-  'date',
-  'confirm',
-  'dup',
-  'creating',
-  'done',
-  'cancelled',
-];
 
 function toIso(v: unknown): string {
   if (v === null || v === undefined) return '';

@@ -1806,6 +1806,36 @@ describe('handlePeakOrderPostback — plate', () => {
     });
   });
 
+  it('saved as a dashboard draft (📝): the same PLATE fields', async () => {
+    const f = setup();
+    await toPress(f);
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'old' });
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+    await tap(f, { a: 'ok', draft: 'd1', u: 0, v: 'draft' });
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0].status).toBe('draft');
+    expect(plateOf(f.created[0])).toEqual({ ...EMPTY, plateOld: true, plateSize: ['ตัด 4'] });
+  });
+
+  it('created after the duplicate warning ("สร้างต่อ"): the same PLATE fields', async () => {
+    const f = setup();
+    const inner = f.deps.createOrder;
+    f.deps.createOrder = async (body, actor) =>
+      body.force ? inner(body, actor) : { ok: false, kind: 'duplicate', status: 409, duplicates: [], message: 'dup' };
+    await toPress(f);
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'hamada' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+    await tap(f, okCreate());
+    expect(draft(f).step).toBe('dup');
+    expect(draft(f).units[0].choices.plate).toBe('new'); // the answer survives the warning
+    await tap(f, { a: 'dup', draft: 'd1', u: 0, v: 'force' });
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0].force).toBe(true);
+    expect(plateOf(f.created[0])).toEqual({ ...EMPTY, plateNew: true, plateSize: ['ตัด 5'] });
+  });
+
   it('ยกเลิก on the plate card cancels the draft', async () => {
     const f = setup();
     await toPress(f);

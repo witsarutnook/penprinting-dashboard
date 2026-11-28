@@ -129,6 +129,27 @@ describe('draft row mapping', () => {
     respond([]);
     expect(await db.loadDraft('nope')).toBeNull();
   });
+
+  // The list is typed out here on purpose: a step the handler writes but the row mapping does not
+  // know reads back as 'cancelled' — the card is sent and every tap on it, ยกเลิก included, is ignored.
+  it.each(['mode', 'unit', 'graphic', 'press', 'plate', 'date', 'confirm', 'dup', 'creating', 'done', 'cancelled'])(
+    'a draft stored at step %s is read back at that step',
+    async (step) => {
+      respond([dbDraft({ step })]);
+      expect((await db.loadDraft('abcdefghijkl'))?.step).toBe(step);
+    },
+  );
+
+  it('advanceDraft hands back the step it wrote — the plate step included', async () => {
+    respond([dbDraft({ step: 'plate' })]);
+    const n = await db.advanceDraft('abcdefghijkl', { unitIdx: 1, step: 'press' }, { unitIdx: 1, step: 'plate' });
+    expect(n?.step).toBe('plate');
+  });
+
+  it.each(['', 'PLATE', 'plates', 'nonsense', null, 7])('a step this code does not know (%j) reads as cancelled', async (step) => {
+    respond([dbDraft({ step })]);
+    expect((await db.loadDraft('abcdefghijkl'))?.step).toBe('cancelled');
+  });
 });
 
 describe('createDraft', () => {
