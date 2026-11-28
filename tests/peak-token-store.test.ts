@@ -283,10 +283,15 @@ describe('getPeakAccessToken', () => {
     // refresh token this refresh started from (compare-and-swap).
     it('every attempt is a compare-and-swap on the refresh token read with the lease', async () => {
       const r = expired();
+      // The lease hands back its own value — NOT the one the first read saw (another refresh may
+      // have completed in between). Encrypting again gives a different ciphertext of the same
+      // token, so a guard taken from the first read would be told apart here (second review).
+      const leased = encryptSecret(OLD_RT);
+      expect(leased).not.toBe(r.refresh_token_enc);
       let saves = 0;
       handler = (q) => {
         if (isSelect(q)) return { rows: [r] };
-        if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: r.refresh_token_enc }] };
+        if (isLock(q)) return { rows: [{ client_id: r.client_id, refresh_token_enc: leased }] };
         if (isSaveTokens(q)) return ++saves <= 2 ? Promise.reject(new Error('db down')) : { rows: [{ id: 'peak' }] };
         return { rows: [{ id: 'peak' }] };
       };
@@ -295,8 +300,8 @@ describe('getPeakAccessToken', () => {
       expect(attempts).toHaveLength(3);
       for (const q of attempts) {
         expect(q.text.replace(/\s+/g, ' ')).toContain("WHERE id = 'peak' AND (?::text IS NULL OR refresh_token_enc = ?) RETURNING id");
-        // the guard = the ciphertext the lease handed back, not a re-encryption
-        expect(q.values.slice(-2)).toEqual([r.refresh_token_enc, r.refresh_token_enc]);
+        // the guard = the ciphertext the lease handed back — not the first read's, not a re-encryption
+        expect(q.values.slice(-2)).toEqual([leased, leased]);
         // access first, refresh second — and the same scope every time
         expect(decryptSecret(String(q.values[0]))).toBe(NEW_AT);
         expect(decryptSecret(String(q.values[1]))).toBe(NEW_RT);
