@@ -318,6 +318,10 @@ function part(label: string, paper: string | undefined, colour: string | undefin
   return `${label}${body}${colour && note ? ` (${note})` : ''}`;
 }
 
+const SEP = ' · ';
+/** The print method's part of the summary — always the last part (see summarise). */
+const DIGITAL_PART = 'Digital';
+
 function summarise(f: SpecFields, sectioned: boolean): string {
   const labelled = sectioned || !!f.paperCover || !!f.coverColor;
   const parts = [
@@ -332,9 +336,25 @@ function summarise(f: SpecFields, sectioned: boolean): string {
     f.saddle ? 'มุงหลังคา' : '',
     f.spine ? 'กระดูกงู' : '',
     f.perf ? 'ปรุ' : '',
-    f.digital ? 'Digital' : '',
+    f.digital ? DIGITAL_PART : '', // keep LAST: withoutPrintMethod cuts it off the end
   ];
-  return parts.filter((p) => p !== '').join(' · ');
+  return parts.filter((p) => p !== '').join(SEP);
+}
+
+/**
+ * The same spec without the print method (`digital` and its part of the summary) — for an order
+ * whose PLATE fields were chosen in LINE (lib/peak-order/plate.ts): there the choice is the print
+ * method, and the card must not show one the order will not have. No print method read = the
+ * spec itself. The input is never changed.
+ */
+export function withoutPrintMethod(spec: SpecFromText): SpecFromText {
+  if (!spec?.fields?.digital) return spec;
+  const fields: SpecFields = { ...spec.fields };
+  delete fields.digital;
+  const s = String(spec.summary ?? '');
+  const tail = SEP + DIGITAL_PART;
+  const summary = s === DIGITAL_PART ? '' : s.endsWith(tail) ? s.slice(0, -tail.length) : s;
+  return { fields, summary };
 }
 
 // ─── read ───────────────────────────────────────────────────────────

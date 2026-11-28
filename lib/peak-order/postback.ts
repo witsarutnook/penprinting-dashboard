@@ -9,12 +9,15 @@
  * percent-encoding every character: `%` -> `%25`, `|` -> `%7C`. The decoder is
  * strict (any other `%` sequence is malformed) because the encoder never
  * emits one. Integers (`orderer`, `u`, unit `v`) are canonical decimal only
- * (`0`, `12`; `orderer` may also be `-1`), at most 3 digits.
+ * (`0`, `12`; `orderer` may also be `-1`), at most 3 digits. A `plate` value is
+ * one of PLATE_ANSWERS (lib/peak-order/plate.ts — pure, like this module).
  *
  * LINE limit: postback `data` <= 300 characters. `decodePostback` receives
  * attacker-controllable text (anyone in the group can forge a postback) and
  * returns null for anything malformed — it never throws.
  */
+import { PLATE_ANSWERS, type PlateAnswer } from '@/lib/peak-order/plate';
+
 export const PEAK_ORDER_POSTBACK_PREFIX = 'po1|';
 export const POSTBACK_DATA_MAX = 300;
 
@@ -26,6 +29,7 @@ export type OrderPostback =
   | { a: 'unit'; draft: string; u: number; v: number | 'skip' }
   | { a: 'gfx'; draft: string; u: number; v: string }
   | { a: 'press'; draft: string; u: number; v: string }
+  | { a: 'plate'; draft: string; u: number; v: PlateAnswer }
   | { a: 'date'; draft: string; u: number; v: string }
   | { a: 'ok'; draft: string; u: number; v: 'create' | 'draft' }
   | { a: 'dup'; draft: string; u: number; v: 'force' }
@@ -116,6 +120,7 @@ export function decodePostback(data: string): OrderPostback | null {
       case 'unit':
       case 'gfx':
       case 'press':
+      case 'plate':
       case 'date':
       case 'ok':
       case 'dup': {
@@ -131,6 +136,10 @@ export function decodePostback(data: string): OrderPostback | null {
         if (a === 'ok') return f3 === 'create' || f3 === 'draft' ? { a, draft, u, v: f3 } : null;
         if (a === 'dup') return f3 === 'force' ? { a, draft, u, v: 'force' } : null;
         if (a === 'date') return DATE_VALUES.includes(f3) ? { a, draft, u, v: f3 } : null;
+        if (a === 'plate') {
+          const v = PLATE_ANSWERS.find((x) => x === f3);
+          return v === undefined ? null : { a, draft, u, v };
+        }
         const v = nonEmpty(f3);
         return v === null ? null : { a, draft, u, v };
       }

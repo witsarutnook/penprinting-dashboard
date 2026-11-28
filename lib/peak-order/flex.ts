@@ -2,7 +2,7 @@
  * Flex cards (+ plain-text fallbacks) for every step of the LINE /order flow.
  * PURE module: no 'server-only'; server-only modules are imported with
  * `import type` only (erased at compile time). Runtime imports: postback,
- * mapper, order-constants, @/lib/board, @/lib/jobs — none is server-only.
+ * mapper, plate, spec-from-text, order-constants, @/lib/board, @/lib/jobs — none is server-only.
  *
  * Everything that comes from Peak (codes, customer names, descriptions,
  * status) is untrusted text: it only ever appears as a Flex `text` component
@@ -16,7 +16,8 @@ import type { DraftRow, DraftUnit } from '@/lib/peak-order/db';
 import type { QuotationChoice } from '@/lib/peak-order/resolve';
 import { encodePostback, type OrderPostback } from '@/lib/peak-order/postback';
 import { NO_NAME, addDaysISO, bangkokISODate, firstLine } from '@/lib/peak-order/mapper';
-import { specForUnit } from '@/lib/peak-order/spec-from-text';
+import { specForUnit, withoutPrintMethod } from '@/lib/peak-order/spec-from-text';
+import { PLATE_LABEL, plateFields, plateQuestion, plateSummary } from '@/lib/peak-order/plate';
 import { ORDERERS, QTY_UNITS } from '@/lib/order-constants';
 import { STAFF } from '@/lib/board';
 import { displayDate } from '@/lib/jobs';
@@ -384,6 +385,30 @@ export function pressCard(d: DraftRow): Card {
   return build('ส่งต่อพิมพ์', p, footer, TAIL);
 }
 
+/**
+ * Asked after a press that has a plate question (plate.ts): new / old plate for an offset press
+ * — whose plate size is shown, not asked — or the kind of print for แป๋. The buttons are exactly
+ * the options of the rules table; a press with nothing to ask gets a card with cancel alone
+ * (the flow never shows it).
+ */
+export function plateCard(d: DraftRow): Card {
+  const p = newParts();
+  draftHeader(d, p, false);
+  const pressId = curUnit(d).choices?.press ?? '';
+  const q = plateQuestion(pressId);
+  const press = pressId ? STAFF.print.find((s) => s.id === pressId)?.name ?? pressId : 'ยังไม่ระบุ';
+  add(p, `ส่งต่อพิมพ์: ${txt(press, 60)}${q?.size ? ` · ${q.size}` : ''}`);
+  const options = q?.options ?? [];
+  if (q) add(p, q.size ? 'เพลท:' : 'ประเภทงานพิมพ์:', { margin: 'md', weight: 'bold', color: C.title });
+  p.t.push(`ตัวเลือก: ${[...options.map((v) => PLATE_LABEL[v]), 'ยกเลิก'].join(' / ')}`);
+  const u = d.unitIdx;
+  const btns = compact(options.map((v) => pbButton(PLATE_LABEL[v], { a: 'plate', draft: d.id, u, v }, 'primary')));
+  const footer: Obj[] = [...grid(btns, 2)]; // two per row, like the press card: 'Print Digital' fits half a row
+  const cancel = cancelBtn(d);
+  if (cancel) footer.push(cancel);
+  return build('เพลท / การพิมพ์', p, footer, TAIL);
+}
+
 const DATE_BUTTONS: Array<{ label: string; v: string; days: number }> = [
   { label: 'พรุ่งนี้', v: '+1', days: 1 },
   { label: '+2 วัน', v: '+2', days: 2 },
@@ -432,11 +457,16 @@ export function summaryCard(d: DraftRow): Card {
   const gfx = c.graphic ? STAFF.graphic.find((s) => s.id === c.graphic)?.name ?? c.graphic : 'ไม่ผ่านกราฟฟิก';
   const press = c.press ? STAFF.print.find((s) => s.id === c.press)?.name ?? c.press : 'ยังไม่ระบุ';
   add(p, `กราฟฟิก ${txt(gfx, 60)}`);
-  add(p, `ส่งต่อพิมพ์ ${txt(press, 60)}`);
+  // The PLATE fields the order gets from the press + the plate answer ('' = LINE decides none).
+  const plate = plateSummary(c.press ?? '', c.plate);
+  add(p, `ส่งต่อพิมพ์ ${txt(press, 60)}${plate ? ` · ${plate}` : ''}`);
   add(p, `ส่ง ${displayDate(c.dateDue)}`);
   add(p, `ผู้สั่งงาน ${txt(d.orderer, 40)}`);
-  // What the keyword rules read from this line — the same result the order is created with.
-  const spec = clip(specForUnit(q, u.lineKeys).summary, SPEC_MAX);
+  // What the keyword rules read from this line — the same result the order is created with:
+  // where LINE decided the PLATE fields, the print method read from the text is not used
+  // (buildOrderBody), so it is not shown either.
+  const read = specForUnit(q, u.lineKeys);
+  const spec = clip((plateFields(c.press ?? '', c.plate) ? withoutPrintMethod(read) : read).summary, SPEC_MAX);
   if (spec) add(p, `สเปกที่อ่านได้: ${spec}`);
   add(p, txt(q?.code, 40), { size: 'xs', color: C.muted });
   p.t.push('ตัวเลือก: สร้างงาน / บันทึกเป็นใบร่างในแดชบอร์ด / ยกเลิก');

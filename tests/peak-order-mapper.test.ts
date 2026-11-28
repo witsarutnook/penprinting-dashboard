@@ -172,6 +172,51 @@ describe('buildOrderBody', () => {
     expect(buildOrderBody({ ...base, spec: {} })).toEqual(buildOrderBody(base));
     expect(buildOrderBody({ ...base, spec: undefined })).toEqual(buildOrderBody(base));
   });
+
+  describe('PLATE fields from the press and its answer (spec 2026-11-28)', () => {
+    const PLATE_KEYS = ['plateOld', 'plateNew', 'copyprint', 'inkjet', 'digital', 'plateSize'] as const;
+    const plateOf = (b: Record<string, unknown>) => Object.fromEntries(PLATE_KEYS.map((k) => [k, b[k]]));
+    const EMPTY = plateOf(emptyOrderForm() as unknown as Record<string, unknown>);
+    const withChoices = (press: string, plate?: string, spec?: SpecFields) =>
+      buildOrderBody({ ...base, choices: { graphic: 'pook', press, dateDue: '2026-11-20', ...(plate === undefined ? {} : { plate }) }, spec });
+
+    it('an offset press + new: its size and Plate ใหม่', () => {
+      expect(plateOf(withChoices('mo', 'new'))).toEqual({ ...EMPTY, plateNew: true, plateSize: ['ตัด 4'] });
+      expect(plateOf(withChoices('sm74', 'old'))).toEqual({ ...EMPTY, plateOld: true, plateSize: ['ตัด 3'] });
+      expect(plateOf(withChoices('hamada', 'old'))).toEqual({ ...EMPTY, plateOld: true, plateSize: ['ตัด 5'] });
+    });
+    it('แป๋ + Inkjet ticks Inkjet alone', () => {
+      expect(plateOf(withChoices('inkjet', 'inkjet'))).toEqual({ ...EMPTY, inkjet: true });
+      expect(plateOf(withChoices('inkjet', 'copyprint'))).toEqual({ ...EMPTY, copyprint: true });
+    });
+    it('no press = Print Digital', () => {
+      expect(plateOf(withChoices(''))).toEqual({ ...EMPTY, digital: true });
+    });
+    it('what was chosen in LINE wins over what the text said: offset + a line reading "digital" → not digital', () => {
+      const b = withChoices('mo', 'new', { digital: true, size: 'A4', coatMatte: true });
+      expect(plateOf(b)).toEqual({ ...EMPTY, plateNew: true, plateSize: ['ตัด 4'] });
+      expect(b).toMatchObject({ size: 'A4', coatMatte: true }); // the rest of the spec stays
+      expect(plateOf(withChoices('inkjet', 'copyprint', { digital: true }))).toEqual({ ...EMPTY, copyprint: true });
+    });
+    it('Outsource: LINE writes no PLATE field — a "digital" read from the text stays as before', () => {
+      expect(plateOf(withChoices('outsource'))).toEqual(EMPTY);
+      expect(plateOf(withChoices('outsource', 'new'))).toEqual(EMPTY);
+      expect(plateOf(withChoices('outsource', undefined, { digital: true }))).toEqual({ ...EMPTY, digital: true });
+    });
+    it('a press with a question and no (valid) answer — a draft from before the plate step — leaves PLATE as before', () => {
+      expect(plateOf(withChoices('sm74'))).toEqual(EMPTY);
+      expect(plateOf(withChoices('sm74', 'copyprint'))).toEqual(EMPTY);
+      expect(plateOf(withChoices('sm74', undefined, { digital: true }))).toEqual({ ...EMPTY, digital: true });
+      expect(withChoices('sm74')).toEqual(buildOrderBody({ ...base, choices: { graphic: 'pook', press: 'sm74', dateDue: '2026-11-20' } }));
+    });
+    it('the answer itself is not a form field: the body has no "plate" key', () => {
+      expect('plate' in withChoices('mo', 'new')).toBe(false);
+    });
+    it('a hostile spec cannot set the plate fields LINE decided', () => {
+      const hostile = { plateOld: true, plateSize: ['ตัด 5'], copyprint: true, inkjet: true } as unknown as SpecFields;
+      expect(plateOf(withChoices('mo', 'new', hostile))).toEqual({ ...EMPTY, plateNew: true, plateSize: ['ตัด 4'] });
+    });
+  });
 });
 
 // Spec §13.7: the notes keep every line of the text except the line that is the order's name.

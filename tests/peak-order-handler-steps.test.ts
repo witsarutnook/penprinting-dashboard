@@ -13,6 +13,7 @@ import {
   dateCard,
   dupCard,
   graphicCard,
+  plateCard,
   pressCard,
   statusCard,
   summaryCard,
@@ -92,11 +93,12 @@ async function start(f: F, code: string, user = 'U-gift') {
   await handlePeakOrderText(textMsg(`/order ${code}`, { user }), f.deps);
 }
 
-/** Single-line draft walked to the summary: ชิ้น / ปุ๊ก / Inkjet / +3. */
+/** Single-line draft walked to the summary: ชิ้น / ปุ๊ก / แป๋ → Copyprint / +3. */
 async function toConfirm(f: F, id = 'd1', o: TapOpts = {}) {
   await tap(f, { a: 'unit', draft: id, u: 0, v: 6 }, o);
   await tap(f, { a: 'gfx', draft: id, u: 0, v: 'pook' }, o);
   await tap(f, { a: 'press', draft: id, u: 0, v: 'inkjet' }, o);
+  await tap(f, { a: 'plate', draft: id, u: 0, v: 'copyprint' }, o);
   await tap(f, { a: 'date', draft: id, u: 0, v: '+3' }, o);
 }
 
@@ -130,12 +132,16 @@ describe('handlePeakOrderPostback — single line, create', () => {
     expect(last(f)).toEqual(pressCard(draft(f)));
 
     await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'inkjet' });
+    expect(draft(f).step).toBe('plate');
+    expect(last(f)).toEqual(plateCard(draft(f)));
+
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'copyprint' });
     expect(draft(f).step).toBe('date');
     expect(last(f)).toEqual(dateCard(draft(f), TODAY));
 
     await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+3' });
     expect(draft(f).step).toBe('confirm');
-    expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press: 'inkjet', dateDue: '2026-11-17' });
+    expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press: 'inkjet', plate: 'copyprint', dateDue: '2026-11-17' });
     expect(last(f)).toEqual(summaryCard(draft(f)));
     expect(f.created).toEqual([]);
     expect(f.db.links).toEqual([]);
@@ -146,7 +152,7 @@ describe('handlePeakOrderPostback — single line, create', () => {
     expect(f.created[0]).toEqual(
       buildOrderBody({
         unit,
-        choices: { qtyUnit: 'ชิ้น', graphic: 'pook', press: 'inkjet', dateDue: '2026-11-17' },
+        choices: { qtyUnit: 'ชิ้น', graphic: 'pook', press: 'inkjet', plate: 'copyprint', dateDue: '2026-11-17' },
         customerName: CUSTOMER,
         orderer: 'กิ๊ฟ',
         qoCode: Q1.code,
@@ -158,7 +164,7 @@ describe('handlePeakOrderPostback — single line, create', () => {
       }),
     );
     expect(f.created[0].name).toBe('ไวนิลขนาด 1x2 เมตร');
-    expect(f.created[0]).toMatchObject({ assignStaff: 'pook', forwardPrint: 'inkjet', qtyUnit: 'ชิ้น', dateDue: '2026-11-17', orderer: 'กิ๊ฟ' });
+    expect(f.created[0]).toMatchObject({ assignStaff: 'pook', forwardPrint: 'inkjet', copyprint: true, qtyUnit: 'ชิ้น', dateDue: '2026-11-17', orderer: 'กิ๊ฟ' });
     expect(f.created[0].status).toBeUndefined();
     expect(f.created[0].force).toBeUndefined();
     expect(f.actors).toEqual([{ role: 'sales', user: 'กิ๊ฟ (LINE)' }]);
@@ -221,7 +227,7 @@ describe('handlePeakOrderPostback — graphic / press rules', () => {
     expect(draft(f).step).toBe('press');
 
     await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' });
-    expect(draft(f)).toMatchObject({ step: 'date' });
+    expect(draft(f)).toMatchObject({ step: 'plate' }); // an offset press asks its plate next
     expect(draft(f).units[0].choices).toMatchObject({ graphic: '', press: 'sm74' });
   });
 
@@ -268,6 +274,7 @@ describe('handlePeakOrderPostback — due date (Review Focus 4)', () => {
     await tap(f, { a: 'unit', draft: 'd1', u: 0, v: 0 });
     await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'pook' });
     await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
     expect(draft(f).step).toBe('date');
   }
 
@@ -355,6 +362,7 @@ describe('handlePeakOrderPostback — merged', () => {
 
     await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'pook' });
     await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
     await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
     await tap(f, okCreate());
     expect(f.created).toHaveLength(1);
@@ -407,6 +415,7 @@ describe('handlePeakOrderPostback — split', () => {
     expect(last(f)).toEqual(graphicCard(draft(f), false));
     await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'perl' });
     await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
     await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+2' });
     await tap(f, okCreate('d1', 0));
     d = draft(f);
@@ -426,7 +435,7 @@ describe('handlePeakOrderPostback — split', () => {
     await tap(f, { a: 'gfx', draft: 'd1', u: 2, v: 'same' });
     d = draft(f);
     expect(d).toMatchObject({ step: 'confirm', unitIdx: 2 });
-    expect(d.units[2].choices).toEqual({ qtyUnit: 'ชุด', graphic: 'perl', press: 'mo', dateDue: '2026-11-16' });
+    expect(d.units[2].choices).toEqual({ qtyUnit: 'ชุด', graphic: 'perl', press: 'mo', plate: 'new', dateDue: '2026-11-16' });
     expect(last(f)).toEqual(summaryCard(d));
 
     await tap(f, { a: 'ok', draft: 'd1', u: 2, v: 'draft' });
@@ -486,6 +495,7 @@ describe('handlePeakOrderPostback — split', () => {
 
     await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'aed' });
     await tap(f, { a: 'press', draft: 'd1', u: 1, v: 'hamada' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 1, v: 'old' });
     await tap(f, { a: 'date', draft: 'd1', u: 1, v: 'pick' }, { date: TODAY });
     await tap(f, okCreate('d1', 1));
     expect(draft(f).unitIdx).toBe(2);
@@ -496,7 +506,7 @@ describe('handlePeakOrderPostback — split', () => {
     await tap(f, { a: 'gfx', draft: 'd1', u: 2, v: 'same' });
     const d = draft(f);
     expect(d.step).toBe('date');
-    expect(d.units[2].choices).toEqual({ qtyUnit: 'เล่ม', graphic: 'aed', press: 'hamada' });
+    expect(d.units[2].choices).toEqual({ qtyUnit: 'เล่ม', graphic: 'aed', press: 'hamada', plate: 'old' });
     expect(last(f)).toEqual(dateCard(d, '2026-11-15'));
   });
 
@@ -1052,6 +1062,7 @@ describe('handlePeakOrderPostback — crash recovery', () => {
       await tap(f, { a: 'unit', draft: 'd1', u: 1, v: 0 });
       await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'aed' });
       await tap(f, { a: 'press', draft: 'd1', u: 1, v: 'hamada' });
+      await tap(f, { a: 'plate', draft: 'd1', u: 1, v: 'new' });
       await tap(f, { a: 'date', draft: 'd1', u: 1, v: '+2' });
       expect(draft(f)).toMatchObject({ step: 'confirm', unitIdx: 1 });
       const unit1Keys = draft(f).units[1].lineKeys;
@@ -1576,6 +1587,7 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
     await tap(f, { a: 'mode', draft: 'd1', v: 'merged' });
     await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'pook' });
     await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
     await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
     await tap(f, okCreate());
     expect(f.created).toHaveLength(1);
@@ -1594,5 +1606,396 @@ describe('handlePeakOrderPostback — spec fields from the line text', () => {
     expect(f.created[0]).toMatchObject({ size: '', paperInner: '', innerColor: '', name: 'นามบัตรขนาด 9x5.5 ซม.' });
     // the line is gone, so the notes are the planned ones: the full text, name line included
     expect(f.created[0].notes).toBe(`${CARD}\n\nอ้างอิง Peak: ${QS.code}`);
+  });
+});
+
+// ─── plate (spec 2026-11-28) ───────────────────────────────────────
+
+describe('handlePeakOrderPostback — plate', () => {
+  const PLATE_KEYS = ['plateOld', 'plateNew', 'copyprint', 'inkjet', 'digital', 'plateSize'] as const;
+  const plateOf = (b: CreateOrderBody) => Object.fromEntries(PLATE_KEYS.map((k) => [k, b[k]]));
+  const EMPTY = { plateOld: false, plateNew: false, copyprint: false, inkjet: false, digital: false, plateSize: [] as string[] };
+  const DIGITAL_LINE = 'เมนูอาหาร ขนาด A3\nพิมพ์ดิจิตอล 4 สี 2 หน้า\nเคลือบด้าน';
+  const QD = quot('QO-202611000020', [{ key: 'L1', description: DIGITAL_LINE, quantity: 50 }]);
+  const specRow = (c: Card) => c.text.split('\n').find((r) => r.startsWith('สเปกที่อ่านได้')) ?? '';
+
+  /** Single-line draft walked to the press card: ชิ้น / ปุ๊ก. */
+  async function toPress(f: F, code = Q1.code) {
+    await start(f, code);
+    await tap(f, { a: 'unit', draft: 'd1', u: 0, v: 6 });
+    await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'pook' });
+    expect(draft(f).step).toBe('press');
+  }
+
+  it('an offset press → the plate card; new → the date card; the order gets the size of the press and Plate ใหม่', async () => {
+    const f = setup();
+    await toPress(f);
+
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+    expect(draft(f)).toMatchObject({ step: 'plate', unitIdx: 0 });
+    expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press: 'mo' });
+    expect(last(f)).toEqual(plateCard(draft(f)));
+
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
+    expect(draft(f).step).toBe('date');
+    expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press: 'mo', plate: 'new' });
+    expect(last(f)).toEqual(dateCard(draft(f), TODAY));
+
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+3' });
+    expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press: 'mo', plate: 'new', dateDue: '2026-11-17' });
+    expect(last(f)).toEqual(summaryCard(draft(f)));
+    expect((last(f) as Card).text).toContain('ส่งต่อพิมพ์ MO (วล) · ตัด 4 · เพลทใหม่');
+    expect(f.created).toEqual([]);
+
+    await tap(f, okCreate());
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0]).toMatchObject({ assignStaff: 'pook', forwardPrint: 'mo', dateDue: '2026-11-17' });
+    expect(plateOf(f.created[0])).toEqual({ ...EMPTY, plateNew: true, plateSize: ['ตัด 4'] });
+    expect('plate' in f.created[0]).toBe(false); // the answer is not a form field
+    expect(draft(f).step).toBe('done');
+  });
+
+  it.each([
+    ['sm74', 'new', { plateNew: true, plateSize: ['ตัด 3'] }],
+    ['sm74', 'old', { plateOld: true, plateSize: ['ตัด 3'] }],
+    ['mo5', 'old', { plateOld: true, plateSize: ['ตัด 4'] }],
+    ['mo', 'old', { plateOld: true, plateSize: ['ตัด 4'] }],
+    ['hamada', 'new', { plateNew: true, plateSize: ['ตัด 5'] }],
+    ['inkjet', 'copyprint', { copyprint: true }],
+    ['inkjet', 'inkjet', { inkjet: true }], // Inkjet alone (owner, 2026-11-28)
+    ['inkjet', 'digital', { digital: true }],
+  ] as const)('%s + %s → the PLATE fields of the order', async (press, plate, want) => {
+    const f = setup();
+    await toPress(f);
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: press });
+    expect(draft(f).step).toBe('plate');
+    expect(last(f)).toEqual(plateCard(draft(f)));
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: plate });
+    expect(draft(f).step).toBe('date');
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+    await tap(f, okCreate());
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0].forwardPrint).toBe(press);
+    expect(plateOf(f.created[0])).toEqual({ ...EMPTY, ...want });
+  });
+
+  it.each([
+    ['none', '', { digital: true }, 'ส่งต่อพิมพ์ ยังไม่ระบุ · Print Digital'],
+    ['outsource', 'outsource', {}, 'ส่งต่อพิมพ์ Outsource'],
+  ] as const)('press %s has nothing to ask: straight to the date card, no extra tap', async (v, press, want, row) => {
+    const f = setup();
+    await toPress(f);
+    const replies = f.replies.length;
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v });
+    expect(f.replies).toHaveLength(replies + 1);
+    expect(draft(f).step).toBe('date');
+    expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press });
+    expect(last(f)).toEqual(dateCard(draft(f), TODAY));
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+    expect((last(f) as Card).text.split('\n')).toContain(row);
+    await tap(f, okCreate());
+    expect(f.created).toHaveLength(1);
+    expect(plateOf(f.created[0])).toEqual({ ...EMPTY, ...want });
+  });
+
+  describe('refused taps (Review Focus 1)', () => {
+    it.each([
+      ['sm74', 'copyprint'],
+      ['sm74', 'inkjet'],
+      ['sm74', 'digital'],
+      ['hamada', 'digital'],
+      ['inkjet', 'new'],
+      ['inkjet', 'old'],
+    ] as const)('after %s, the answer %s is not one of its options → nothing happens', async (press, plate) => {
+      const f = setup();
+      await toPress(f);
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: press });
+      const before = state(f);
+      await tap(f, { a: 'plate', draft: 'd1', u: 0, v: plate });
+      expect(state(f)).toBe(before);
+      expect(draft(f).step).toBe('plate');
+      expect(draft(f).units[0].choices.plate).toBeUndefined();
+    });
+
+    it('a plate tap for another unit, a raw forged value, or a tap on the press card again → nothing happens', async () => {
+      const f = setup();
+      await toPress(f);
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+      const before = state(f);
+      await tap(f, { a: 'plate', draft: 'd1', u: 1, v: 'new' }); // wrong unit
+      await tap(f, 'po1|plate|d1|0|both'); // not an answer
+      await tap(f, 'po1|plate|d1|0|ตัด 4');
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' }); // the press card, a second time
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'none' });
+      await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' }); // a later step
+      await tap(f, okCreate());
+      expect(state(f)).toBe(before);
+      expect(draft(f)).toMatchObject({ step: 'plate' });
+      expect(draft(f).units[0].choices).toEqual({ qtyUnit: 'ชิ้น', graphic: 'pook', press: 'mo' });
+    });
+
+    it('a plate tap while the draft is at another step → nothing happens', async () => {
+      const f = setup();
+      await toPress(f);
+      let before = state(f);
+      await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' }); // still choosing the press
+      expect(state(f)).toBe(before);
+
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'outsource' }); // nothing to ask → date
+      before = state(f);
+      for (const v of ['new', 'old', 'copyprint', 'inkjet', 'digital'] as const) await tap(f, { a: 'plate', draft: 'd1', u: 0, v });
+      expect(state(f)).toBe(before);
+      expect(draft(f).step).toBe('date');
+
+      await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+      before = state(f);
+      await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' }); // at the summary
+      expect(state(f)).toBe(before);
+      await tap(f, okCreate());
+      expect(plateOf(f.created[0])).toEqual(EMPTY);
+    });
+
+    it.each(['outsource', '', 'nobody'])('a draft at the plate step whose press (%j) has no question — never reached by taps — takes no answer', async (press) => {
+      const f = setup();
+      await toPress(f);
+      const d = f.db.drafts.get('d1')!;
+      d.step = 'plate';
+      d.units[0].choices = { qtyUnit: 'ชิ้น', graphic: 'pook', press };
+      const before = state(f);
+      for (const v of ['new', 'old', 'copyprint', 'inkjet', 'digital'] as const) await tap(f, { a: 'plate', draft: 'd1', u: 0, v });
+      expect(state(f)).toBe(before);
+      // the way out is the cancel button of its card
+      await tap(f, { a: 'x', draft: 'd1' });
+      expect(draft(f).step).toBe('cancelled');
+    });
+
+    it('an answer tapped again after it was taken (the old plate card) changes nothing', async () => {
+      const f = setup();
+      await toPress(f);
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+      await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
+      const before = state(f);
+      await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'old' });
+      expect(state(f)).toBe(before);
+      expect(draft(f).units[0].choices.plate).toBe('new');
+    });
+
+    it('two taps on the plate card at once: one transition, one reply, the answer of the one that won', async () => {
+      const f = setup();
+      await toPress(f);
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+      const replies = f.replies.length;
+      await Promise.all([
+        tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' }),
+        tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'old' }),
+      ]);
+      expect(f.replies).toHaveLength(replies + 1);
+      expect(draft(f).step).toBe('date');
+      expect(['new', 'old']).toContain(draft(f).units[0].choices.plate);
+      expect(last(f)).toEqual(dateCard(draft(f), TODAY));
+    });
+
+    it('someone else taps the plate card → told whose draft it is, no transition', async () => {
+      const f = setup();
+      await toPress(f);
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'mo' });
+      await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' }, { user: 'U-nook' });
+      expect(last(f)).toBe(TEXT.notOwner('กิ๊ฟ'));
+      expect(draft(f).step).toBe('plate');
+      expect(draft(f).units[0].choices.plate).toBeUndefined();
+    });
+  });
+
+  it('ยกเลิก on the plate card cancels the draft', async () => {
+    const f = setup();
+    await toPress(f);
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'sm74' });
+    await tap(f, { a: 'x', draft: 'd1' });
+    expect(draft(f).step).toBe('cancelled');
+    expect(last(f)).toBe(TEXT.cancelled);
+    expect(f.created).toEqual([]);
+    const before = state(f);
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'new' });
+    expect(state(f)).toBe(before);
+  });
+
+  describe('a draft from before the plate step (Review Focus 2)', () => {
+    /** As the code before this change left it: an offset press chosen, no plate answer. */
+    function seedOld(f: F, step: 'date' | 'confirm') {
+      const d = f.db.drafts.get('d1')!;
+      d.step = step;
+      d.units[0].choices = { qtyUnit: 'ชิ้น', graphic: 'pook', press: 'sm74', ...(step === 'confirm' ? { dateDue: '2026-11-17' } : {}) };
+    }
+
+    it('already at the summary: created with PLATE blank — nothing is guessed', async () => {
+      const f = setup();
+      await toPress(f);
+      seedOld(f, 'confirm');
+      await tap(f, okCreate());
+      expect(f.created).toHaveLength(1);
+      expect(f.created[0].forwardPrint).toBe('sm74');
+      expect(plateOf(f.created[0])).toEqual(EMPTY);
+    });
+
+    it('at the date step: the date card still works; the summary shows the press alone', async () => {
+      const f = setup();
+      await toPress(f);
+      seedOld(f, 'date');
+      await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+3' });
+      expect(draft(f).step).toBe('confirm');
+      const rows = (last(f) as Card).text.split('\n');
+      expect(rows).toContain('ส่งต่อพิมพ์ SM74 (ต้อม)');
+      await tap(f, okCreate());
+      expect(plateOf(f.created[0])).toEqual(EMPTY);
+    });
+
+    it('its old press card, tapped after the deploy, leads to the plate card', async () => {
+      const f = setup();
+      await toPress(f); // the draft sits at 'press' with the old card on screen
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'hamada' });
+      expect(draft(f).step).toBe('plate');
+      expect(last(f)).toEqual(plateCard(draft(f)));
+    });
+  });
+
+  describe('the line text says digital print (Review Focus 3)', () => {
+    async function walk(f: F, press: string, plate?: 'new' | 'old' | 'copyprint' | 'inkjet' | 'digital') {
+      await toPress(f, QD.code);
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: press });
+      if (plate) await tap(f, { a: 'plate', draft: 'd1', u: 0, v: plate });
+      await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+1' });
+      expect(draft(f).step).toBe('confirm');
+      const card = last(f) as Card;
+      await tap(f, okCreate());
+      expect(f.created).toHaveLength(1);
+      return { card, body: f.created[0] };
+    }
+
+    it('an offset press was chosen: the order is not digital, and the summary card does not say Digital', async () => {
+      const { card, body } = await walk(setup([QD]), 'mo', 'old');
+      expect(plateOf(body)).toEqual({ ...EMPTY, plateOld: true, plateSize: ['ตัด 4'] });
+      expect(body).toMatchObject({ size: 'A3', coatMatte: true }); // the rest of what was read stays
+      expect(specRow(card)).not.toBe('');
+      expect(specRow(card)).not.toContain('Digital');
+      expect(card.text).not.toContain('Digital');
+      expect(JSON.stringify(card.flex)).not.toContain('Digital');
+    });
+
+    it('แป๋ + Copyprint: Copyprint alone', async () => {
+      const { card, body } = await walk(setup([QD]), 'inkjet', 'copyprint');
+      expect(plateOf(body)).toEqual({ ...EMPTY, copyprint: true });
+      expect(specRow(card)).not.toContain('Digital');
+    });
+
+    it('Outsource: LINE decides nothing — the order is digital as the text says, and the card says so', async () => {
+      const { card, body } = await walk(setup([QD]), 'outsource');
+      expect(plateOf(body)).toEqual({ ...EMPTY, digital: true });
+      expect(specRow(card)).toContain('Digital');
+    });
+
+    it.each([
+      ['mo', 'new'],
+      ['sm74', 'old'],
+      ['inkjet', 'inkjet'],
+      ['inkjet', 'digital'],
+      ['none', undefined],
+      ['outsource', undefined],
+    ] as const)('%s / %s: the card never promises a print method the order does not get', async (press, plate) => {
+      const { card, body } = await walk(setup([QD]), press, plate);
+      const rows = card.text.split('\n');
+      const pressRow = rows.find((r) => r.startsWith('ส่งต่อพิมพ์')) ?? '';
+      const saysDigital = specRow(card).includes('Digital') || pressRow.includes('Print Digital');
+      expect(saysDigital).toBe(body.digital === true);
+      for (const [label, key] of [['เพลทใหม่', 'plateNew'], ['เพลทเก่า', 'plateOld'], ['Copyprint', 'copyprint']] as const) {
+        expect(pressRow.endsWith(label), label).toBe(body[key] === true);
+      }
+      expect(pressRow.endsWith('· Inkjet')).toBe(body.inkjet === true);
+    });
+  });
+
+  describe('"เหมือนใบก่อน" (Review Focus 4)', () => {
+    async function firstUnit(f: F, press: string, plate?: 'new' | 'old' | 'copyprint') {
+      await start(f, Q3.code);
+      await tap(f, { a: 'mode', draft: 'd1', v: 'split' });
+      await tap(f, { a: 'unit', draft: 'd1', u: 0, v: 0 });
+      await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'perl' });
+      await tap(f, { a: 'press', draft: 'd1', u: 0, v: press });
+      if (plate) await tap(f, { a: 'plate', draft: 'd1', u: 0, v: plate });
+      await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+2' });
+      await tap(f, okCreate('d1', 0));
+      expect(draft(f)).toMatchObject({ step: 'unit', unitIdx: 1 });
+      await tap(f, { a: 'unit', draft: 'd1', u: 1, v: 1 });
+      await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'same' });
+      expect(draft(f)).toMatchObject({ step: 'confirm', unitIdx: 1 });
+    }
+
+    it('copies the plate answer with the press: no plate card, the same PLATE fields', async () => {
+      const f = setup();
+      await firstUnit(f, 'mo', 'new');
+      expect(draft(f).units[1].choices).toEqual({ qtyUnit: 'ชุด', graphic: 'perl', press: 'mo', plate: 'new', dateDue: '2026-11-16' });
+      expect(last(f)).toEqual(summaryCard(draft(f)));
+      expect((last(f) as Card).text).toContain('ส่งต่อพิมพ์ MO (วล) · ตัด 4 · เพลทใหม่');
+      await tap(f, okCreate('d1', 1));
+      expect(f.created).toHaveLength(2);
+      expect(plateOf(f.created[1])).toEqual(plateOf(f.created[0]));
+      expect(plateOf(f.created[1])).toEqual({ ...EMPTY, plateNew: true, plateSize: ['ตัด 4'] });
+    });
+
+    it('a source with no press copies no answer — and is Print Digital by the same rule', async () => {
+      const f = setup();
+      await firstUnit(f, 'none');
+      expect(draft(f).units[1].choices).toEqual({ qtyUnit: 'ชุด', graphic: 'perl', press: '', dateDue: '2026-11-16' });
+      await tap(f, okCreate('d1', 1));
+      expect(plateOf(f.created[1])).toEqual({ ...EMPTY, digital: true });
+    });
+
+    it('a source sent to Outsource copies no answer; PLATE stays blank', async () => {
+      const f = setup();
+      await firstUnit(f, 'outsource');
+      expect('plate' in draft(f).units[1].choices).toBe(false);
+      await tap(f, okCreate('d1', 1));
+      expect(plateOf(f.created[1])).toEqual(EMPTY);
+    });
+
+    it('a source from before the plate step (offset press, no answer) copies none; PLATE stays blank', async () => {
+      const f = setup();
+      await firstUnit(f, 'mo', 'new');
+      // as the old code left unit 0: no plate answer
+      delete f.db.drafts.get('d1')!.units[0].choices.plate;
+      // back to the graphic card of unit 1 and copy again
+      const d = f.db.drafts.get('d1')!;
+      d.step = 'graphic';
+      d.units[1].choices = { qtyUnit: 'ชุด' };
+      await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'same' });
+      expect(draft(f).units[1].choices).toEqual({ qtyUnit: 'ชุด', graphic: 'perl', press: 'mo', dateDue: '2026-11-16' });
+      await tap(f, okCreate('d1', 1));
+      expect(plateOf(f.created[1])).toEqual(EMPTY);
+    });
+  });
+
+  it('a unit that needs the plate step in a split draft: the next unit starts clean', async () => {
+    const f = setup();
+    await start(f, Q3.code);
+    await tap(f, { a: 'mode', draft: 'd1', v: 'split' });
+    await tap(f, { a: 'unit', draft: 'd1', u: 0, v: 0 });
+    await tap(f, { a: 'gfx', draft: 'd1', u: 0, v: 'perl' });
+    await tap(f, { a: 'press', draft: 'd1', u: 0, v: 'hamada' });
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'old' });
+    await tap(f, { a: 'date', draft: 'd1', u: 0, v: '+2' });
+    await tap(f, okCreate('d1', 0));
+    await tap(f, { a: 'unit', draft: 'd1', u: 1, v: 0 });
+    await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'aed' });
+    await tap(f, { a: 'press', draft: 'd1', u: 1, v: 'inkjet' });
+    expect(draft(f)).toMatchObject({ step: 'plate', unitIdx: 1 });
+    expect(draft(f).units[1].choices).toEqual({ qtyUnit: 'แผ่น', graphic: 'aed', press: 'inkjet' });
+    const before = state(f);
+    await tap(f, { a: 'plate', draft: 'd1', u: 0, v: 'copyprint' }); // the plate card of unit 0
+    await tap(f, { a: 'plate', draft: 'd1', u: 1, v: 'old' }); // unit 0's answer is not offered here
+    expect(state(f)).toBe(before);
+    await tap(f, { a: 'plate', draft: 'd1', u: 1, v: 'inkjet' });
+    await tap(f, { a: 'date', draft: 'd1', u: 1, v: '+2' });
+    await tap(f, okCreate('d1', 1));
+    expect(plateOf(f.created[0])).toEqual({ ...EMPTY, plateOld: true, plateSize: ['ตัด 5'] });
+    expect(plateOf(f.created[1])).toEqual({ ...EMPTY, inkjet: true });
   });
 });

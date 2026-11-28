@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   DASHBOARD_BASE, FLEX_LABEL_MAX, TEXT, formatAmount,
-  whoCard, choicesCard, statusCard, modeCard, unitCard, graphicCard, pressCard,
+  whoCard, choicesCard, statusCard, modeCard, unitCard, graphicCard, pressCard, plateCard,
   dateCard, summaryCard, dupCard, createdCard, type Card,
 } from '@/lib/peak-order/flex';
 import { decodePostback, type OrderPostback } from '@/lib/peak-order/postback';
 import { QTY_UNITS, ORDERERS } from '@/lib/order-constants';
 import { STAFF } from '@/lib/board';
 import { NO_NAME } from '@/lib/peak-order/mapper';
+import { plateQuestion } from '@/lib/peak-order/plate';
+import { specFromText, withoutPrintMethod } from '@/lib/peak-order/spec-from-text';
 import type { DraftRow, DraftUnit } from '@/lib/peak-order/db';
 import type { QuotationChoice } from '@/lib/peak-order/resolve';
 
@@ -439,7 +441,7 @@ describe('every button of every card round-trips through decodePostback', () => 
   it('draft id and unitIdx are right on every draft-bound button', () => {
     const d = split(2);
     d.units[2].choices = { graphic: 'pook', qtyUnit: 'ชิ้น', press: 'mo', dateDue: '2026-11-20' };
-    const cards = [modeCard(d), unitCard(d), graphicCard(d, true), pressCard(d), dateCard(d, '2026-11-14'), summaryCard(d), dupCard(d, [])];
+    const cards = [modeCard(d), unitCard(d), graphicCard(d, true), pressCard(d), plateCard(d), dateCard(d, '2026-11-14'), summaryCard(d), dupCard(d, [])];
     for (const c of cards) {
       invariants(c);
       for (const { p } of decoded(c)) {
@@ -531,5 +533,164 @@ describe('summaryCard — spec that was read', () => {
     const c = summaryCard(d);
     invariants(c);
     expect(c.text).not.toContain('สเปกที่อ่านได้');
+  });
+});
+
+// ─── plate (spec 2026-11-28) ───────────────────────────────────────
+describe('plateCard', () => {
+  const at = (press: string | undefined, over: Partial<DraftRow> = {}) =>
+    mkDraft({ units: [mkUnit({ choices: { graphic: 'pook', ...(press === undefined ? {} : { press }) } })], step: 'plate', ...over });
+  const both = (c: Card, s: string) => {
+    expect(c.text).toContain(s);
+    expect(JSON.stringify(c.flex)).toContain(s);
+  };
+
+  it('an offset press: names the press and its size, asks new / old, can cancel', () => {
+    const d = at('mo');
+    const c = plateCard(d);
+    invariants(c);
+    expect(decoded(c).map((x) => x.p)).toEqual([
+      { a: 'plate', draft: d.id, u: 0, v: 'new' },
+      { a: 'plate', draft: d.id, u: 0, v: 'old' },
+      { a: 'x', draft: d.id },
+    ]);
+    expect(labels(c)).toEqual(['เพลทใหม่', 'เพลทเก่า', 'ยกเลิก']);
+    both(c, 'ส่งต่อพิมพ์: MO (วล) · ตัด 4');
+    both(c, 'เพลท:');
+    expect(c.text).toContain('ตัวเลือก: เพลทใหม่ / เพลทเก่า / ยกเลิก');
+  });
+
+  it.each([
+    ['sm74', 'ส่งต่อพิมพ์: SM74 (ต้อม) · ตัด 3'],
+    ['mo5', 'ส่งต่อพิมพ์: MO 5สี (เกมส์) · ตัด 4'],
+    ['hamada', 'ส่งต่อพิมพ์: Hamada (กุ้ง) · ตัด 5'],
+  ])('%s shows its own size', (press, line) => {
+    const c = plateCard(at(press));
+    invariants(c);
+    both(c, line);
+    expect(labels(c)).toEqual(['เพลทใหม่', 'เพลทเก่า', 'ยกเลิก']);
+  });
+
+  it('แป๋: three kinds of print, no plate size', () => {
+    const d = at('inkjet');
+    const c = plateCard(d);
+    invariants(c);
+    expect(decoded(c).map((x) => x.p)).toEqual([
+      { a: 'plate', draft: d.id, u: 0, v: 'copyprint' },
+      { a: 'plate', draft: d.id, u: 0, v: 'inkjet' },
+      { a: 'plate', draft: d.id, u: 0, v: 'digital' },
+      { a: 'x', draft: d.id },
+    ]);
+    expect(labels(c)).toEqual(['Copyprint', 'Inkjet', 'Print Digital', 'ยกเลิก']);
+    both(c, 'ส่งต่อพิมพ์: Inkjet/Copyprint (แป๋)');
+    both(c, 'ประเภทงานพิมพ์:');
+    expect(c.text).not.toContain('ตัด ');
+    expect(JSON.stringify(c.flex)).not.toContain('ตัด ');
+    expect(c.text).toContain('ตัวเลือก: Copyprint / Inkjet / Print Digital / ยกเลิก');
+  });
+
+  it('the buttons are exactly what the rules table offers for the press', () => {
+    for (const s of STAFF.print) {
+      const d = at(s.id);
+      const want = (plateQuestion(s.id)?.options ?? []).map((v) => ({ a: 'plate', draft: d.id, u: 0, v }));
+      expect(decoded(plateCard(d)).map((x) => x.p)).toEqual([...want, { a: 'x', draft: d.id }]);
+    }
+  });
+
+  it.each([[''], ['outsource'], ['nobody'], [undefined]])('press %j has nothing to ask (never shown in the flow): cancel only, never throws', (press) => {
+    const d = at(press);
+    const c = plateCard(d);
+    invariants(c);
+    expect(decoded(c).map((x) => x.p)).toEqual([{ a: 'x', draft: d.id }]);
+  });
+
+  it('split: the unit index is on every plate button', () => {
+    const d = split(2);
+    d.units[2].choices = { graphic: 'pook', press: 'hamada' };
+    const c = plateCard(d);
+    invariants(c);
+    expect(decoded(c).map((x) => x.p)).toEqual([
+      { a: 'plate', draft: d.id, u: 2, v: 'new' },
+      { a: 'plate', draft: d.id, u: 2, v: 'old' },
+      { a: 'x', draft: d.id },
+    ]);
+    expect(c.text).toContain('รายการที่ 3/3');
+  });
+});
+
+describe('summaryCard — PLATE', () => {
+  const DIGITAL_LINE = 'เมนูอาหาร ขนาด A3\nพิมพ์ดิจิตอล 4 สี 2 หน้า\nเคลือบด้าน';
+  const withChoices = (choices: DraftUnit['choices'], description = 'ไวนิลขนาด 1x2 เมตร'): DraftRow => {
+    const base = mkDraft();
+    return mkDraft({
+      snapshot: {
+        ...base.snapshot,
+        quotation: { ...base.snapshot.quotation, lines: [{ key: 'k0', description, quantity: 10, price: 1 }] },
+      },
+      units: [mkUnit({ choices: { graphic: 'pook', dateDue: '2026-11-20', ...choices } })],
+      step: 'confirm',
+    });
+  };
+  const rows = (c: Card): string[] => c.text.split('\n');
+  const flexTexts = (c: Card): string[] => { const out: string[] = []; walk(c.flex, (o) => { if (o.type === 'text') out.push(o.text as string); }); return out; };
+  const hasRow = (c: Card, row: string) => {
+    expect(rows(c)).toContain(row);
+    expect(flexTexts(c)).toContain(row);
+  };
+  const specRow = (c: Card) => rows(c).find((r) => r.startsWith('สเปกที่อ่านได้'));
+
+  it.each([
+    [{ press: 'mo', plate: 'new' }, 'ส่งต่อพิมพ์ MO (วล) · ตัด 4 · เพลทใหม่'],
+    [{ press: 'sm74', plate: 'old' }, 'ส่งต่อพิมพ์ SM74 (ต้อม) · ตัด 3 · เพลทเก่า'],
+    [{ press: 'hamada', plate: 'new' }, 'ส่งต่อพิมพ์ Hamada (กุ้ง) · ตัด 5 · เพลทใหม่'],
+    [{ press: 'inkjet', plate: 'copyprint' }, 'ส่งต่อพิมพ์ Inkjet/Copyprint (แป๋) · Copyprint'],
+    [{ press: 'inkjet', plate: 'inkjet' }, 'ส่งต่อพิมพ์ Inkjet/Copyprint (แป๋) · Inkjet'],
+    [{ press: '' }, 'ส่งต่อพิมพ์ ยังไม่ระบุ · Print Digital'],
+    // nothing decided: the press alone, as before
+    [{ press: 'outsource' }, 'ส่งต่อพิมพ์ Outsource'],
+    [{ press: 'sm74' }, 'ส่งต่อพิมพ์ SM74 (ต้อม)'], // a draft from before the plate step
+    [{ press: 'sm74', plate: 'copyprint' }, 'ส่งต่อพิมพ์ SM74 (ต้อม)'], // an answer the press does not offer
+    [{ press: 'outsource', plate: 'new' }, 'ส่งต่อพิมพ์ Outsource'],
+  ] as Array<[DraftUnit['choices'], string]>)('%j → %s', (choices, row) => {
+    const c = summaryCard(withChoices(choices));
+    invariants(c);
+    hasRow(c, row);
+  });
+
+  it('the line text reads Digital (precondition of the cases below)', () => {
+    const spec = specFromText(DIGITAL_LINE);
+    expect(spec.fields.digital).toBe(true);
+    expect(spec.summary).toContain(' · Digital');
+  });
+
+  it.each([
+    [{ press: 'mo', plate: 'old' }],
+    [{ press: 'inkjet', plate: 'copyprint' }],
+    [{ press: 'inkjet', plate: 'digital' }],
+    [{ press: '' }],
+  ] as Array<[DraftUnit['choices']]>)('LINE decided the print method (%j): the spec line does not repeat or contradict it', (choices) => {
+    const c = summaryCard(withChoices(choices, DIGITAL_LINE));
+    invariants(c);
+    const want = 'สเปกที่อ่านได้: ' + withoutPrintMethod(specFromText(DIGITAL_LINE)).summary;
+    expect(want).not.toContain('Digital');
+    hasRow(c, want);
+    expect(specRow(c)).toBe(want);
+  });
+
+  it.each([
+    [{ press: 'outsource' }],
+    [{ press: 'sm74' }],
+    [{ press: 'sm74', plate: 'digital' }],
+  ] as Array<[DraftUnit['choices']]>)('LINE decided nothing (%j): the spec line still says Digital — the order is created with it', (choices) => {
+    const c = summaryCard(withChoices(choices, DIGITAL_LINE));
+    const want = 'สเปกที่อ่านได้: ' + specFromText(DIGITAL_LINE).summary;
+    hasRow(c, want);
+  });
+
+  it('a line that reads only the print method + an offset press: no spec line at all', () => {
+    const c = summaryCard(withChoices({ press: 'mo', plate: 'new' }, 'ใบปลิว\nพิมพ์ดิจิทัล'));
+    invariants(c);
+    expect(specRow(c)).toBeUndefined();
+    expect(flexTexts(c).some((t) => t.startsWith('สเปกที่อ่านได้'))).toBe(false);
   });
 });

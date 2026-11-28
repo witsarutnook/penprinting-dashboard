@@ -7,6 +7,7 @@ import type { PeakQuotation } from '@/lib/peak/read';
 import type { CreateOrderBody } from '@/lib/orders-create';
 import type { SpecFields } from '@/lib/peak-order/spec-from-text';
 import { emptyOrderForm } from '@/lib/photobook';
+import { plateFields } from '@/lib/peak-order/plate';
 
 export const NO_NAME = '(ไม่มีชื่อรายการ)';
 const NAME_MAX = 120;
@@ -150,6 +151,8 @@ export interface UnitChoices {
   qtyUnit?: string;
   graphic: string;
   press: string;
+  /** The answer of the plate step (a PlateAnswer) — only for a press that asks one. Not a form field. */
+  plate?: string;
   dateDue: string;
 }
 
@@ -157,6 +160,9 @@ export interface UnitChoices {
  * Order body for createOrderFromForm. Never sets `price`. `peak` is read by findOrderByPeakMarker (raw_data->'peak').
  * `spec` = form fields read from the line text (spec-from-text.ts). It is spread first, so everything
  * that comes from Peak or was chosen in LINE always wins over it.
+ * The PLATE fields come from the press and the plate answer (plate.ts) and are spread right after
+ * `spec`: where LINE decides them, all six are set (a "digital" read from the text does not survive an
+ * offset press); where it decides nothing (Outsource, a question left unanswered) they are as before.
  * `notes` = the notes to create the order with (unitNotes); without it, the unit's planned notes.
  */
 export function buildOrderBody(p: {
@@ -175,6 +181,7 @@ export function buildOrderBody(p: {
   const body: CreateOrderBody = {
     ...emptyOrderForm(p.orderer),
     ...p.spec,
+    ...(plateFields(p.choices.press, p.choices.plate) ?? {}),
     name: p.unit.name,
     customer: p.customerName,
     dateIn: p.todayISO,

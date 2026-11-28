@@ -31,6 +31,7 @@ export type DraftStep =
   | 'unit'
   | 'graphic'
   | 'press'
+  | 'plate' // only after a press that has a plate question (lib/peak-order/plate.ts)
   | 'date'
   | 'confirm'
   | 'dup'
@@ -121,6 +122,7 @@ const DRAFT_STEPS: readonly DraftStep[] = [
   'unit',
   'graphic',
   'press',
+  'plate',
   'date',
   'confirm',
   'dup',

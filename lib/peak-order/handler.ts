@@ -11,6 +11,7 @@ import { orderCommandArgs, parseOrderCommand } from '@/lib/peak-order/command';
 import { clipEcho, notFoundHint, resolveOrderCommand } from '@/lib/peak-order/resolve';
 import { addDaysISO, bangkokISODate, buildOrderBody, firstLine, planUnits, unitNotes } from '@/lib/peak-order/mapper';
 import { specForUnit } from '@/lib/peak-order/spec-from-text';
+import { plateQuestion } from '@/lib/peak-order/plate';
 import { decodePostback, type OrderPostback } from '@/lib/peak-order/postback';
 import {
   TEXT,
@@ -20,6 +21,7 @@ import {
   dupCard,
   graphicCard,
   modeCard,
+  plateCard,
   pressCard,
   statusCard,
   summaryCard,
@@ -263,6 +265,7 @@ const STEP_OF: Record<StepAction['a'], DraftStep> = {
   unit: 'unit',
   gfx: 'graphic',
   press: 'press',
+  plate: 'plate',
   date: 'date',
   ok: 'confirm',
   dup: 'dup',
@@ -477,6 +480,9 @@ async function transition(
         if (!src) return null;
         const graphic = src.choices.graphic ?? '';
         const press = src.choices.press ?? '';
+        // The plate answer belongs to the press, so it is copied with it (a source without one —
+        // no press, Outsource, a draft from before the plate step — copies none).
+        const plate = src.choices.plate;
         const due = validDue(src.choices.dateDue, today);
         // A copied due date that has gone past (draft crossed midnight) is not
         // copied: the unit goes to the date step instead (Review Focus 4).
@@ -485,6 +491,7 @@ async function transition(
           ...(unit.choices.qtyUnit === undefined ? {} : { qtyUnit: unit.choices.qtyUnit }),
           graphic,
           press,
+          ...(plate ? { plate } : {}),
           ...(due ? { dateDue: due } : {}),
         };
         const n = await gate(deps, d, { unitIdx: d.unitIdx, step: due ? 'confirm' : 'date', units: patchUnit(d, { choices }) });
@@ -509,7 +516,23 @@ async function transition(
       } else {
         return null;
       }
-      const n = await gate(deps, d, { unitIdx: d.unitIdx, step: 'date', units: patchUnit(d, { choices: { ...unit.choices, press } }) });
+      // A press with a plate question (plate.ts) is followed by the plate step; the others — no
+      // press, Outsource — have nothing to ask and go straight to the date.
+      const ask = plateQuestion(press) !== null;
+      const n = await gate(deps, d, {
+        unitIdx: d.unitIdx,
+        step: ask ? 'plate' : 'date',
+        units: patchUnit(d, { choices: { ...unit.choices, press } }),
+      });
+      if (!n) return null;
+      return ask ? plateCard(n) : dateCard(n, today);
+    }
+
+    case 'plate': {
+      // Only an answer the unit's press offers; anything else (a forged or stale value) is ignored.
+      const ask = plateQuestion(unit.choices.press ?? '');
+      if (!ask || !ask.options.includes(p.v)) return null;
+      const n = await gate(deps, d, { unitIdx: d.unitIdx, step: 'date', units: patchUnit(d, { choices: { ...unit.choices, plate: p.v } }) });
       return n ? dateCard(n, today) : null;
     }
 
@@ -612,7 +635,7 @@ async function createUnit(deps: PeakOrderDeps, g: DraftRow, asDraft: boolean, fo
       const c = unit.choices;
       const body = buildOrderBody({
         unit,
-        choices: { qtyUnit: c.qtyUnit, graphic: c.graphic ?? '', press: c.press ?? '', dateDue: c.dateDue ?? '' },
+        choices: { qtyUnit: c.qtyUnit, graphic: c.graphic ?? '', press: c.press ?? '', plate: c.plate, dateDue: c.dateDue ?? '' },
         customerName: g.snapshot.customerName,
         orderer: g.orderer,
         qoCode: g.qoCode,

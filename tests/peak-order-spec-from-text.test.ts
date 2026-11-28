@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PeakQuotation } from '@/lib/peak/read';
-import { EMPTY_SPEC, specForUnit, specFromText, type SpecFields } from '@/lib/peak-order/spec-from-text';
+import { EMPTY_SPEC, specForUnit, specFromText, withoutPrintMethod, type SpecFields } from '@/lib/peak-order/spec-from-text';
 
 // Every description below is a real quotation line (production census, 2026-11-18).
 const ROWS: Array<[string, string, SpecFields]> = [
@@ -380,5 +380,51 @@ describe('specFromText — a doubtful part fills nothing (independent review)', 
       { size: 'A4', paperInner: 'ปอนด์ 80 แกรม', innerColor: '1สี', innerColorNote: 'ทอง' }],
   ])('%s', (_name, d, expected) => {
     expect(specFromText(d).fields).toEqual(expected);
+  });
+});
+
+describe('withoutPrintMethod — the spec for an order whose PLATE fields were chosen in LINE', () => {
+  const digitalRows = ROWS.filter(([, , f]) => f.digital === true);
+
+  it('the corpus has real lines that read Digital next to other fields', () => {
+    expect(digitalRows.length).toBeGreaterThanOrEqual(2);
+    expect(digitalRows.some(([, , f]) => Object.keys(f).length > 1)).toBe(true);
+  });
+
+  it.each(digitalRows)('%s: drops only the print method, from the fields and from the summary', (_n, d) => {
+    const spec = specFromText(d);
+    const out = withoutPrintMethod(spec);
+    const { digital, ...rest } = spec.fields;
+    expect(digital).toBe(true);
+    expect(out.fields).toEqual(rest);
+    expect(spec.summary.endsWith('Digital')).toBe(true);
+    expect(out.summary).toBe(spec.summary.slice(0, -' · Digital'.length));
+    expect(out.summary).not.toContain('Digital');
+    expect(out.summary).not.toMatch(/·\s*$/);
+    // the input is left as it was
+    expect(spec.fields.digital).toBe(true);
+    expect(specFromText(d)).toEqual(spec);
+  });
+
+  it('a line that reads nothing but the print method → the empty spec', () => {
+    const spec = specFromText('พิมพ์ดิจิทัล');
+    expect(spec).toEqual({ fields: { digital: true }, summary: 'Digital' });
+    expect(withoutPrintMethod(spec)).toEqual({ fields: {}, summary: '' });
+  });
+
+  it.each(ROWS.filter(([, , f]) => f.digital !== true))('%s: no print method read → the same spec', (_n, d) => {
+    const spec = specFromText(d);
+    expect(withoutPrintMethod(spec)).toBe(spec);
+  });
+
+  it('the word Digital inside a value is not the print method', () => {
+    const spec = { fields: { paperInner: 'Digital Art 200 แกรม' }, summary: 'Digital Art 200 แกรม' };
+    expect(withoutPrintMethod(spec)).toBe(spec);
+    const both = { fields: { paperInner: 'กระดาษ Digital', digital: true }, summary: 'กระดาษ Digital · Digital' };
+    expect(withoutPrintMethod(both)).toEqual({ fields: { paperInner: 'กระดาษ Digital' }, summary: 'กระดาษ Digital' });
+  });
+
+  it('the empty spec stays the empty spec', () => {
+    expect(withoutPrintMethod(EMPTY_SPEC)).toBe(EMPTY_SPEC);
   });
 });
