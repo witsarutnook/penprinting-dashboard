@@ -11,6 +11,10 @@
  *   - claimLines: keys de-duplicated; [] → false; all-or-nothing; a key is
  *     takeable when no link row exists or the row is dead. Failure (and partial
  *     success) runs releaseClaim(code, draftId), like the SQL.
+ *   - releaseClaim / finalizeLinks: the rows of ONE claim owner (`draftId` on a
+ *     FakeLink = the SQL's draft_id column = the claim owner, `<draftId>:<n>` for
+ *     a /order attempt). releaseDraftClaims: every in-flight row whose owner is
+ *     the draft id itself or starts with `<draftId>:`.
  *   - live link = (orderId null AND claimed ≤ 2 min ago) OR (orderId set AND
  *     the order is alive).
  *   - an order is alive = it exists AND its status is not 'cancelled' AND it
@@ -186,6 +190,13 @@ export function fakeDb(seed: FakeDbSeed = {}): FakeDb {
         if (l.qoCode === qoCode && l.draftId === draftId && l.orderId === null) links.splice(i, 1);
       }
     },
+    async releaseDraftClaims(qoCode, draftId) {
+      const prefix = `${draftId}:`;
+      for (let i = links.length - 1; i >= 0; i--) {
+        const l = links[i];
+        if (l.qoCode === qoCode && l.orderId === null && (l.draftId === draftId || l.draftId.startsWith(prefix))) links.splice(i, 1);
+      }
+    },
     async finalizeLinks(qoCode, draftId, orderId) {
       for (const l of links) {
         if (l.qoCode === qoCode && l.draftId === draftId && l.orderId === null) l.orderId = orderId;
@@ -309,6 +320,7 @@ export function fakeDeps(
   const created: CreateOrderBody[] = [];
   const actors: OrderActor[] = [];
   let nextDraft = 0;
+  let nextClaim = 0;
 
   const defaultCreate = async (body: CreateOrderBody): Promise<CreateOrderResult> => {
     // From the CURRENT orders map on every call (orders added after setup count too).
@@ -335,6 +347,8 @@ export function fakeDeps(
     getDisplayName: async () => 'LINE Display',
     now: clock.now,
     newDraftId: () => `d${++nextDraft}`,
+    // Counts up across the whole test: every attempt gets its own owner (`d1:c1`, `d1:c2`, …).
+    newClaimId: () => `c${++nextClaim}`,
     ...over,
     createOrder: async (body, actor) => {
       created.push(clone(body));

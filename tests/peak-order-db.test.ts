@@ -326,6 +326,21 @@ describe('releaseClaim / finalizeLinks', () => {
   });
 });
 
+// 2026-11-28 (L23/L24): a claim's owner is one ATTEMPT (`<draftId>:<random>`), not the draft.
+// Recovery, which has no attempt of its own to name, clears what a dead attempt of the draft left.
+describe('releaseDraftClaims — recovery clears a dead attempt\'s in-flight claims', () => {
+  it('one statement: rows of that quotation with no order, owned by the draft id itself or by "<draftId>:…"', async () => {
+    respond([]);
+    await db.releaseDraftClaims('QO-202611000001', 'd1');
+    expect(queries).toHaveLength(1);
+    expect(queries[0].flat).toBe(
+      'DELETE FROM peak_order_links WHERE qo_code = ? AND order_id IS NULL AND (draft_id = ? OR starts_with(draft_id, ?))',
+    );
+    // the ":" keeps draft "d1" from matching the claims of draft "d10"
+    expect(queries[0].values).toEqual(['QO-202611000001', 'd1', 'd1:']);
+  });
+});
+
 describe('liveLinks / openedCodes', () => {
   it('liveLinks: LEFT JOIN orders, live filter, maps BIGINT order_id string → number', async () => {
     respond([

@@ -58,6 +58,8 @@ export interface PeakOrderDeps {
   getDisplayName: (lineUserId: string) => Promise<string | null>;
   now: () => Date;
   newDraftId: () => string;
+  /** The random part of one attempt's claim owner (see createUnit). */
+  newClaimId: () => string;
 }
 
 export const DRAFT_TTL_MS = 30 * 60_000;
@@ -531,12 +533,18 @@ async function transition(
 
 // ─── create procedure ──────────────────────────────────────────────
 
-async function releaseSafe(deps: PeakOrderDeps, d: DraftRow): Promise<void> {
+/** Releases ONE attempt's claim — the rows of that claim owner and no others; a throw is logged only. */
+async function releaseSafe(deps: PeakOrderDeps, qoCode: string, claimId: string): Promise<void> {
   try {
-    await deps.db.releaseClaim(d.qoCode, d.id);
+    await deps.db.releaseClaim(qoCode, claimId);
   } catch (e) {
-    logClass(`release claim ${d.qoCode} draft ${d.id}`, e);
+    logClass(`release claim ${qoCode} ${claimId}`, e);
   }
+}
+
+/** The claim owner of one attempt of draft `d`: unique per attempt, and it starts with the draft id. */
+function attemptClaimId(deps: PeakOrderDeps, d: DraftRow): string {
+  return `${d.id}:${deps.newClaimId()}`;
 }
 
 /** creating → confirm after a failed attempt; a throw here is logged only. */
@@ -574,72 +582,85 @@ async function finishUnit(
 /**
  * Runs after winning the gate into 'creating'. Guards before createOrder, in
  * order: claimLines === true, findOrderByPeakMarker === null.
+ *
+ * The attempt claims under its OWN owner (`claimId`), and everything here that releases or
+ * finalizes names that owner — so no path, the catch-all included, can touch the claim of another
+ * attempt of the same draft. (Until 2026-11-28 the owner was the draft id: an older attempt's
+ * "release my claim" deleted whatever attempt of that draft held the claim at that moment — the
+ * independent review found a sequence ending in two orders on one line, AUDIT-BACKLOG L23.)
  */
 async function createUnit(deps: PeakOrderDeps, g: DraftRow, asDraft: boolean, force: boolean): Promise<Reply | null> {
   const unit = g.units[g.unitIdx];
   const tag = `${g.qoCode} draft ${g.id}`;
+  const claimId = attemptClaimId(deps, g);
   try {
     // 1. Claim the lines (all-or-nothing).
-    const claimed = await deps.db.claimLines(g.qoCode, unit.lineKeys, g.id, g.orderer);
-    if (!claimed) {
-      await backToConfirm(deps, g);
-      return await quotationStatusCard(deps, g);
-    }
-    // 2. Adopt an order an earlier, half-finished attempt already wrote.
-    const existing = await deps.db.findOrderByPeakMarker(g.qoCode, unit.lineKeys);
-    if (existing) {
-      await deps.db.finalizeLinks(g.qoCode, g.id, existing.id);
-      console.warn(`[peak-order] ${tag}: adopted order ${existing.id}`);
-      return await finishUnit(deps, g, { kind: 'existing', orderId: existing.id }, {
-        orderId: existing.id,
-        pin: '',
-        isDraft: existing.status === 'draft',
+    const claimed = await deps.db.claimLines(g.qoCode, unit.lineKeys, claimId, g.orderer);
+    if (claimed) {
+      // 2. Adopt an order an earlier, half-finished attempt already wrote.
+      const existing = await deps.db.findOrderByPeakMarker(g.qoCode, unit.lineKeys);
+      if (existing) {
+        await deps.db.finalizeLinks(g.qoCode, claimId, existing.id);
+        console.warn(`[peak-order] ${tag}: adopted order ${existing.id}`);
+        return await finishUnit(deps, g, { kind: 'existing', orderId: existing.id }, {
+          orderId: existing.id,
+          pin: '',
+          isDraft: existing.status === 'draft',
+        });
+      }
+      // 3. Create.
+      const c = unit.choices;
+      const body = buildOrderBody({
+        unit,
+        choices: { qtyUnit: c.qtyUnit, graphic: c.graphic ?? '', press: c.press ?? '', dateDue: c.dateDue ?? '' },
+        customerName: g.snapshot.customerName,
+        orderer: g.orderer,
+        qoCode: g.qoCode,
+        draftId: g.id,
+        todayISO: bangkokISODate(deps.now()),
+        asDraft,
+        force,
+        spec: specForUnit(g.snapshot?.quotation, unit.lineKeys).fields,
+        notes: unitNotes(g.snapshot?.quotation, unit, g.qoCode),
       });
+      const r = await deps.createOrder(body, { role: 'sales', user: `${g.orderer} (LINE)` });
+      // 4. Success → finalize links, record, advance.
+      if (r.ok) {
+        await deps.db.finalizeLinks(g.qoCode, claimId, r.orderId);
+        return await finishUnit(
+          deps,
+          g,
+          { kind: asDraft ? 'draft' : 'order', orderId: r.orderId, jobId: r.jobId, pin: r.pin },
+          { orderId: r.orderId, pin: r.pin, isDraft: r.draft },
+        );
+      }
+      await releaseSafe(deps, g.qoCode, claimId);
+      // 5. Name + customer duplicate → ask.
+      if (r.kind === 'duplicate') {
+        const n = await deps.db.advanceDraft(g.id, { unitIdx: g.unitIdx, step: 'creating' }, { unitIdx: g.unitIdx, step: 'dup' });
+        return n ? dupCard(n, r.duplicates.map((x) => ({ id: x.id, name: x.name }))) : null;
+      }
+      // 6. Validation / failure.
+      console.warn(`[peak-order] ${tag}: create ${r.kind}`);
+      await backToConfirm(deps, g);
+      return r.kind === 'validation' && r.error ? `${TEXT.createFailed}\n${clipText(r.error, 300)}` : TEXT.createFailed;
     }
-    // 3. Create.
-    const c = unit.choices;
-    const body = buildOrderBody({
-      unit,
-      choices: { qtyUnit: c.qtyUnit, graphic: c.graphic ?? '', press: c.press ?? '', dateDue: c.dateDue ?? '' },
-      customerName: g.snapshot.customerName,
-      orderer: g.orderer,
-      qoCode: g.qoCode,
-      draftId: g.id,
-      todayISO: bangkokISODate(deps.now()),
-      asDraft,
-      force,
-      spec: specForUnit(g.snapshot?.quotation, unit.lineKeys).fields,
-      notes: unitNotes(g.snapshot?.quotation, unit, g.qoCode),
-    });
-    const r = await deps.createOrder(body, { role: 'sales', user: `${g.orderer} (LINE)` });
-    // 4. Success → finalize links, record, advance.
-    if (r.ok) {
-      await deps.db.finalizeLinks(g.qoCode, g.id, r.orderId);
-      return await finishUnit(
-        deps,
-        g,
-        { kind: asDraft ? 'draft' : 'order', orderId: r.orderId, jobId: r.jobId, pin: r.pin },
-        { orderId: r.orderId, pin: r.pin, isDraft: r.draft },
-      );
-    }
-    await releaseSafe(deps, g);
-    // 5. Name + customer duplicate → ask.
-    if (r.kind === 'duplicate') {
-      const n = await deps.db.advanceDraft(g.id, { unitIdx: g.unitIdx, step: 'creating' }, { unitIdx: g.unitIdx, step: 'dup' });
-      return n ? dupCard(n, r.duplicates.map((x) => ({ id: x.id, name: x.name }))) : null;
-    }
-    // 6. Validation / failure.
-    console.warn(`[peak-order] ${tag}: create ${r.kind}`);
+    // The lines belong to someone else: this attempt is over (claimLines already released
+    // whatever part of the claim it had taken).
     await backToConfirm(deps, g);
-    return r.kind === 'validation' && r.error ? `${TEXT.createFailed}\n${clipText(r.error, 300)}` : TEXT.createFailed;
   } catch (e) {
     // 6. Any throw (also after a successful createOrder: the order carries the
     // marker, so the next ok adopts it in step 2).
     logClass(`create ${tag}`, e);
-    await releaseSafe(deps, g);
+    await releaseSafe(deps, g.qoCode, claimId);
     await backToConfirm(deps, g);
     return TEXT.createFailed;
   }
+  // Outside the try on purpose: the draft has left 'creating' and this attempt holds nothing, so
+  // a failure of this read must not run the compensation above — by now a NEWER attempt of the
+  // draft may be 'creating', and backToConfirm would undo it (L23). A failure propagates to the
+  // wrapper in deps.ts, which answers the user.
+  return quotationStatusCard(deps, g);
 }
 
 /**
@@ -647,9 +668,9 @@ async function createUnit(deps: PeakOrderDeps, g: DraftRow, asDraft: boolean, fo
  *
  * Starts with a gate (audit 2026-11-27, M1). `stale` is what the tap read; by now another
  * recovery may have run and a NEW attempt of the same draft may be inside createOrder — and the
- * writes below are keyed by the draft (the claim) and by (id, unit, step) (the step), so without
- * the gate a recovery with an old read deleted that attempt's claim and undid its 'creating'
- * (three taps: an order without its link; four: a second order on the same line).
+ * writes below act on the whole draft (its dead claims, its step), so without the gate a
+ * recovery with an old read deleted that attempt's claim and undid its 'creating' (three taps:
+ * an order without its link; four: a second order on the same line).
  * takeStaleCreating wins only while the row is still 'creating' and untouched for two minutes,
  * and winning touches it: one recovery acts, every other one returns here and does nothing.
  * A recovery that fails after the gate can be tried again two minutes later.
@@ -659,9 +680,25 @@ async function recover(deps: PeakOrderDeps, stale: DraftRow): Promise<Reply | nu
   if (!d) return null;
   const unit = d.units[d.unitIdx];
   if (!unit) return null;
+  // The gate is won: no attempt of this draft is alive, so any in-flight claim the draft still
+  // has on this quotation is a dead attempt's. Clear it (a throw is logged only — a leftover
+  // claim goes stale on its own after two minutes).
+  try {
+    await deps.db.releaseDraftClaims(d.qoCode, d.id);
+  } catch (e) {
+    logClass(`release dead claims ${d.qoCode} draft ${d.id}`, e);
+  }
   const existing = await deps.db.findOrderByPeakMarker(d.qoCode, unit.lineKeys);
   if (existing) {
-    await deps.db.finalizeLinks(d.qoCode, d.id, existing.id);
+    // Link the order the dead attempt wrote: claim the lines as a fresh attempt, then finalize
+    // THAT claim. (It used to finalize "the draft's claim" — and when the dead attempt had already
+    // released it there was none: the draft became 'done' with no link row, and /order showed the
+    // quotation as unopened. AUDIT-BACKLOG L24.) No claim = the lines are already linked to a live
+    // order, or another draft is creating on them right now: nothing of ours to finalize.
+    const claimId = attemptClaimId(deps, d);
+    if (await deps.db.claimLines(d.qoCode, unit.lineKeys, claimId, d.orderer)) {
+      await deps.db.finalizeLinks(d.qoCode, claimId, existing.id);
+    }
     console.warn(`[peak-order] ${d.qoCode} draft ${d.id}: recovered order ${existing.id}`);
     return finishUnit(deps, d, { kind: 'existing', orderId: existing.id }, {
       orderId: existing.id,
@@ -669,7 +706,6 @@ async function recover(deps: PeakOrderDeps, stale: DraftRow): Promise<Reply | nu
       isDraft: existing.status === 'draft',
     });
   }
-  await releaseSafe(deps, d);
   const n = await deps.db.advanceDraft(d.id, { unitIdx: d.unitIdx, step: 'creating' }, { unitIdx: d.unitIdx, step: 'confirm' });
   return n ? summaryCard(n) : null;
 }

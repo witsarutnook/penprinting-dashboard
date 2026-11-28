@@ -7,7 +7,7 @@ const createClientMock = vi.fn();
 const createReaderMock = vi.fn();
 vi.mock('@/lib/peak/mcp-client', () => ({ createPeakClient: (...a: unknown[]) => createClientMock(...a) }));
 vi.mock('@/lib/peak/read', () => ({ createPeakReader: (...a: unknown[]) => createReaderMock(...a) }));
-vi.mock('@/lib/peak-order/db', () => ({ peakOrderDb: { tag: 'db' }, newDraftId: () => 'draft-1' }));
+vi.mock('@/lib/peak-order/db', () => ({ peakOrderDb: { tag: 'db' }, newDraftId: () => 'draft-1', newClaimId: () => 'claim-1' }));
 vi.mock('@/lib/orders-create', () => ({ createOrderFromForm: vi.fn() }));
 const profileMock = vi.fn();
 vi.mock('@/lib/ai-quote/channels/line', () => ({ getLineProfile: (...a: unknown[]) => profileMock(...a) }));
@@ -86,6 +86,7 @@ describe('buildPeakOrderArm', () => {
     const deps = textMock.mock.calls[0][1];
     expect(deps.db).toEqual({ tag: 'db' });
     expect(deps.newDraftId()).toBe('draft-1');
+    expect(deps.newClaimId()).toBe('claim-1');
     expect(deps.now()).toBeInstanceOf(Date);
     expect(await deps.getDisplayName('U1')).toBe('Somchai');
     expect(await deps.getDisplayName('U1')).toBeNull();

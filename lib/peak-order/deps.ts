@@ -5,7 +5,7 @@ import { getLineProfile } from '@/lib/ai-quote/channels/line';
 import { createOrderFromForm } from '@/lib/orders-create';
 import { createPeakClient } from '@/lib/peak/mcp-client';
 import { createPeakReader } from '@/lib/peak/read';
-import { newDraftId, peakOrderDb } from '@/lib/peak-order/db';
+import { newClaimId, newDraftId, peakOrderDb } from '@/lib/peak-order/db';
 import { handlePeakOrderPostback, handlePeakOrderText, type PeakOrderDeps } from '@/lib/peak-order/handler';
 import { TEXT, type Card } from '@/lib/peak-order/flex';
 
@@ -72,6 +72,7 @@ function makeDeps(reply: PeakOrderDeps['reply']): PeakOrderDeps {
     getDisplayName: async (uid) => (await getLineProfile(uid))?.displayName ?? null,
     now: () => new Date(),
     newDraftId,
+    newClaimId,
   };
 }
 

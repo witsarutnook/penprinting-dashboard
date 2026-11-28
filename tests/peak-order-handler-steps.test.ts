@@ -85,6 +85,8 @@ function msg(p: OrderPostback | string, o: TapOpts = {}): InboundMessage {
 const tap = (f: F, p: OrderPostback | string, o: TapOpts = {}) => handlePeakOrderPostback(msg(p, o), f.deps);
 const draft = (f: F, id = 'd1'): DraftRow => structuredClone(f.db.drafts.get(id)!);
 const last = (f: F) => f.replies.at(-1);
+/** The draft a claim belongs to: a link's owner is `<draftId>:<attempt>` (one owner per attempt). */
+const ownerDraft = (l: FakeLink) => l.draftId.split(':')[0];
 
 async function start(f: F, code: string, user = 'U-gift') {
   await handlePeakOrderText(textMsg(`/order ${code}`, { user }), f.deps);
@@ -160,7 +162,7 @@ describe('handlePeakOrderPostback — single line, create', () => {
     expect(f.created[0].status).toBeUndefined();
     expect(f.created[0].force).toBeUndefined();
     expect(f.actors).toEqual([{ role: 'sales', user: 'กิ๊ฟ (LINE)' }]);
-    expect(f.db.links.map((l) => [l.qoCode, l.lineKey, l.orderId, l.draftId])).toEqual([[Q1.code, 'L1', 9000, 'd1']]);
+    expect(f.db.links.map((l) => [l.qoCode, l.lineKey, l.orderId, ownerDraft(l)])).toEqual([[Q1.code, 'L1', 9000, 'd1']]);
     const d = draft(f);
     expect(d.step).toBe('done');
     expect(d.units[0].result).toEqual({ kind: 'order', orderId: 9000, jobId: 90000, pin: '4821' });
@@ -658,7 +660,7 @@ describe('handlePeakOrderPostback — never two orders', () => {
     expect(last(f)).toEqual(statusCard({ qoCode: Q1.code, customerName: CUSTOMER, opened: [{ orderId: 9000, name, isDraft: false }], remaining: [] }));
     expect(draft(f, 'd2')).toMatchObject({ step: 'confirm', creatingKind: null });
     expect(draft(f, 'd2').units[0].result).toBeUndefined();
-    expect(f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId])).toEqual([['L1', 9000, 'd1']]);
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId, ownerDraft(l)])).toEqual([['L1', 9000, 'd1']]);
   });
 
   it('two drafts racing: the second ok lands while the first createOrder is in flight → still one order', async () => {
@@ -858,7 +860,7 @@ describe('handlePeakOrderPostback — never two orders', () => {
     await tap(f, okCreate('d2'));
     expect(await claim.mock.results[0].value).toBe(true);
     expect(f.created).toHaveLength(2);
-    expect(f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId])).toEqual([['L1', 9001, 'd2']]);
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId, ownerDraft(l)])).toEqual([['L1', 9001, 'd2']]);
     expect(draft(f, 'd2').step).toBe('done');
   });
 });
@@ -975,7 +977,7 @@ describe('handlePeakOrderPostback — crash recovery', () => {
       oldRead.resolve();
       await r2; // R2 goes on with its old read while A is inside createOrder
       expect(draft(f).step, 'A is still creating').toBe('creating');
-      expect(f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId]), 'A still holds its claim').toEqual([['L1', null, 'd1']]);
+      expect(f.db.links.map((l) => [l.lineKey, l.orderId, ownerDraft(l)]), 'A still holds its claim').toEqual([['L1', null, 'd1']]);
       expect(f.replies.length, 'R2 says nothing').toBe(repliesBeforeR2);
 
       create.hold.resolve();
@@ -1116,6 +1118,208 @@ describe('handlePeakOrderPostback — crash recovery', () => {
   });
 });
 
+// Independent review 2026-11-28 (AUDIT-BACKLOG L23 / L24). M1 closed the recovery path, and the
+// reviewer's schedule explorer then found the same shape in two more places — both because every
+// attempt of a draft claimed its lines under ONE owner, the draft id, so "release my claim" on any
+// path deleted whatever attempt of that draft held the claim at that moment. Each attempt now
+// claims under its own token (`<draftId>:<random>`, PATTERNS §12.3 rule 2): releasing or
+// finalizing can only ever touch the rows of the attempt that does it.
+describe('handlePeakOrderPostback — each attempt owns its claim', () => {
+  const liveOrdersOn = (f: F, code: string) =>
+    [...f.db.orders.entries()].filter(([, o]) => o.status !== 'cancelled' && o.peak?.code === code).map(([id]) => id);
+
+  it('L23: an older attempt whose status read fails late cannot delete the claim of a newer attempt — one order, not two', async () => {
+    const f = setup();
+    await start(f, Q1.code);
+    await toConfirm(f, 'd1');
+    await start(f, Q1.code);
+    await toConfirm(f, 'd2'); // two drafts of one quotation line
+
+    // createOrder: call 1 (d1) is held, then fails validation; call 2 (d2, attempt C) is held.
+    const inner = f.deps.createOrder;
+    const holdA = deferred();
+    const holdC = deferred();
+    let creates = 0;
+    f.deps.createOrder = async (body, actor) => {
+      const n = ++creates;
+      if (n === 1) {
+        await holdA.p;
+        return { ok: false, kind: 'validation', error: 'x' } as Awaited<ReturnType<typeof inner>>;
+      }
+      if (n === 2) await holdC.p;
+      return inner(body, actor);
+    };
+    // The status read of attempt B (d2, after it lost the claim) is slow, then fails.
+    const realLive = f.db.liveLinks.bind(f.db);
+    const holdB = deferred();
+    let liveCalls = 0;
+    f.db.liveLinks = async (code) => {
+      if (++liveCalls === 1) {
+        await holdB.p;
+        throw new Error('db blip');
+      }
+      return realLive(code);
+    };
+
+    const a = tap(f, okCreate('d1')); // A: d1 claims L1, inside createOrder
+    await vi.waitFor(() => expect(creates).toBe(1));
+    const b = tap(f, okCreate('d2')); // B: d2 loses the claim → back to confirm → status read hangs
+    await vi.waitFor(() => expect(liveCalls).toBe(1));
+    expect(draft(f, 'd2').step).toBe('confirm');
+    holdA.resolve();
+    await a; // A fails validation → its claim is released
+    expect(f.db.links).toEqual([]);
+
+    const c = tap(f, okCreate('d2')); // C: a new attempt of d2 — claims L1, inside createOrder
+    await vi.waitFor(() => expect(creates).toBe(2));
+    expect(draft(f, 'd2').step).toBe('creating');
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', null]]);
+
+    holdB.resolve();
+    await b.catch(() => undefined); // B's read fails now (the wrapper in deps.ts answers the user)
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId]), "C's claim is still there").toEqual([['L1', null]]);
+    expect(draft(f, 'd2').step, "C's 'creating' is not undone").toBe('creating');
+
+    await tap(f, okCreate('d2')); // the owner taps ✅ once more while C is still creating
+    holdC.resolve();
+    await c;
+    expect(f.created).toHaveLength(1);
+    expect(liveOrdersOn(f, Q1.code)).toHaveLength(1);
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9000]]);
+    expect(draft(f, 'd2').step).toBe('done');
+  });
+
+  // Second review of this change: with the catch-all clearing "the draft's claims" instead of
+  // its own, everything above stayed green — and this sequence ended in two orders.
+  it('a catch-all that runs late releases only its own claim: "create anyway" in between still ends in one order', async () => {
+    const f = setup();
+    await start(f, Q1.code);
+    await toConfirm(f);
+
+    const inner = f.deps.createOrder;
+    const holdB = deferred();
+    let creates = 0;
+    f.deps.createOrder = async (body, actor) => {
+      const n = ++creates;
+      // A: an order with the same name + customer exists → "duplicate"
+      if (n === 1) return { ok: false, kind: 'duplicate', duplicates: [{ id: 1, name: 'x' }] } as Awaited<ReturnType<typeof inner>>;
+      if (n === 2) await holdB.p; // B is inside createOrder
+      return inner(body, actor);
+    };
+    // A's creating → dup write takes effect, but its answer is lost (it fails, slowly).
+    const realAdv = f.db.advanceDraft.bind(f.db);
+    const lost = deferred();
+    let toDup = 0;
+    f.db.advanceDraft = async (id, from, to) => {
+      const r = await realAdv(id, from, to);
+      if (to.step === 'dup' && ++toDup === 1) {
+        await lost.p;
+        throw new Error('answer lost');
+      }
+      return r;
+    };
+
+    const a = tap(f, okCreate()); // A → duplicate → the draft is at 'dup', A still waiting
+    await vi.waitFor(() => expect(draft(f).step).toBe('dup'));
+    const b = tap(f, { a: 'dup', draft: 'd1', u: 0, v: 'force' }); // B: "create anyway" → claims, inside createOrder
+    await vi.waitFor(() => expect(creates).toBe(2));
+    const bClaim = f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId]);
+    expect(bClaim).toHaveLength(1);
+
+    lost.resolve();
+    await a; // A's write "fails" → A's catch-all runs while B is creating
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId]), "B's claim survives A's catch-all").toEqual(bClaim);
+
+    await tap(f, okCreate()); // ✅ again
+    holdB.resolve();
+    await b;
+
+    expect(f.created).toHaveLength(1);
+    expect(liveOrdersOn(f, Q1.code)).toEqual([9000]);
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9000]]);
+  });
+
+  it('every attempt claims under its own token, and the token starts with the draft id', async () => {
+    const f = setup();
+    await start(f, Q1.code);
+    await toConfirm(f);
+    const tokens: string[] = [];
+    const realClaim = f.db.claimLines.bind(f.db);
+    f.db.claimLines = async (code, keys, token, by) => {
+      tokens.push(token);
+      return realClaim(code, keys, token, by);
+    };
+    // attempt 1 fails validation → back to confirm; attempt 2 creates
+    const inner = f.deps.createOrder;
+    let n = 0;
+    f.deps.createOrder = async (body, actor) =>
+      ++n === 1 ? ({ ok: false, kind: 'validation', error: 'x' } as Awaited<ReturnType<typeof inner>>) : inner(body, actor);
+    await tap(f, okCreate());
+    await tap(f, okCreate());
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).not.toBe(tokens[1]);
+    for (const t of tokens) expect(t.startsWith('d1:')).toBe(true);
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId])).toEqual([['L1', 9000, tokens[1]]]);
+  });
+
+  it('L24: recovery that adopts an order links it, even when the dead attempt left no claim behind', async () => {
+    const f = setup();
+    await start(f, Q1.code);
+    await toConfirm(f);
+    const realFin = f.db.finalizeLinks.bind(f.db);
+    const realAdv = f.db.advanceDraft.bind(f.db);
+    let failing = true;
+    f.db.finalizeLinks = async (...a) => {
+      if (failing) throw new Error('db blip');
+      return realFin(...a);
+    };
+    f.db.advanceDraft = async (id, from, to) => {
+      if (failing && from.step === 'creating') throw new Error('db blip');
+      return realAdv(id, from, to);
+    };
+    await tap(f, okCreate()); // order 9000 written; finalize throws; claim released; back-to-confirm throws
+    failing = false;
+    expect(last(f)).toBe(TEXT.createFailed);
+    expect(draft(f).step).toBe('creating');
+    expect(f.db.links).toEqual([]);
+    expect(liveOrdersOn(f, Q1.code)).toEqual([9000]);
+
+    f.clock.advance(3 * 60_000);
+    await tap(f, okCreate()); // recovery: gate → marker hit → claim → finalize → done
+
+    expect(draft(f).step).toBe('done');
+    expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9000]]);
+    expect(await f.db.liveLinks(Q1.code)).toEqual([expect.objectContaining({ lineKey: 'L1', orderId: 9000 })]);
+    expect(f.created).toHaveLength(1);
+  });
+
+  it('recovery clears the dead attempt\'s claim — also one made by the code before this change (owner = the bare draft id)', async () => {
+    for (const owner of ['d1', 'd1:old-attempt']) {
+      const f = setup();
+      await start(f, Q1.code);
+      await toConfirm(f);
+      await f.db.advanceDraft('d1', { unitIdx: 0, step: 'confirm' }, { unitIdx: 0, step: 'creating', creatingKind: 'create' });
+      expect(await f.db.claimLines(Q1.code, ['L1'], owner, 'กิ๊ฟ')).toBe(true);
+      f.clock.advance(CLAIM_TTL_MS + 1);
+      await tap(f, okCreate()); // recovery, no order → back to the summary
+      expect(f.db.links, owner).toEqual([]);
+      expect(draft(f).step, owner).toBe('confirm');
+    }
+  });
+
+  it('recovery does not clear another draft\'s claim whose id merely starts the same', async () => {
+    const f = setup();
+    await start(f, Q1.code);
+    await toConfirm(f);
+    await f.db.advanceDraft('d1', { unitIdx: 0, step: 'confirm' }, { unitIdx: 0, step: 'creating', creatingKind: 'create' });
+    f.clock.advance(CLAIM_TTL_MS + 1);
+    // a live claim of ANOTHER draft ("d10") on the same quotation
+    expect(await f.db.claimLines(Q1.code, ['L1'], 'd10:c9', 'นุ๊ก')).toBe(true);
+    await tap(f, okCreate()); // recovery of d1
+    expect(f.db.links.map((l) => l.draftId)).toEqual(['d10:c9']);
+  });
+});
+
 // ─── who / pick / rest ──────────────────────────────────────────────
 
 describe('handlePeakOrderPostback — who', () => {
@@ -1226,7 +1430,7 @@ describe('handlePeakOrderPostback — pick / rest', () => {
     await tap(f, okCreate());
     expect(f.created).toHaveLength(1);
     const orderId = Math.max(...f.db.orders.keys());
-    expect(f.db.links.find((l) => l.lineKey === 'L1')).toMatchObject({ orderId, draftId: 'd1' });
+    expect(f.db.links.find((l) => l.lineKey === 'L1')).toMatchObject({ orderId, draftId: expect.stringMatching(/^d1:/) });
     expect(f.db.links.find((l) => l.lineKey === 'OLD-KEY')).toEqual(gone);
     expect(draft(f)).toMatchObject({ step: 'unit', unitIdx: 1 });
   });
@@ -1292,7 +1496,7 @@ describe('a job cancelled on the board frees the quotation line (dashboard defin
     expect(f.created).toHaveLength(1);
     const newId = Math.max(...f.db.orders.keys());
     expect(newId).not.toBe(7030);
-    expect(f.db.links).toEqual([expect.objectContaining({ qoCode: Q1.code, lineKey: 'L1', orderId: newId, draftId: 'd1' })]);
+    expect(f.db.links).toEqual([expect.objectContaining({ qoCode: Q1.code, lineKey: 'L1', orderId: newId, draftId: expect.stringMatching(/^d1:/) })]);
     expect(draft(f).step).toBe('done');
     expect(last(f)).toEqual(createdCard({ orderId: newId, name: draft(f).units[0].name, pin: '4821', isDraft: false }));
   });

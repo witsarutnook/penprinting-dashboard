@@ -95,11 +95,22 @@ export interface PeakOrderDb {
   liveLinks(qoCode: string): Promise<LiveLink[]>;
   /** Codes with ≥ 1 live link. */
   openedCodes(codes: string[]): Promise<Set<string>>;
-  /** All-or-nothing. */
-  claimLines(qoCode: string, lineKeys: string[], draftId: string, by: string): Promise<boolean>;
-  /** Deletes this draft's rows that have no order_id. */
-  releaseClaim(qoCode: string, draftId: string): Promise<void>;
-  finalizeLinks(qoCode: string, draftId: string, orderId: number): Promise<void>;
+  /**
+   * All-or-nothing. `claimId` is the OWNER of the claim, stored in `draft_id`: one per attempt —
+   * `<draftId>:<random>` for a /order attempt, `restore:…` for the restore guard — never the bare
+   * draft id. releaseClaim / finalizeLinks act on the rows of that one owner, so an attempt can
+   * only ever release or finalize what it claimed itself (PATTERNS §12.3 rule 2).
+   */
+  claimLines(qoCode: string, lineKeys: string[], claimId: string, by: string): Promise<boolean>;
+  /** Deletes this owner's rows that have no order_id. */
+  releaseClaim(qoCode: string, claimId: string): Promise<void>;
+  /**
+   * Deletes every in-flight claim (no order_id) made by ANY attempt of `draftId` on this
+   * quotation. For recovery only, after it has won takeStaleCreating — no attempt of the draft is
+   * alive then, so what is left is a dead attempt's claim.
+   */
+  releaseDraftClaims(qoCode: string, draftId: string): Promise<void>;
+  finalizeLinks(qoCode: string, claimId: string, orderId: number): Promise<void>;
   findOrderByPeakMarker(qoCode: string, lineKeys: string[]): Promise<{ id: number; status: string } | null>;
 }
 
@@ -308,6 +319,16 @@ export const peakOrderDb: PeakOrderDb = {
        WHERE qo_code = ${qoCode} AND draft_id = ${draftId} AND order_id IS NULL`;
   },
 
+  async releaseDraftClaims(qoCode, draftId) {
+    // An attempt's owner is `<draftId>:<random>` (the bare draft id = a claim made before
+    // 2026-11-28). The `:` keeps draft "abc" from matching the claims of draft "abcd".
+    const prefix = `${draftId}:`;
+    await sql`
+      DELETE FROM peak_order_links
+       WHERE qo_code = ${qoCode} AND order_id IS NULL
+         AND (draft_id = ${draftId} OR starts_with(draft_id, ${prefix}))`;
+  },
+
   async finalizeLinks(qoCode, draftId, orderId) {
     // Only still-unlinked rows: a split draft finalizes one unit at a time
     // under the same draftId and must not overwrite earlier units' order ids.
@@ -334,4 +355,9 @@ export const peakOrderDb: PeakOrderDb = {
 /** 12 url-safe chars (72 random bits) — goes into postback data. */
 export function newDraftId(): string {
   return randomBytes(9).toString('base64url');
+}
+
+/** The random part of one attempt's claim owner (`<draftId>:<this>`). Never leaves the server. */
+export function newClaimId(): string {
+  return randomBytes(6).toString('base64url');
 }
