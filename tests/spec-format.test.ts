@@ -48,3 +48,19 @@ describe('binding labels match the order form and the printed A4', () => {
     expect(specLabel('spine')).toBe('กระดูกงู');
   });
 });
+
+// Audit 2026-11-27 (M5-notes-newlines-collapsed). An order opened by /order keeps the quotation
+// text in its notes, one spec per line. The value reaches the two spec views (board card detail,
+// /orders modal) with its line breaks — they must be shown (`whitespace-pre-line` on the value),
+// not folded into one run-on paragraph.
+describe('buildSpecSections — multi-line notes', () => {
+  const NOTES = 'กระดาษคาร์บอน 2 ชั้น (ขาวบน, ขาวล่าง)\nพิมพ์ สีเดียว (ฟ้า)\nกล่องละ 1,000 ชุด\n\nอ้างอิง Peak: QO-20261100157';
+
+  it('the notes value keeps every line break, the blank line before the Peak reference too', () => {
+    const sections = buildSpecSections({ name: 'ใบเสร็จรับเงิน', notes: NOTES }, false);
+    const notes = sections.flatMap((x) => x.entries).find((e) => e.key === 'notes');
+    expect(notes?.display).toBe(NOTES);
+    expect(notes?.display.split('\n')).toHaveLength(5);
+  });
+});
+

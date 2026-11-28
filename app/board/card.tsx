@@ -1843,7 +1843,8 @@ function DetailsTable({
             section.entries.map((e) => (
               <div key={e.key} className="flex items-baseline gap-3 px-3 py-2 text-sm">
                 <span className="text-stone-500 min-w-[100px] shrink-0">{e.label}</span>
-                <span className="text-stone-900 break-words">{e.display}</span>
+                {/* pre-line: notes hold one spec per line (the quotation text of a /order order) */}
+                <span className="text-stone-900 break-words whitespace-pre-line">{e.display}</span>
               </div>
             ))
           )}
