@@ -15,6 +15,10 @@ export const PB_SIZES = [
 
 export const PB_BINDINGS = ['ปกแข็ง', 'ปกอ่อน', 'เข้าห่วง'] as const;
 
+/** The "ขนาด PLATE" checkboxes of the order form, in the order they are shown.
+ *  Also what /order in LINE may write into `plateSize` (lib/peak-order/plate.ts). */
+export const PLATE_SIZES = ['ตัด 5', 'ตัด 4', 'ตัด 3'] as const;
+
 export type PBSize = (typeof PB_SIZES)[number];
 export type PBBinding = (typeof PB_BINDINGS)[number];
 

@@ -8,7 +8,7 @@ import { broadcastWrite } from '@/lib/auto-sync';
 import { useConfirm } from '@/components/confirm-provider';
 import { useToast } from '@/components/toast-provider';
 import {
-  PB_SIZES, PB_BINDINGS, type PhotobookItem,
+  PB_SIZES, PB_BINDINGS, PLATE_SIZES, type PhotobookItem,
   type OrderFormData, emptyOrderForm, orderFormFromRaw, prefillOrderFormFromRaw,
   prefillOptsForFlow, emptyPhotobookItem,
 } from '@/lib/photobook';
@@ -103,7 +103,6 @@ interface DuplicateInfo {
 type TabKey = 'main' | 'post' | 'assign';
 
 const SIZE_UNITS = ['ซม.', 'นิ้ว', 'มม.'];
-const PLATE_SIZES = ['ตัด 5', 'ตัด 4', 'ตัด 3'];
 const COVER_COLORS = ['1สี', '2สี', '3สี', '4สี'];
 
 export function OrderForm({
