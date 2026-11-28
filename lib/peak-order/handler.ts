@@ -642,8 +642,21 @@ async function createUnit(deps: PeakOrderDeps, g: DraftRow, asDraft: boolean, fo
   }
 }
 
-/** ok/dup on a 'creating' older than CREATING_STALE_MS: the attempt died. */
-async function recover(deps: PeakOrderDeps, d: DraftRow): Promise<Reply | null> {
+/**
+ * ok/dup on a 'creating' older than CREATING_STALE_MS: the attempt died.
+ *
+ * Starts with a gate (audit 2026-11-27, M1). `stale` is what the tap read; by now another
+ * recovery may have run and a NEW attempt of the same draft may be inside createOrder — and the
+ * writes below are keyed by the draft (the claim) and by (id, unit, step) (the step), so without
+ * the gate a recovery with an old read deleted that attempt's claim and undid its 'creating'
+ * (three taps: an order without its link; four: a second order on the same line).
+ * takeStaleCreating wins only while the row is still 'creating' and untouched for two minutes,
+ * and winning touches it: one recovery acts, every other one returns here and does nothing.
+ * A recovery that fails after the gate can be tried again two minutes later.
+ */
+async function recover(deps: PeakOrderDeps, stale: DraftRow): Promise<Reply | null> {
+  const d = await deps.db.takeStaleCreating(stale.id, stale.unitIdx);
+  if (!d) return null;
   const unit = d.units[d.unitIdx];
   if (!unit) return null;
   const existing = await deps.db.findOrderByPeakMarker(d.qoCode, unit.lineKeys);

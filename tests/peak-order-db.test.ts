@@ -220,6 +220,30 @@ describe('advanceDraft — conditional gate', () => {
   });
 });
 
+// Audit 2026-11-27 (M1): the gate recovery starts with.
+describe('takeStaleCreating — the recovery gate', () => {
+  it('one conditional UPDATE: still creating on that unit AND untouched for 2 minutes; touching it is the claim', async () => {
+    respond([]);
+    await db.takeStaleCreating('d1', 2);
+    expect(queries).toHaveLength(1);
+    const q = queries[0];
+    expect(q.flat).toBe(
+      "UPDATE peak_order_drafts SET last_touched_at = NOW() WHERE id = ? AND unit_idx = ? AND step = 'creating' AND last_touched_at < NOW() - INTERVAL '2 minutes' RETURNING *",
+    );
+    expect(q.values).toEqual(['d1', 2]);
+  });
+
+  it('null when zero rows come back (another recovery won, or a newer attempt is in flight)', async () => {
+    respond([]);
+    expect(await db.takeStaleCreating('d1', 0)).toBeNull();
+  });
+
+  it('the row it won, mapped', async () => {
+    respond([dbDraft({ step: 'creating', creating_kind: 'create', unit_idx: 2 })]);
+    expect(await db.takeStaleCreating('d1', 2)).toEqual({ ...EXPECTED, step: 'creating', creatingKind: 'create', unitIdx: 2 });
+  });
+});
+
 describe('cancelDraft', () => {
   it('true when a row comes back; never cancels done/cancelled/creating', async () => {
     respond([{ id: 'd1' }]);

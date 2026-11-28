@@ -84,6 +84,12 @@ export interface PeakOrderDb {
       creatingKind?: DraftRow['creatingKind'];
     },
   ): Promise<DraftRow | null>;
+  /**
+   * The gate recovery starts with: wins only while the row is still at (unitIdx, 'creating') AND
+   * has not been touched for 2 minutes — and winning touches it. So one recovery acts; a second
+   * one, or one holding an older read while a newer attempt is in flight, gets null.
+   */
+  takeStaleCreating(id: string, unitIdx: number): Promise<DraftRow | null>;
   /** false if already done/cancelled/creating (or missing). */
   cancelDraft(id: string): Promise<boolean>;
   liveLinks(qoCode: string): Promise<LiveLink[]>;
@@ -217,6 +223,18 @@ export const peakOrderDb: PeakOrderDb = {
              units = COALESCE(${unitsJson}::jsonb, units), creating_kind = ${to.creatingKind ?? null},
              last_touched_at = NOW()
        WHERE id = ${id} AND unit_idx = ${from.unitIdx} AND step = ${from.step}
+      RETURNING *`;
+    const r = rows[0] as Record<string, unknown> | undefined;
+    return r ? mapDraft(r) : null;
+  },
+
+  async takeStaleCreating(id, unitIdx) {
+    // "2 minutes" = CREATING_STALE_MS in handler.ts = the claim TTL below: an attempt cannot
+    // outlive it (the LINE route's maxDuration is 60 s), so a row this old has no attempt alive.
+    const { rows } = await sql`
+      UPDATE peak_order_drafts SET last_touched_at = NOW()
+       WHERE id = ${id} AND unit_idx = ${unitIdx} AND step = 'creating'
+         AND last_touched_at < NOW() - INTERVAL '2 minutes'
       RETURNING *`;
     const r = rows[0] as Record<string, unknown> | undefined;
     return r ? mapDraft(r) : null;

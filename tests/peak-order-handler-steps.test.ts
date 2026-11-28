@@ -923,6 +923,186 @@ describe('handlePeakOrderPostback — crash recovery', () => {
     expect(draft(f)).toMatchObject({ step: 'done', units: [expect.objectContaining({ result: { kind: 'existing', orderId: 9050 } })] });
   });
 
+  // Audit 2026-11-27 (M1-recover-not-gate-first). Recovery read the draft, decided, then wrote —
+  // and nothing tied those writes to what it had read: the claim is keyed by the draft id and the
+  // step gate by (id, unit, step). A recovery holding an OLD read of a stuck draft could therefore
+  // delete the claim and undo the 'creating' of a NEWER attempt of the same draft (the owner
+  // tapping ✅ several times after two minutes of silence). Three taps left an order without its
+  // link; a fourth could open a second order on the same line. Recovery now starts with a gate
+  // (db.takeStaleCreating): it wins only while the row is still 'creating' AND untouched for two
+  // minutes, and winning touches the row — so one recovery acts and every other one does nothing.
+  describe('recovery starts with a gate', () => {
+    /** The 2nd tap reads the draft, then waits: a tap that goes on with an old read. */
+    function holdSecondRead(f: F) {
+      const hold = deferred();
+      const realLoad = f.db.loadDraft.bind(f.db);
+      let loads = 0;
+      f.db.loadDraft = async (id) => {
+        const row = await realLoad(id);
+        if (++loads === 2) await hold.p;
+        return row;
+      };
+      return hold;
+    }
+    /** The first createOrder call waits: an attempt that is inside createOrder. */
+    function holdFirstCreate(f: F) {
+      const hold = deferred();
+      const inner = f.deps.createOrder;
+      const seen = { calls: 0 };
+      f.deps.createOrder = async (body, actor) => {
+        if (++seen.calls === 1) await hold.p;
+        return inner(body, actor);
+      };
+      return { hold, seen };
+    }
+
+    it('a recovery holding an old read leaves a newer attempt alone: one order, linked, draft done', async () => {
+      const f = setup();
+      await stuck(f, false);
+      f.clock.advance(3 * 60_000);
+      const oldRead = holdSecondRead(f);
+      const create = holdFirstCreate(f);
+
+      const r1 = tap(f, okCreate()); // recovery R1
+      const r2 = tap(f, okCreate()); // recovery R2 — has read the stuck row, then waits
+      await r1;
+      expect(draft(f).step).toBe('confirm'); // R1: no order → claim released, back to the summary
+
+      const a = tap(f, okCreate()); // a normal attempt A
+      await vi.waitFor(() => expect(create.seen.calls).toBe(1));
+      const repliesBeforeR2 = f.replies.length;
+
+      oldRead.resolve();
+      await r2; // R2 goes on with its old read while A is inside createOrder
+      expect(draft(f).step, 'A is still creating').toBe('creating');
+      expect(f.db.links.map((l) => [l.lineKey, l.orderId, l.draftId]), 'A still holds its claim').toEqual([['L1', null, 'd1']]);
+      expect(f.replies.length, 'R2 says nothing').toBe(repliesBeforeR2);
+
+      create.hold.resolve();
+      await a;
+      expect(f.created).toHaveLength(1);
+      expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9000]]);
+      expect(draft(f).step).toBe('done');
+    });
+
+    it('a fourth tap cannot open a second order on the same line', async () => {
+      const f = setup();
+      await stuck(f, false);
+      f.clock.advance(3 * 60_000);
+      const oldRead = holdSecondRead(f);
+      const create = holdFirstCreate(f);
+
+      const r1 = tap(f, okCreate());
+      const r2 = tap(f, okCreate());
+      await r1;
+      const a = tap(f, okCreate());
+      await vi.waitFor(() => expect(create.seen.calls).toBe(1));
+      oldRead.resolve();
+      await r2;
+      await tap(f, okCreate()); // tap 4, while A is still inside createOrder
+      create.hold.resolve();
+      await a;
+
+      expect(f.created).toHaveLength(1);
+      const live = [...f.db.orders.entries()].filter(([, o]) => o.status !== 'cancelled' && o.peak?.code === Q1.code);
+      expect(live.map(([id]) => id)).toEqual([9000]);
+      expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9000]]);
+    });
+
+    it('two taps at once on a stuck draft whose order exists: adopted once, one reply', async () => {
+      const f = setup();
+      await stuck(f, true);
+      f.clock.advance(3 * 60_000);
+      const before = f.replies.length;
+      await Promise.all([tap(f, okCreate()), tap(f, okCreate())]);
+      expect(f.replies.length - before).toBe(1);
+      expect(draft(f).step).toBe('done');
+      expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9050]]);
+      expect(f.created).toEqual([]);
+    });
+
+    it('the gate is the first thing recovery does to the database after reading the draft', async () => {
+      const f = setup();
+      await stuck(f, true);
+      f.clock.advance(3 * 60_000);
+      const order: string[] = [];
+      for (const name of ['takeStaleCreating', 'findOrderByPeakMarker', 'releaseClaim', 'finalizeLinks', 'advanceDraft'] as const) {
+        const real = (f.db[name] as (...a: unknown[]) => Promise<unknown>).bind(f.db);
+        (f.db as unknown as Record<string, unknown>)[name] = async (...a: unknown[]) => {
+          order.push(name);
+          return real(...a);
+        };
+      }
+      await tap(f, okCreate());
+      expect(order[0]).toBe('takeStaleCreating');
+      expect(order).toEqual(['takeStaleCreating', 'findOrderByPeakMarker', 'finalizeLinks', 'advanceDraft']);
+    });
+
+    // Independent review 2026-11-28: nothing recovered a unit other than the first, so a gate
+    // called with unit 0 by mistake stayed green — and a split draft stuck on a later unit could
+    // never be recovered.
+    it('a split draft stuck on its second unit is recovered on that unit', async () => {
+      const f = setup();
+      await start(f, Q3.code);
+      await tap(f, { a: 'mode', draft: 'd1', v: 'split' });
+      await toConfirm(f);
+      await tap(f, okCreate('d1', 0)); // unit 0 created
+      await tap(f, { a: 'unit', draft: 'd1', u: 1, v: 0 });
+      await tap(f, { a: 'gfx', draft: 'd1', u: 1, v: 'aed' });
+      await tap(f, { a: 'press', draft: 'd1', u: 1, v: 'hamada' });
+      await tap(f, { a: 'date', draft: 'd1', u: 1, v: '+2' });
+      expect(draft(f)).toMatchObject({ step: 'confirm', unitIdx: 1 });
+      const unit1Keys = draft(f).units[1].lineKeys;
+      // An attempt on unit 1 won the gate + claim and died before createOrder.
+      await f.db.advanceDraft('d1', { unitIdx: 1, step: 'confirm' }, { unitIdx: 1, step: 'creating', creatingKind: 'create' });
+      expect(await f.db.claimLines(Q3.code, unit1Keys, 'd1', 'กิ๊ฟ')).toBe(true);
+      f.clock.advance(3 * 60_000);
+
+      await tap(f, okCreate('d1', 1));
+
+      expect(draft(f)).toMatchObject({ step: 'confirm', unitIdx: 1 });
+      expect(last(f)).toEqual(summaryCard(draft(f)));
+      // unit 0's link is untouched; unit 1's dead claim is gone
+      expect(f.db.links.map((l) => [l.lineKey, l.orderId])).toEqual([['L1', 9000]]);
+      expect(f.created).toHaveLength(1);
+    });
+
+    // The duplicate-order tests run on the fake, so the fake's gate has to behave like the SQL
+    // (whose own behaviour was run on a real Postgres: exactly 2 minutes is not taken).
+    it('the fake gate behaves like the SQL: that unit, still creating, strictly older than 2 minutes, touched on a win', async () => {
+      const f = setup();
+      await stuck(f, false);
+      expect(await f.db.takeStaleCreating('d1', 0), 'fresh').toBeNull();
+      f.clock.advance(CLAIM_TTL_MS);
+      expect(await f.db.takeStaleCreating('d1', 0), 'exactly 2 minutes').toBeNull();
+      f.clock.advance(1);
+      expect(await f.db.takeStaleCreating('d1', 1), 'another unit').toBeNull();
+      expect(await f.db.takeStaleCreating('nope', 0), 'unknown draft').toBeNull();
+      expect(draft(f).lastTouchedAt, 'a lost gate touches nothing').not.toBe(f.clock.now().toISOString());
+      const won = await f.db.takeStaleCreating('d1', 0);
+      expect(won).toMatchObject({ id: 'd1', step: 'creating', unitIdx: 0 });
+      expect(won!.lastTouchedAt).toBe(f.clock.now().toISOString());
+      expect(draft(f).lastTouchedAt).toBe(f.clock.now().toISOString());
+      expect(await f.db.takeStaleCreating('d1', 0), 'a second one right after').toBeNull();
+
+      const g = setup();
+      await start(g, Q1.code);
+      await toConfirm(g);
+      g.clock.advance(10 * 60_000);
+      expect(await g.db.takeStaleCreating('d1', 0), 'old, but at confirm').toBeNull();
+    });
+
+    it('a recovery that loses the gate touches nothing', async () => {
+      const f = setup();
+      await stuck(f, true);
+      f.clock.advance(3 * 60_000);
+      f.db.takeStaleCreating = async () => null; // another recovery got there first
+      const before = state(f);
+      await tap(f, okCreate());
+      expect(state(f)).toBe(before);
+    });
+  });
+
   it('creating younger than 2 min → silent; x on creating → silent; wrong u → silent', async () => {
     const f = setup();
     await stuck(f, true);

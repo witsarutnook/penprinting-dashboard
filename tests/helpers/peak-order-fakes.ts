@@ -6,6 +6,8 @@
  *   - advanceDraft: conditional gate on the exact (unitIdx, step); omitted
  *     mode/units are left unchanged; creatingKind is always written (omitted →
  *     null); lastTouchedAt = now.
+ *   - takeStaleCreating: conditional gate on (unitIdx, 'creating') AND
+ *     lastTouchedAt older than 2 min (strictly); winning sets lastTouchedAt = now.
  *   - claimLines: keys de-duplicated; [] → false; all-or-nothing; a key is
  *     takeable when no link row exists or the row is dead. Failure (and partial
  *     success) runs releaseClaim(code, draftId), like the SQL.
@@ -123,6 +125,14 @@ export function fakeDb(seed: FakeDbSeed = {}): FakeDb {
         creatingKind: to.creatingKind ?? null,
         lastTouchedAt: nowIso(),
       };
+      drafts.set(id, next);
+      return clone(next);
+    },
+    async takeStaleCreating(id, unitIdx) {
+      const d = drafts.get(id);
+      if (!d || d.unitIdx !== unitIdx || d.step !== 'creating') return null;
+      if (!(nowMs() - Date.parse(d.lastTouchedAt) > CLAIM_TTL_MS)) return null; // last_touched_at < NOW() - 2 min
+      const next: DraftRow = { ...d, lastTouchedAt: nowIso() };
       drafts.set(id, next);
       return clone(next);
     },
