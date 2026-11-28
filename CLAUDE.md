@@ -100,7 +100,7 @@ npm run build            # before push
 | [lib/sentry-scrub.ts](lib/sentry-scrub.ts) | ตัด cookie / Authorization / body ออกจากทุก event ที่ server + edge ส่ง Sentry (ต่อใน `sentry.server.config.ts` + `sentry.edge.config.ts` — ห้ามถอด hook; PATTERNS §6.5) |
 | [lib/peak/token-store.ts](lib/peak/token-store.ts) | token Peak เข้ารหัส + single-flight refresh (PATTERNS §12.1) |
 | [lib/peak/mcp-client.ts](lib/peak/mcp-client.ts) · [read.ts](lib/peak/read.ts) | Peak MCP client + ทูลอ่าน 3 ตัว (`get_quotation`/`list_quotation`/`search_contacts`) |
-| [lib/peak-order/db.ts](lib/peak-order/db.ts) · [handler.ts](lib/peak-order/handler.ts) | gate/claim ร่าง `/order` + state machine (PATTERNS §12.2) |
+| [lib/peak-order/db.ts](lib/peak-order/db.ts) · [handler.ts](lib/peak-order/handler.ts) | gate/claim ร่าง `/order` + state machine (PATTERNS §12.2) — เจ้าของ claim ใน `peak_order_links.draft_id` = หนึ่งความพยายาม (`<draftId>:<random>`) ไม่ใช่ร่าง; release / finalize แตะได้เฉพาะแถวของความพยายามที่เรียก (2026-11-28) |
 | [lib/peak-order/spec-from-text.ts](lib/peak-order/spec-from-text.ts) | กฎคำหลัก: ข้อความรายการใบเสนอราคา → ช่องสเปกในฟอร์ม + บรรทัด "สเปกที่อ่านได้" บนการ์ด LINE (ไม่มี AI · ไม่แน่ใจ = ว่าง · PATTERNS §12.5) — 2026-11-18 · โค้ดตัดบรรทัดสเปกออกจากหมายเหตุ (`linesReadFrom()`) **ลบแล้ว 2026-11-21** — ชุดสุดท้ายอยู่ใน git ที่ `13aea63`; เงื่อนไขของการทำใหม่อยู่ใน spec §13.7 (ห้ามเปิดใช้ด้วยเทสต์ของผู้เขียนอย่างเดียว) |
 | [components/nav-config.ts](components/nav-config.ts) | Sidebar + bottom-nav source of truth |
 | [components/dashboard-shell.tsx](components/dashboard-shell.tsx) | Layout wrapper |
